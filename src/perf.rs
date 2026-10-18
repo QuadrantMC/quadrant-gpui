@@ -366,11 +366,17 @@ fn finish_profile(profile: profile::Profile) -> serde_json::Value {
     profile.finish()
 }
 
+/// Stands in for the profile without feature `perf-profile`.
 #[cfg(not(feature = "perf-profile"))]
-fn start_profile(_: &mut AsyncApp) {}
+struct NoProfile;
 
 #[cfg(not(feature = "perf-profile"))]
-fn finish_profile(_: ()) -> serde_json::Value {
+fn start_profile(_: &mut AsyncApp) -> NoProfile {
+    NoProfile
+}
+
+#[cfg(not(feature = "perf-profile"))]
+fn finish_profile(_: NoProfile) -> serde_json::Value {
     serde_json::Value::Null
 }
 
