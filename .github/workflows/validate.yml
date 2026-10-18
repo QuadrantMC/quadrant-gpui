@@ -1,0 +1,66 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+          - os: windows-2025
+          - os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev pkg-config
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --check
+
+      - name: Clippy
+        shell: bash
+        run: |
+          set -e
+          combos=("" "--features updater" "--features screenshot" "--features screenshot,updater")
+          # Perf mode times frames from the Windows window procedure.
+          if [ "$RUNNER_OS" = "Windows" ]; then combos+=("--features perf"); fi
+          for features in "${combos[@]}"; do
+            echo "::group::cargo clippy --all-targets $features"
+            cargo clippy --locked --all-targets $features
+            echo "::endgroup::"
+          done
+
+      - name: Test
+        shell: bash
+        run: |
+          cargo test --locked
+          cargo test --locked --features updater

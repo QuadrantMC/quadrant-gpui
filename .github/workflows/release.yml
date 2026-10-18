@@ -1,0 +1,273 @@
+name: Release
+
+# A tag `v<version>` whose version equals Cargo.toml's builds every package,
+# signs the updater artifacts, publishes them with latest.json and submits
+# that to Quadrant's update server as app `quadrant-native`. See README,
+# "Releasing".
+on:
+  push:
+    tags:
+      - "v*-stable*"
+      - "v*-preview*"
+
+permissions:
+  contents: read
+
+# Never cancel a release in flight; this only keeps one tag from building twice
+# at once.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_PROFILE_RELEASE_LTO: thin
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+  CARGO_INCREMENTAL: "0"
+  # The repository whose GitHub release carries the downloads. This one is
+  # private, so its release assets can't be downloaded by users or by the
+  # updater: point RELEASES_REPO at a public repository and give
+  # RELEASES_REPO_TOKEN write access to it.
+  RELEASES_REPO: ${{ vars.RELEASES_REPO || github.repository }}
+  # Where latest.json says the files are. Defaults to RELEASES_REPO's release;
+  # set ASSET_BASE_URL to serve them from elsewhere (then publishing there is
+  # up to you), as `<base>/<tag>/<file>`.
+  ASSET_BASE_URL: ${{ vars.ASSET_BASE_URL || format('https://github.com/{0}/releases/download', vars.RELEASES_REPO || github.repository) }}
+  TAURI_CLI: "@tauri-apps/cli@2.11.5"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check the tag against Cargo.toml
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          if [ "$version" != "$crate" ]; then
+            echo "::error::tag $TAG doesn't match Cargo.toml's version $crate"
+            exit 1
+          fi
+          # 26.10.0-stable -> stable, 26.10.1-preview.2 -> preview
+          channel="${version#*-}"
+          channel="${channel%%.*}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Create the GitHub releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLIC_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          CHANNEL: ${{ steps.version.outputs.channel }}
+        run: |
+          create() {
+            if GH_TOKEN="$1" gh release view "$TAG" --repo "$2" >/dev/null 2>&1; then
+              return
+            fi
+            flags=()
+            if [ "$CHANNEL" != stable ]; then flags+=(--prerelease); fi
+            GH_TOKEN="$1" gh release create "$TAG" --repo "$2" --target "$GITHUB_SHA" \
+              --title "Quadrant-Native v$VERSION" \
+              --notes "See the assets to download this version and install. Check out the [changelog on my blog](https://blog.mrquantumoff.dev)" \
+              "${flags[@]}"
+          }
+          create "$GH_TOKEN" "$GITHUB_REPOSITORY"
+          if [ "$RELEASES_REPO" != "$GITHUB_REPOSITORY" ]; then
+            create "$PUBLIC_TOKEN" "$RELEASES_REPO"
+          fi
+
+  build:
+    needs: prepare
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: aarch64
+          - os: windows-2025
+            platform: windows
+            arch: x86_64
+          - os: windows-11-arm
+            platform: windows
+            arch: aarch64
+          - os: macos-latest
+            platform: darwin
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      QUADRANT_API_KEY: ${{ secrets.QUADRANT_API_KEY }}
+      QUADRANT_OAUTH2_CLIENT_ID: ${{ secrets.QUADRANT_OAUTH2_CLIENT_ID }}
+      QUADRANT_OAUTH2_CLIENT_SECRET: ${{ secrets.QUADRANT_OAUTH2_CLIENT_SECRET }}
+      ETERNAL_API_TOKEN: ${{ secrets.ETERNAL_API_TOKEN }}
+      # linuxdeploy runs as an AppImage; runners have no FUSE.
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev pkg-config file
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager@0.11.8
+
+      - uses: taiki-e/install-action@v2
+        if: runner.os == 'Linux'
+        with:
+          tool: cargo-generate-rpm@0.21.1
+
+      - name: Build
+        run: |
+          features=updater
+          # CurseForge needs the API token at compile time, as in Quadrant's release.
+          if [ -n "$ETERNAL_API_TOKEN" ]; then features="$features,curseforge"; fi
+          cargo build --release --locked --features "$features"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cargo packager --release -f nsis
+          mkdir -p dist
+          cp target/release/quadrant-native_*-setup.exe dist/
+          setup=$(cd dist && ls quadrant-native_*-setup.exe)
+          echo "UPDATER=nsis=$setup" >> "$GITHUB_ENV"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo packager --release -f deb,appimage
+          # rpm versions can't contain '-': 26.10.0-stable is version 26.10.0, release stable.
+          cargo generate-rpm -s "version = \"${VERSION%%-*}\"" -s "release = \"${VERSION#*-}\""
+          mkdir -p dist
+          cp target/release/quadrant-native_*.deb target/release/quadrant-native_*.AppImage target/generate-rpm/quadrant-native-*.rpm dist/
+          cd dist
+          echo "UPDATER=appimage=$(ls *.AppImage) deb=$(ls *.deb) rpm=$(ls *.rpm)" >> "$GITHUB_ENV"
+
+      # Ad-hoc signed like Quadrant's macOS build: no Developer ID yet.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cargo packager --release -f app
+          app=target/release/Quadrant-Native.app
+          codesign --force --deep --sign - "$app"
+          mkdir -p dist dmg
+          cp -R "$app" dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname Quadrant-Native -srcfolder dmg -ov -format UDZO "dist/Quadrant-Native_${VERSION}_aarch64.dmg"
+          tar -czf "dist/Quadrant-Native_${VERSION}_aarch64.app.tar.gz" -C target/release Quadrant-Native.app
+          echo "UPDATER=app=Quadrant-Native_${VERSION}_aarch64.app.tar.gz" >> "$GITHUB_ENV"
+
+      # Tauri's signer, with Quadrant's updater key: one secret signs both apps.
+      - name: Sign the updater artifacts
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          cd dist
+          entries=()
+          for pair in $UPDATER; do
+            variant="${pair%%=*}"
+            file="${pair#*=}"
+            npx --yes "$TAURI_CLI" signer sign "$file"
+            signature=$(cat "$file.sig")
+            entry="{\"signature\":\"$signature\",\"url\":\"$ASSET_BASE_URL/$TAG/$file\"}"
+            entries+=("\"$PLATFORM-$ARCH-$variant\":$entry")
+            # The plain key is what a client without a variant gets: the
+            # first artifact, the AppImage on Linux, as in Tauri's latest.json.
+            if [ ${#entries[@]} -eq 1 ]; then entries+=("\"$PLATFORM-$ARCH\":$entry"); fi
+          done
+          (IFS=,; echo "{${entries[*]}}") > "../platforms-$PLATFORM-$ARCH.json"
+          cat "../platforms-$PLATFORM-$ARCH.json"
+
+      - name: Upload to the releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLIC_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          if [ "$RELEASES_REPO" != "$GITHUB_REPOSITORY" ]; then
+            GH_TOKEN="$PUBLIC_TOKEN" gh release upload "$TAG" dist/* --repo "$RELEASES_REPO" --clobber
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platforms-${{ matrix.platform }}-${{ matrix.arch }}
+          path: platforms-${{ matrix.platform }}-${{ matrix.arch }}.json
+
+  manifest:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: platforms-*
+          merge-multiple: true
+
+      - name: Assemble latest.json
+        run: |
+          jq -s --arg version "$VERSION" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version: $version, notes: "See the assets to download this version and install.", pub_date: $date, platforms: add}' \
+            platforms-*.json > latest.json
+          cat latest.json
+
+      - name: Upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLIC_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$TAG" latest.json --repo "$GITHUB_REPOSITORY" --clobber
+          if [ "$RELEASES_REPO" != "$GITHUB_REPOSITORY" ]; then
+            GH_TOKEN="$PUBLIC_TOKEN" gh release upload "$TAG" latest.json --repo "$RELEASES_REPO" --clobber
+          fi
+
+      # Stable releases arrive unpublished; the RelMan bot publishes them.
+      - name: Submit the release to the update server
+        env:
+          TOKEN: ${{ secrets.VERSION_UPDATE_TRIGGER_TOKEN }}
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
+        run: |
+          curl --fail-with-body -X PUT \
+            -H "Authorization: $TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @latest.json \
+            "https://api.usequadrant.dev/api/any/quadrant-native/add_updates/$CHANNEL/$TAG"
