@@ -13,6 +13,9 @@ curseforge = ["quadrant-host/curseforge"]
 screenshot = ["gpui/test-support", "gpui_platform/test-support"]
 # Adds `--perf <scenario|all>`, which drives the window and records its frame times.
 perf = ["dep:raw-window-handle", "dep:windows"]
+# Perf mode plus gpui's profiler, which adds where each run's time went to its
+# JSON. For diagnosis only: the profiler's overhead skews the frame times.
+perf-profile = ["perf", "gpui/profiler"]
 
 [dependencies]
 anyhow = "1"

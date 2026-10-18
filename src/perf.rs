@@ -4,6 +4,8 @@
 //! OS, and the host runs without credentials, as in screenshot mode.
 
 mod frames;
+#[cfg(feature = "perf-profile")]
+mod profile;
 mod stats;
 
 use std::{
@@ -258,6 +260,8 @@ struct Measured {
     inactive_frames: u32,
     /// `idle` only: frames drawn on each page.
     idle_frames: Vec<(Route, usize)>,
+    /// Where the time went, with feature `perf-profile`.
+    profile: serde_json::Value,
 }
 
 impl Measured {
@@ -305,6 +309,7 @@ impl Measured {
             "input_messages": self.recording.input_messages,
             "inactive_frames": self.inactive_frames,
             "idle_frames_per_page": idle,
+            "profile": self.profile,
             "ticks": { "columns": ["start_ms", "cpu_ms", "drew"], "rows": frames },
         })
     }
@@ -322,9 +327,11 @@ async fn measure(
         return measure_idle(window, cx).await;
     }
     prepare(scenario, window, viewport, search_icons, cx).await?;
+    let profiling = start_profile(cx);
     frames::start();
     let inactive_frames = drive(scenario, window, viewport, display, cx).await?;
     let recording = frames::stop();
+    let profile = finish_profile(profiling);
     match scenario {
         Scenario::Dialogs => update(window, cx, |window, cx| window.close_all_dialogs(cx))?,
         Scenario::Resize => {
@@ -345,19 +352,41 @@ async fn measure(
         recording,
         inactive_frames,
         idle_frames: Vec::new(),
+        profile,
     })
+}
+
+#[cfg(feature = "perf-profile")]
+fn start_profile(cx: &mut AsyncApp) -> profile::Profile {
+    cx.update(|cx| profile::start(cx))
+}
+
+#[cfg(feature = "perf-profile")]
+fn finish_profile(profile: profile::Profile) -> serde_json::Value {
+    profile.finish()
+}
+
+#[cfg(not(feature = "perf-profile"))]
+fn start_profile(_: &mut AsyncApp) {}
+
+#[cfg(not(feature = "perf-profile"))]
+fn finish_profile(_: ()) -> serde_json::Value {
+    serde_json::Value::Null
 }
 
 /// Every page in turn, untouched: anything drawn is a timer or a poll.
 async fn measure_idle(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<Measured> {
     let mut recording = frames::Recording::default();
     let mut idle_frames = Vec::new();
+    let mut profiles = serde_json::Map::new();
     for route in Route::ALL {
         update(window, cx, |window, cx| navigate(route, window, cx))?;
         wait(cx, SETTLE).await;
+        let profiling = start_profile(cx);
         frames::start();
         wait(cx, DURATION).await;
         let page = frames::stop();
+        profiles.insert(format!("{route:?}"), finish_profile(profiling));
         idle_frames.push((route, page.ticks.iter().filter(|tick| tick.drew).count()));
         recording.ticks.extend(page.ticks);
         recording.off_tick_draws += page.off_tick_draws;
@@ -367,6 +396,7 @@ async fn measure_idle(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<M
         recording,
         inactive_frames: 0,
         idle_frames,
+        profile: profiles.into(),
     })
 }
 
