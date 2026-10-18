@@ -12,8 +12,8 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, Div, EntityId, IntoElement, ListAlignment, ListOffset, ListState,
-    ParentElement as _, Pixels, Stateful, Styled as _, Window, canvas, div, px,
+    AnyElement, EntityId, IntoElement, ListAlignment, ListOffset, ListState, ParentElement, Pixels,
+    Styled, Window, canvas, div, px,
 };
 
 use crate::theme;
@@ -265,14 +265,14 @@ impl RowHeights {
         hasher.finish()
     }
 
-    /// Gives `card`, in the row under `key`, the row's height once it is
-    /// known; until then lays it out from its content and, for the row's
-    /// `first` card, measures the row.
-    pub fn apply(&self, key: u64, first: bool, card: Stateful<Div>) -> Stateful<Div> {
+    /// Gives `element` the height known under `key`; until it is known,
+    /// lays it out from its content and, when it is the one to `measure`,
+    /// records the height it gets.
+    pub fn apply<E: Styled + ParentElement>(&self, key: u64, measure: bool, element: E) -> E {
         match self.known(key) {
-            Some(height) => card.h(height),
-            None if first => card.child(self.measure(key)),
-            None => card,
+            Some(height) => element.h(height),
+            None if measure => element.child(self.measure(key)),
+            None => element,
         }
     }
 
@@ -299,6 +299,24 @@ impl RowHeights {
         .absolute()
         .size_full()
         .into_any_element()
+    }
+}
+
+/// Where a card sits in a grid whose row heights are kept: its row's key,
+/// and whether it is the row's first card, which measures the row.
+#[derive(Clone, Copy)]
+pub struct CardSlot<'a> {
+    pub heights: &'a RowHeights,
+    pub row: u64,
+    pub first: bool,
+}
+
+impl CardSlot<'_> {
+    /// The key of a part of the card `card_key` names, inside this row.
+    pub fn part(&self, card_key: u64, part: u64) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        (self.row, card_key, part).hash(&mut hasher);
+        hasher.finish()
     }
 }
 

@@ -9,8 +9,8 @@ use std::{collections::HashMap, rc::Rc};
 
 use chrono::{Local, TimeZone as _};
 use gpui::{
-    AnyElement, Context, Div, Entity, EventEmitter, FontWeight, IntoElement, ParentElement as _,
-    Pixels, Render, SharedString, Stateful, Styled as _, Subscription, Task, Window, div, list,
+    AnyElement, App, Context, Entity, EventEmitter, FontWeight, IntoElement, ParentElement as _,
+    Pixels, Render, SharedString, Styled as _, Subscription, Task, Window, div, list,
     prelude::FluentBuilder as _, px, rems, rgb,
 };
 use gpui_component::{
@@ -30,7 +30,7 @@ use crate::{
     loadable::Loadable,
     mod_catalog::{ModCatalog, ModKey},
     pages::{
-        mod_grid::{self, GridList, Item, RowHeights, Rows, Shape},
+        mod_grid::{self, CardSlot, GridList, Item, RowHeights, Rows, Shape},
         mod_ui::{CardPress, CardStatus, OnCardPress, Primary, card_key, mod_card},
     },
     snackbar::{self, SnackbarKind},
@@ -529,10 +529,8 @@ impl ModpackView {
         }
     }
 
-    /// Card `index`, `item` as its provider knows it, and its height's key.
-    fn card(&self, index: usize, item: &Mod, cx: &mut Context<Self>) -> (Stateful<Div>, u64) {
-        let on_press: OnCardPress<Self> =
-            Rc::new(|this, press, item, _, cx| this.press(press, item, cx));
+    /// `item` as its provider knows it, and how its card is drawn.
+    fn shown(&self, item: &Mod, cx: &App) -> (Mod, CardStatus) {
         let item = with_record(item, self.catalog.read(cx).get(&item.source, &item.id));
         let status = CardStatus {
             progress: self
@@ -540,10 +538,19 @@ impl ModpackView {
                 .then(|| self.progress.get(&item.id).copied().unwrap_or(0)),
             ..CardStatus::default()
         };
-        (
-            mod_card(index, &item, status, on_press, cx),
-            card_key(&item, status),
-        )
+        (item, status)
+    }
+
+    fn card(
+        &self,
+        index: usize,
+        (item, status): &(Mod, CardStatus),
+        slot: Option<CardSlot>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let on_press: OnCardPress<Self> =
+            Rc::new(|this, press, item, _, cx| this.press(press, item, cx));
+        mod_card(index, item, *status, slot, on_press, cx).into_any_element()
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -619,7 +626,7 @@ impl ModpackView {
                                 .iter()
                                 .enumerate()
                                 .map(|(index, item)| {
-                                    self.card(offset + index, item, cx).0.into_any_element()
+                                    self.card(offset + index, &self.shown(item, cx), None, cx)
                                 })
                                 .collect();
                             offset += unknown.proposals.len();
@@ -661,23 +668,26 @@ impl ModpackView {
                     rems(1.)
                 };
                 let source = self.grid_cards().unwrap_or_default();
-                let built: Vec<(Stateful<Div>, u64)> = self.shown[cards.clone()]
+                let shown: Vec<(Mod, CardStatus)> = self.shown[cards.clone()]
                     .iter()
-                    .zip(cards)
-                    .map(|(&card, index)| self.card(index, &source[card], cx))
+                    .map(|&card| self.shown(&source[card], cx))
                     .collect();
                 let key = self.row_heights.key(
                     shape.rows.columns,
-                    built.iter().map(|(_, key)| *key),
+                    shown.iter().map(|(item, status)| card_key(item, *status)),
                     u64::from(self.mode == Mode::Updates),
                 );
-                let elements: Vec<AnyElement> = built
-                    .into_iter()
+                let elements: Vec<AnyElement> = shown
+                    .iter()
+                    .zip(cards)
                     .enumerate()
-                    .map(|(column, (card, _))| {
-                        self.row_heights
-                            .apply(key, column == 0, card)
-                            .into_any_element()
+                    .map(|(column, (card, index))| {
+                        let slot = CardSlot {
+                            heights: &self.row_heights,
+                            row: key,
+                            first: column == 0,
+                        };
+                        self.card(index, card, Some(slot), cx)
                     })
                     .collect();
                 let first = row == 0;

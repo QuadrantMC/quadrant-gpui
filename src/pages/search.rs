@@ -39,7 +39,7 @@ use crate::{
     motion,
     pages::{
         install_location::LocationPicker,
-        mod_grid::{self, RowHeights, WidthProbe},
+        mod_grid::{self, CardSlot, RowHeights, WidthProbe},
         mod_install::{InstallRequest, InstallViewEvent, ModInstallView, remember},
         mod_ui::{CardPress, CardStatus, Choice, OnCardPress, Primary, card_key, mod_card},
     },
@@ -1356,16 +1356,20 @@ impl SearchPage {
             .iter()
             .enumerate()
             .map(|(index, (item, status))| {
-                let card = mod_card(
+                let slot = CardSlot {
+                    heights: &self.row_heights,
+                    row: row_keys[index / columns],
+                    first: index % columns == 0,
+                };
+                mod_card(
                     page * PAGE_SIZE + index,
                     item,
                     *status,
+                    Some(slot),
                     on_press.clone(),
                     cx,
-                );
-                self.row_heights
-                    .apply(row_keys[index / columns], index % columns == 0, card)
-                    .into_any_element()
+                )
+                .into_any_element()
             })
             .collect();
         if further {

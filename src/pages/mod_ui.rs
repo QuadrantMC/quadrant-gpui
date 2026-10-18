@@ -20,7 +20,7 @@ use quadrant_core::{
 use crate::{
     assets::MdIcon,
     i18n::t,
-    pages::search::logic::compact_count,
+    pages::{mod_grid::CardSlot, search::logic::compact_count},
     theme::{self, Tone},
 };
 
@@ -145,10 +145,14 @@ pub fn card_key(item: &Mod, status: CardStatus) -> u64 {
 
 /// A mod card: icon, name, downloads, provider, description, and its
 /// actions on the right of the bottom row.
+/// In a grid that keeps its row heights (`slot`), a card and its header
+/// take their heights from earlier frames while nothing that decides them
+/// changed, so each lays out once.
 pub fn mod_card<P: 'static>(
     index: usize,
     item: &Mod,
     status: CardStatus,
+    slot: Option<CardSlot>,
     on_press: OnCardPress<P>,
     cx: &mut Context<P>,
 ) -> Stateful<Div> {
@@ -235,7 +239,13 @@ pub fn mod_card<P: 'static>(
 
     let source = source_label(&item.source);
     let open = press(CardPress::Open);
-    v_flex()
+    let sized = |part: u64, element| match &slot {
+        Some(slot) => slot
+            .heights
+            .apply(slot.part(card_key(item, status), part), true, element),
+        None => element,
+    };
+    let card = v_flex()
         .id(("mod-card", index))
         .size_full()
         .gap_2p5()
@@ -248,7 +258,8 @@ pub fn mod_card<P: 'static>(
                 open(event, window, cx);
             }
         })
-        .child(
+        .child(sized(
+            HEADER,
             h_flex()
                 .items_start()
                 .gap_3()
@@ -298,7 +309,7 @@ pub fn mod_card<P: 'static>(
                                 .child(item.description.trim().to_string()),
                         ),
                 ),
-        )
+        ))
         .child(
             h_flex()
                 .mt_auto()
@@ -307,8 +318,16 @@ pub fn mod_card<P: 'static>(
                 .items_center()
                 .justify_end()
                 .children(buttons),
-        )
+        );
+    match slot {
+        Some(slot) => slot.heights.apply(slot.row, slot.first, card),
+        None => card,
+    }
 }
+
+/// The card's top part (icon, name, downloads, description), as a part of
+/// [`CardSlot::part`].
+const HEADER: u64 = 1;
 
 /// `pill` after a separating dot, the two wrapping as one.
 fn dotted(pill: impl IntoElement) -> impl IntoElement {

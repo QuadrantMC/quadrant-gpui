@@ -58,8 +58,15 @@ pub fn render(
                 .map(|index| {
                     let card = &cards[index];
                     let card = with_record(card, catalog.read(cx).get(&card.source, &card.id));
-                    mod_card(index, &card, CardStatus::default(), on_press.clone(), cx)
-                        .into_any_element()
+                    mod_card(
+                        index,
+                        &card,
+                        CardStatus::default(),
+                        None,
+                        on_press.clone(),
+                        cx,
+                    )
+                    .into_any_element()
                 })
                 .collect();
             mod_grid::row(rows.columns, gpui::rems(1.), elements).into_any_element()
