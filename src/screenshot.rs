@@ -8,7 +8,13 @@ use std::{path::Path, path::PathBuf, time::Duration};
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Window, WindowHandle};
 use gpui_component::{Root, WindowExt as _};
-use quadrant_core::account::id::AccountInfo;
+use quadrant_core::{
+    account::{
+        id::AccountInfo,
+        quadrant_sync::{ModpackOwner, SyncedModpack},
+    },
+    models::ModLoader,
+};
 
 use quadrant_core::models::{InstalledMod, ModSource};
 
@@ -18,7 +24,7 @@ use crate::{
     i18n::{t, t_with},
     pages::{
         AccountPage, ContentType, CurrentModpackPage, InstalledContentPage, ModpacksPage,
-        SearchPage, SettingsPage,
+        SearchPage,
     },
     route::Route,
     session::Session,
@@ -132,7 +138,39 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
             session.preview_signed_in(sample_account(), cx)
         })
     });
-    capture(window, &dir.join("account-signed-in.png"), cx).await
+    capture(window, &dir.join("account-signed-in.png"), cx).await?;
+
+    show(window, cx, Route::Modpacks)?;
+    resize(window, cx, 1300.)?;
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, window, cx| {
+            page.preview_cloud(sample_synced(), "", None, window, cx)
+        },
+    )?;
+    capture(window, &dir.join("modpacks-synced.png"), cx).await?;
+    resize(window, cx, 720.)?;
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, window, cx| {
+            page.preview_cloud(sample_synced(), "", Some("Alpha Pack"), window, cx)
+        },
+    )?;
+    capture(window, &dir.join("sync-conflict.png"), cx).await?;
+    close_dialogs(window, cx)?;
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, window, cx| {
+            page.preview_cloud(sample_synced(), "1234567", None, window, cx)
+        },
+    )?;
+    capture(window, &dir.join("share-code.png"), cx).await
 }
 
 /// An account for the signed-in pictures. Nothing is asked of Quadrant ID.
@@ -146,6 +184,48 @@ fn sample_account() -> AccountInfo {
         login: "alex".into(),
         notifications: Vec::new(),
     }
+}
+
+/// Quadrant Sync records for the signed-in pictures: one paired with the
+/// sandbox's Alpha Pack by name, one only in the cloud.
+fn sample_synced() -> Vec<SyncedModpack> {
+    let owners = vec![
+        ModpackOwner {
+            username: "alex".into(),
+            admin: true,
+        },
+        ModpackOwner {
+            username: "sam".into(),
+            admin: false,
+        },
+    ];
+    let pack = |name: &str, id: &str, version: &str, loader, last_synced| {
+        SyncedModpack {
+        name: name.into(),
+        minecraft_version: version.into(),
+        mod_loader: loader,
+        mods: r#"[{"id":"sodium","name":"sodium","source":"ModSource.modRinth","downloadUrl":"https://cdn.modrinth.com/data/fixture/sodium.jar"}]"#.into(),
+        owners: owners.clone(),
+        last_synced,
+        modpack_id: id.into(),
+    }
+    };
+    vec![
+        pack(
+            "Alpha Pack",
+            "cloud-alpha",
+            "1.21.1",
+            ModLoader::Fabric,
+            1_789_830_660,
+        ),
+        pack(
+            "Gamma Pack",
+            "cloud-gamma",
+            "1.20.4",
+            ModLoader::NeoForge,
+            1_789_000_000,
+        ),
+    ]
 }
 
 fn resize(window: WindowHandle<Root>, cx: &mut AsyncApp, height: f32) -> Result<()> {

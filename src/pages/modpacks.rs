@@ -2,10 +2,16 @@
 
 use std::path::PathBuf;
 
+use quadrant_core::{
+    account::{id::AccountInfo, quadrant_sync::SyncedModpack},
+    models::InstalledModpack,
+};
+use quadrant_host::ErrorCode;
+
 use chrono::{Local, TimeZone as _};
 use gpui::{
-    App, AppContext as _, ClickEvent, Context, Entity, FontWeight, IntoElement, ParentElement as _,
-    Render, SharedString, Styled as _, Subscription, Task, Window, div,
+    App, AppContext as _, ClickEvent, ClipboardItem, Context, Entity, FontWeight, IntoElement,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, Task, Window, div,
     prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{
@@ -24,12 +30,15 @@ use quadrant_host::QuadrantHost;
 use crate::{
     assets::MdIcon,
     backend::Backend,
+    events,
     i18n::{describe, t, t_with},
     loadable::Loadable,
+    session::Session,
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
 };
 
+mod cloud;
 mod details;
 
 /// Loader choices in the order the desktop app offers them.
@@ -85,8 +94,27 @@ impl NewModpack {
     }
 }
 
-/// A change to the modpacks folder. At most one runs at a time.
-#[derive(Clone, Debug, PartialEq)]
+/// The Quadrant Sync record a download is paired with, so the installed pack
+/// shows as synced.
+#[derive(Clone, Debug)]
+pub struct SyncTarget {
+    /// The cloud copy's sync time, in the unit Quadrant Sync gave it.
+    pub synced_at: i64,
+    pub modpack_id: String,
+}
+
+impl SyncTarget {
+    fn of(synced: &SyncedModpack) -> Self {
+        Self {
+            synced_at: synced.last_synced,
+            modpack_id: synced.modpack_id.clone(),
+        }
+    }
+}
+
+/// A change to the modpacks folder or to Quadrant Sync. At most one runs at
+/// a time.
+#[derive(Clone, Debug)]
 pub enum Op {
     Apply(String),
     Delete(String),
@@ -103,31 +131,115 @@ pub enum Op {
         name: String,
         to: PathBuf,
     },
+    /// Shares an installed modpack on Quadrant Share.
+    Share(String),
+    /// Shares a Quadrant Sync pack that isn't installed.
+    ShareRaw(Box<InstalledModpack>),
+    /// Pushes a modpack to Quadrant Sync; `overwrite` replaces a newer cloud copy.
+    Sync {
+        modpack: Box<LocalModpack>,
+        overwrite: bool,
+    },
+    /// Downloads a pack from Quadrant Sync or Quadrant Share.
+    Install {
+        modpack: Box<InstalledModpack>,
+        sync: Option<SyncTarget>,
+    },
+    Kick {
+        modpack_id: String,
+        username: String,
+    },
+    Invite {
+        modpack_id: String,
+        username: String,
+        admin: bool,
+    },
+    DeleteSynced(String),
+    /// Looks a Quadrant Share code up.
+    ResolveShare(String),
+}
+
+/// What a finished op hands back to the page.
+#[derive(Debug)]
+pub enum Outcome {
+    Done,
+    /// A Quadrant Share link for the clipboard.
+    Copy(String),
+    /// The modpack a share code stands for.
+    Shared(Box<InstalledModpack>),
 }
 
 impl Op {
-    pub async fn perform(self, host: QuadrantHost) -> anyhow::Result<()> {
+    pub async fn perform(self, host: QuadrantHost) -> anyhow::Result<Outcome> {
         match self {
-            Op::Apply(name) => host.frontend_apply_modpack(name),
-            Op::Delete(name) => host.delete_modpack(name).await,
-            Op::Create(new) => host.create_modpack(new.name, new.version, new.loader).await,
+            Op::Apply(name) => host.frontend_apply_modpack(name)?,
+            Op::Delete(name) => host.delete_modpack(name).await?,
+            Op::Create(new) => {
+                host.create_modpack(new.name, new.version, new.loader)
+                    .await?
+            }
             Op::Clear(version) => {
                 // A missing scratch pack is the normal first-run case.
                 let _ = host.delete_modpack(FREE_MODPACK.into()).await;
                 host.create_modpack(FREE_MODPACK.into(), version, ModLoader::Unknown)
                     .await?;
-                host.frontend_apply_modpack(FREE_MODPACK.into())
+                host.frontend_apply_modpack(FREE_MODPACK.into())?
             }
             Op::Update { from, to } => {
                 host.update_modpack(from, Some(to.name), Some(to.version), Some(to.loader))
-                    .await
+                    .await?
             }
-            Op::Export { name, to } => host.export_modpack_to(name, to).await,
+            Op::Export { name, to } => host.export_modpack_to(name, to).await?,
+            Op::Share(name) => {
+                let shared = host.share_modpack(name).await?;
+                return Ok(Outcome::Copy(format!(
+                    "{}{}",
+                    cloud::SHARE_URL,
+                    shared.code
+                )));
+            }
+            Op::ShareRaw(modpack) => {
+                let shared = host.share_modpack_raw(*modpack).await?;
+                return Ok(Outcome::Copy(format!(
+                    "{}{}",
+                    cloud::SHARE_URL,
+                    shared.code
+                )));
+            }
+            Op::Sync { modpack, overwrite } => host.sync_modpack(*modpack, overwrite).await?,
+            Op::Install { modpack, sync } => {
+                let name = modpack.name.clone();
+                host.install_modpack(*modpack).await?;
+                if let Some(sync) = sync {
+                    host.set_modpack_sync_date(
+                        sync.synced_at.max(0) as u64,
+                        name,
+                        Some(sync.modpack_id),
+                    )?;
+                }
+            }
+            Op::Kick {
+                modpack_id,
+                username,
+            } => host.kick_member(modpack_id, username).await?,
+            Op::Invite {
+                modpack_id,
+                username,
+                admin,
+            } => host.invite_member(modpack_id, username, admin).await?,
+            Op::DeleteSynced(modpack_id) => host.delete_synced_modpack(modpack_id).await?,
+            Op::ResolveShare(code) => {
+                let modpack = host.get_quadrant_share_modpack(code).await?;
+                return Ok(Outcome::Shared(Box::new(modpack)));
+            }
         }
+        Ok(Outcome::Done)
     }
 
-    fn done_text(&self) -> SharedString {
-        match self {
+    /// What the snackbar says once it worked, if anything. A share announces
+    /// itself through the host's `quadrantShareSubmission` event.
+    fn done_text(&self) -> Option<SharedString> {
+        Some(match self {
             Op::Apply(_) => t("setModpackSuccess"),
             Op::Delete(name) => format!("Deleted \"{name}\"").into(),
             Op::Create(new) => format!("Created \"{}\"", new.name).into(),
@@ -135,7 +247,12 @@ impl Op {
             // The desktop app's own summary of the saved details.
             Op::Update { to, .. } => format!("{} | {} | {}", to.name, to.version, to.loader).into(),
             Op::Export { name, .. } => format!("Exported \"{name}\"").into(),
-        }
+            Op::Sync { .. } => t("modpackUpdated"),
+            Op::Install { .. } => t("downloadSuccess"),
+            Op::Invite { .. } => t("invite"),
+            Op::DeleteSynced(_) => t("delete"),
+            Op::Share(_) | Op::ShareRaw(_) | Op::Kick { .. } | Op::ResolveShare(_) => return None,
+        })
     }
 
     /// The modpack whose card shows this op as running.
@@ -144,8 +261,17 @@ impl Op {
             Op::Apply(name)
             | Op::Delete(name)
             | Op::Update { from: name, .. }
-            | Op::Export { name, .. } => Some(name),
-            Op::Create(_) | Op::Clear(_) => None,
+            | Op::Export { name, .. }
+            | Op::Share(name) => Some(name),
+            Op::Sync { modpack, .. } => Some(&modpack.name),
+            Op::Create(_)
+            | Op::Clear(_)
+            | Op::ShareRaw(_)
+            | Op::Install { .. }
+            | Op::Kick { .. }
+            | Op::Invite { .. }
+            | Op::DeleteSynced(_)
+            | Op::ResolveShare(_) => None,
         }
     }
 }
@@ -249,6 +375,11 @@ impl ModpackForm {
 enum View {
     List,
     Details(LocalModpack),
+    /// A Quadrant Share or Quadrant Sync pack, with its download.
+    Shared {
+        modpack: Box<InstalledModpack>,
+        sync: Option<SyncTarget>,
+    },
 }
 
 pub struct ModpacksPage {
@@ -260,7 +391,18 @@ pub struct ModpacksPage {
     search: Entity<InputState>,
     /// The newest listing request; replacing it drops a stale one's answer.
     listing: Task<()>,
+    session: Entity<Session>,
+    /// The signed-in account's Quadrant Sync packs; `Idle` while signed out.
+    synced: Loadable<Vec<SyncedModpack>>,
+    synced_listing: Task<()>,
+    /// Cards whose Quadrant Sync panel is unfolded, by cloud modpack id.
+    open_panels: Vec<String>,
+    /// How far the running download is, from the host's progress events.
+    install_progress: Option<f64>,
+    /// A sync the cloud refused for being older, waiting for the dialog.
+    sync_conflict: Option<LocalModpack>,
     _search_changed: Subscription,
+    _session_changed: Subscription,
 }
 
 impl ModpacksPage {
@@ -272,6 +414,18 @@ impl ModpacksPage {
                 cx.notify();
             }
         });
+        let session = Session::global(cx);
+        let session_changed = cx.observe(&session, |this, _, cx| this.load_synced(cx));
+        events::listen(&["refreshSyncedModpacks"], cx, |this, _, cx| {
+            this.load_synced(cx)
+        });
+        events::listen(&["modpackDownloadProgress"], cx, |this, event, cx| {
+            if matches!(this.running, Some(Op::Install { .. })) {
+                // Only the op's own answer confirms success.
+                this.install_progress = event.payload.as_f64().map(|done| done.min(0.99));
+                cx.notify();
+            }
+        });
         let mut page = Self {
             view: View::List,
             modpacks: Loadable::Idle,
@@ -279,11 +433,52 @@ impl ModpacksPage {
             running: None,
             search,
             listing: Task::ready(()),
+            session,
+            synced: Loadable::Idle,
+            synced_listing: Task::ready(()),
+            open_panels: Vec::new(),
+            install_progress: None,
+            sync_conflict: None,
             _search_changed: search_changed,
+            _session_changed: session_changed,
         };
         page.refresh(cx);
         page.load_versions(cx);
+        page.load_synced(cx);
         page
+    }
+
+    /// The signed-in account, when it has Quadrant Sync.
+    fn account(&self, cx: &App) -> Option<AccountInfo> {
+        self.session.read(cx).signed_in().cloned()
+    }
+
+    /// Reads the account's Quadrant Sync packs, or forgets them once signed out.
+    fn load_synced(&mut self, cx: &mut Context<Self>) {
+        let syncs = self
+            .account(cx)
+            .is_some_and(|account| account.quadrant_sync_limit != 0);
+        if !syncs {
+            self.synced = Loadable::Idle;
+            self.synced_listing = Task::ready(());
+            self.open_panels.clear();
+            cx.notify();
+            return;
+        }
+        if !matches!(self.synced, Loadable::Ready(_)) {
+            self.synced = Loadable::Loading;
+        }
+        let task = Backend::global(cx).run(cx, |host| async move {
+            host.get_synced_modpacks(true, None).await
+        });
+        self.synced_listing = cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.synced = Loadable::from_result(result);
+                cx.notify();
+            });
+        });
+        cx.notify();
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -327,17 +522,51 @@ impl ModpacksPage {
             return;
         }
         self.running = Some(op.clone());
-        let done_text = op.done_text();
-        let task = Backend::global(cx).run(cx, move |host| op.perform(host));
+        self.install_progress = None;
+        let task = Backend::global(cx).run(cx, {
+            let op = op.clone();
+            move |host| op.perform(host)
+        });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.running = None;
+                this.install_progress = None;
                 match result {
-                    Ok(()) => snackbar::show(cx, SnackbarKind::Success, done_text),
-                    Err(error) => snackbar::show(cx, SnackbarKind::Error, describe(error)),
+                    Ok(outcome) => {
+                        match outcome {
+                            Outcome::Done => {}
+                            Outcome::Copy(link) => {
+                                cx.write_to_clipboard(ClipboardItem::new_string(link))
+                            }
+                            Outcome::Shared(modpack) => this.show(
+                                View::Shared {
+                                    modpack,
+                                    sync: None,
+                                },
+                                cx,
+                            ),
+                        }
+                        if let Some(text) = op.done_text() {
+                            snackbar::show(cx, SnackbarKind::Success, text);
+                        }
+                    }
+                    Err(error) => match op {
+                        Op::Sync {
+                            modpack,
+                            overwrite: false,
+                        } if is_error(&error, ErrorCode::CloudSyncNewer) => {
+                            this.sync_conflict = Some(*modpack);
+                        }
+                        Op::ResolveShare(_) => {
+                            log::warn!("Quadrant Share lookup failed: {}", describe(error));
+                            snackbar::show(cx, SnackbarKind::Error, t("unsupportedDownload"));
+                        }
+                        _ => snackbar::show(cx, SnackbarKind::Error, describe(error)),
+                    },
                 }
                 this.refresh(cx);
+                this.load_synced(cx);
             });
         })
         .detach();
@@ -538,6 +767,37 @@ impl ModpacksPage {
         }
     }
 
+    /// Shows `synced` as the account's Quadrant Sync packs with the first
+    /// one's panel open, `search` in the search box, and `conflict`'s sync
+    /// refused, for screenshots. Nothing is asked of Quadrant Sync.
+    #[cfg(feature = "screenshot")]
+    pub fn preview_cloud(
+        &mut self,
+        synced: Vec<SyncedModpack>,
+        search: &str,
+        conflict: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.synced_listing = Task::ready(());
+        self.open_panels = synced
+            .first()
+            .map(|modpack| modpack.modpack_id.clone())
+            .into_iter()
+            .collect();
+        self.synced = Loadable::Ready(synced);
+        self.search.update(cx, |input, cx| {
+            input.set_value(search.to_string(), window, cx)
+        });
+        if let (Loadable::Ready(modpacks), Some(name)) = (&self.modpacks, conflict) {
+            self.sync_conflict = modpacks
+                .iter()
+                .find(|modpack| modpack.name == name)
+                .cloned();
+        }
+        cx.notify();
+    }
+
     fn show(&mut self, view: View, cx: &mut Context<Self>) {
         self.view = view;
         cx.notify();
@@ -625,17 +885,63 @@ impl ModpacksPage {
         &self,
         index: usize,
         modpack: &LocalModpack,
+        synced: Option<&SyncedModpack>,
+        account: Option<&AccountInfo>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let name = SharedString::from(modpack.name.clone());
         let running_here =
             self.running.as_ref().and_then(Op::target) == Some(modpack.name.as_str());
         let busy = self.running.is_some();
-        let pending = |id: &'static str, tone, label: &str, icon| {
-            theme::pill_button((id, index), tone, t(label), Some(icon), cx)
-                .tooltip("Not available in this build yet")
-                .disabled(true)
+        let signed_in = account.is_some();
+        let share = {
+            let name = name.clone();
+            theme::pill_button(
+                ("share", index),
+                Tone::Primary,
+                t("share"),
+                Some(MdIcon::Share),
+                cx,
+            )
+            .loading(running_here && matches!(self.running, Some(Op::Share(_))))
+            .disabled(busy || !signed_in)
+            .when(!signed_in, |this| this.tooltip(t("errorSignedOut")))
+            .on_click(cx.listener(move |this, _, _, cx| this.run(Op::Share(name.to_string()), cx)))
         };
+        let sync = {
+            let modpack = modpack.clone();
+            theme::pill_button(
+                ("sync", index),
+                Tone::Positive,
+                t("sync"),
+                Some(MdIcon::Sync),
+                cx,
+            )
+            .loading(running_here && matches!(self.running, Some(Op::Sync { .. })))
+            .disabled(busy || !signed_in)
+            .when(!signed_in, |this| this.tooltip(t("errorSignedOut")))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.run(
+                    Op::Sync {
+                        modpack: Box::new(modpack.clone()),
+                        overwrite: false,
+                    },
+                    cx,
+                )
+            }))
+        };
+        let mut line = metadata_line(modpack);
+        if let Some(synced) = synced {
+            line.push_str(" | ");
+            line.push_str(&t_with(
+                "cloudSyncDate",
+                &[("date", &cloud::format_sync_date(synced.last_synced))],
+            ));
+        }
+        let panel = synced.zip(account).map(|(synced, account)| {
+            self.render_sync_panel(synced, Some(&modpack.name), account, cx)
+                .into_any_element()
+        });
         let apply = if modpack.is_applied {
             theme::pill_button(
                 ("apply", index),
@@ -729,26 +1035,26 @@ impl ModpacksPage {
                             .font_weight(FontWeight::EXTRA_BOLD)
                             .child(name),
                     )
-                    .child(theme::badge(t("badgeLocal"), MdIcon::Computer)),
+                    .child(theme::badge(t("badgeLocal"), MdIcon::Computer))
+                    .when(synced.is_some(), |this| {
+                        this.child(theme::synced_badge(t("badgeSynced")))
+                    }),
             )
-            .child(
-                div()
-                    .text_color(rgb(theme::TEXT_MUTED))
-                    .child(metadata_line(modpack)),
-            )
+            .child(div().text_color(rgb(theme::TEXT_MUTED)).child(line))
             .child(
                 h_flex()
                     .my_2()
                     .flex_wrap()
                     .gap_4()
                     .child(apply)
-                    .child(pending("share", Tone::Primary, "share", MdIcon::Share))
-                    .child(pending("sync", Tone::Positive, "sync", MdIcon::Sync))
+                    .child(share)
+                    .child(sync)
                     .child(update)
                     .child(export)
                     .child(delete)
                     .child(details),
             )
+            .children(panel)
     }
 
     fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -773,11 +1079,25 @@ impl ModpacksPage {
                     .into_any_element(),
             ),
             Loadable::Ready(modpacks) => {
-                let shown: Vec<_> = modpacks
-                    .iter()
-                    .filter(|modpack| matches_query(modpack, &query))
+                let account = self.account(cx);
+                let synced = match &self.synced {
+                    Loadable::Ready(synced) => synced.as_slice(),
+                    Loadable::Idle | Loadable::Loading | Loadable::Failed(_) => &[],
+                };
+                let shown: Vec<_> = cloud::merge_modpacks(modpacks, synced, &query)
+                    .into_iter()
                     .enumerate()
-                    .map(|(index, modpack)| self.render_card(index, modpack, cx).into_any_element())
+                    .filter_map(|(index, row)| match (row.local, row.synced, &account) {
+                        (Some(local), synced, account) => Some(
+                            self.render_card(index, local, synced, account.as_ref(), cx)
+                                .into_any_element(),
+                        ),
+                        (None, Some(synced), Some(account)) => Some(
+                            self.render_cloud_card(index, synced, account, cx)
+                                .into_any_element(),
+                        ),
+                        (None, _, _) => None,
+                    })
                     .collect();
                 if shown.is_empty() {
                     status_row("No modpacks here yet.".into_any_element())
@@ -816,17 +1136,57 @@ fn field(label: SharedString, control: impl IntoElement) -> impl IntoElement {
         .child(control)
 }
 
+/// Whether `error` is the classified failure `code`.
+fn is_error(error: &anyhow::Error, code: ErrorCode) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<ErrorCode>() == Some(&code))
+}
+
 impl Render for ModpacksPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(modpack) = self.sync_conflict.take() {
+            let page = cx.entity();
+            window.defer(cx, move |window, cx| {
+                page.update(cx, |page, cx| page.confirm_sync_anyway(modpack, window, cx))
+            });
+        }
         let page = v_flex().size_full().overflow_y_scrollbar();
         match &self.view {
-            View::List => page
-                .child(self.render_toolbar(cx))
-                .child(self.render_list(cx)),
+            View::List => {
+                let banner = cloud::parse_share_code(&self.search.read(cx).value()).map(|code| {
+                    let signed_in = self.account(cx).is_some();
+                    self.render_share_banner(code, signed_in, cx)
+                        .into_any_element()
+                });
+                page.child(self.render_toolbar(cx))
+                    .children(banner)
+                    .child(self.render_list(cx))
+            }
             View::Details(modpack) => {
                 let header = format!("{} | {}", modpack.name, metadata_line(modpack));
                 let mods = modpack.mods.clone();
                 page.child(details::render(header.into(), None, &mods, cx))
+            }
+            View::Shared { modpack, sync } => {
+                let header = format!(
+                    "{} | {} | {} | {}",
+                    modpack.name,
+                    modpack.mod_loader,
+                    modpack.version,
+                    t_with("modCount", &[("amount", &modpack.mods.len().to_string())])
+                );
+                let download = self
+                    .download_button(
+                        "shared-download",
+                        t("download"),
+                        (**modpack).clone(),
+                        sync.clone(),
+                        cx,
+                    )
+                    .into_any_element();
+                let mods = modpack.mods.clone();
+                page.child(details::render(header.into(), Some(download), &mods, cx))
             }
         }
     }
