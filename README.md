@@ -105,7 +105,7 @@ The NSIS uninstaller removes the app, its Start menu entry and its uninstall ent
 
 ## Releasing
 
-Versions follow Quadrant's `YY.MM.REVISION` with the channel as the pre-release: `26.10.0-stable`, `26.10.1-preview.1`. Set it in `Cargo.toml`, commit, and push the tag `v<version>`. `.github/workflows/release.yml` then checks the tag against `Cargo.toml` and builds Linux x64 and arm64 (deb, AppImage, rpm), Windows x64 and arm64 (NSIS) and macOS arm64 (an ad-hoc signed `.app` in a dmg, plus `.app.tar.gz` for the updater). It signs every updater artifact with Tauri's signer, uploads it all to the release, assembles `latest.json` and `PUT`s it to `/api/any/quadrant-native/add_updates/{channel}/{tag}`. Stable releases arrive unpublished, and RelMan publishes them like Quadrant's.
+Versions follow Quadrant's `YY.MM.REVISION` with the channel as the pre-release: `26.10.0-alpha`, `26.10.1-preview.1`, `26.11.0-stable`. Tags ending in `-stable`, `-preview` or `-alpha` start a release. Set it in `Cargo.toml`, commit, and push the tag `v<version>`. `.github/workflows/release.yml` then checks the tag against `Cargo.toml` and builds Linux x64 and arm64 (deb, AppImage, rpm), Windows x64 and arm64 (NSIS) and macOS arm64 (an ad-hoc signed `.app` in a dmg, plus `.app.tar.gz` for the updater). It signs every updater artifact with Tauri's signer, uploads it all to the release, and assembles `latest.json`. Without `TAURI_SIGNING_PRIVATE_KEY` it skips signing and `latest.json`. It `PUT`s `latest.json` to `/api/any/quadrant-native/add_updates/{channel}/{tag}` only when the repository variable `SUBMIT_UPDATES` is `true`, so by default no release reaches anyone's updater. Stable releases arrive unpublished, and RelMan publishes them like Quadrant's.
 
 Secrets:
 
@@ -123,6 +123,7 @@ Variables:
 |---|---|---|
 | `RELEASES_REPO` | this repository | the repository whose release carries the downloads |
 | `ASSET_BASE_URL` | `https://github.com/<RELEASES_REPO>/releases/download` | where `latest.json` says the files are, as `<base>/<tag>/<file>` |
+| `SUBMIT_UPDATES` | unset | `true` submits each release to the update server |
 
 This repository is private, so its release assets can't be downloaded by users or by the updater. Before the first release, point `RELEASES_REPO` at a public repository (for example a `quadrant-native-releases` repository under QuadrantMC) with a `RELEASES_REPO_TOKEN` that can write to it, or serve the files elsewhere and set `ASSET_BASE_URL`.
 

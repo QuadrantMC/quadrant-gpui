@@ -1,14 +1,17 @@
 name: Release
 
 # A tag `v<version>` whose version equals Cargo.toml's builds every package,
-# signs the updater artifacts, publishes them with latest.json and submits
-# that to Quadrant's update server as app `quadrant-native`. See README,
-# "Releasing".
+# signs the updater artifacts and publishes them with latest.json. Submitting
+# latest.json to Quadrant's update server (app `quadrant-native`) is opt-in:
+# it only runs when the repository variable SUBMIT_UPDATES is `true`. Signing
+# and latest.json are skipped when TAURI_SIGNING_PRIVATE_KEY isn't set. See
+# README, "Releasing".
 on:
   push:
     tags:
       - "v*-stable*"
       - "v*-preview*"
+      - "v*-alpha*"
 
 permissions:
   contents: read
@@ -118,6 +121,7 @@ jobs:
       QUADRANT_OAUTH2_CLIENT_ID: ${{ secrets.QUADRANT_OAUTH2_CLIENT_ID }}
       QUADRANT_OAUTH2_CLIENT_SECRET: ${{ secrets.QUADRANT_OAUTH2_CLIENT_SECRET }}
       ETERNAL_API_TOKEN: ${{ secrets.ETERNAL_API_TOKEN }}
+      HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
       # linuxdeploy runs as an AppImage; runners have no FUSE.
       APPIMAGE_EXTRACT_AND_RUN: "1"
     defaults:
@@ -192,6 +196,7 @@ jobs:
 
       # Tauri's signer, with Quadrant's updater key: one secret signs both apps.
       - name: Sign the updater artifacts
+        if: env.HAS_SIGNING_KEY == 'true'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -228,6 +233,7 @@ jobs:
         with:
           name: platforms-${{ matrix.platform }}-${{ matrix.arch }}
           path: platforms-${{ matrix.platform }}-${{ matrix.arch }}.json
+          if-no-files-found: ignore
 
   manifest:
     needs: [prepare, build]
@@ -244,13 +250,20 @@ jobs:
           merge-multiple: true
 
       - name: Assemble latest.json
+        id: latest
         run: |
+          if ! ls platforms-*.json >/dev/null 2>&1; then
+            echo "::notice::No signed updater artifacts (TAURI_SIGNING_PRIVATE_KEY isn't set), so no latest.json."
+            exit 0
+          fi
+          echo "built=true" >> "$GITHUB_OUTPUT"
           jq -s --arg version "$VERSION" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{version: $version, notes: "See the assets to download this version and install.", pub_date: $date, platforms: add}' \
             platforms-*.json > latest.json
           cat latest.json
 
       - name: Upload latest.json
+        if: steps.latest.outputs.built == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLIC_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN || secrets.GITHUB_TOKEN }}
@@ -260,8 +273,10 @@ jobs:
             GH_TOKEN="$PUBLIC_TOKEN" gh release upload "$TAG" latest.json --repo "$RELEASES_REPO" --clobber
           fi
 
-      # Stable releases arrive unpublished; the RelMan bot publishes them.
+      # Opt-in, so a tag never reaches users' updaters by accident. Stable
+      # releases arrive unpublished; the RelMan bot publishes them.
       - name: Submit the release to the update server
+        if: vars.SUBMIT_UPDATES == 'true' && steps.latest.outputs.built == 'true'
         env:
           TOKEN: ${{ secrets.VERSION_UPDATE_TRIGGER_TOKEN }}
           CHANNEL: ${{ needs.prepare.outputs.channel }}
