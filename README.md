@@ -4,7 +4,7 @@ A native desktop frontend for [Quadrant](https://github.com/QuadrantMC/quadrant)
 
 It drives the same backend as the Tauri app through the `quadrant-host` crate. It shares that app's data folder (`<data dir>/dev.mrquantumoff.mcmodpackmanager`), so settings and modpacks are the same in both.
 
-Status: phase 2. Every page of the rail works: Apply (with Quadrant Sync and Quadrant Share once signed in), Current modpack, Search and mod install, Installed content, Account and Settings. The title bar's notification bell does nothing yet.
+Status: phase 2. Every page of the rail works: Apply (with Quadrant Share, and Quadrant Sync once signed in), Current modpack, Search and mod install, Installed content, Account and Settings. The title bar's notification bell does nothing yet.
 
 ## Build and run
 

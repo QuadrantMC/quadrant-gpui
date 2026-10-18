@@ -891,8 +891,7 @@ impl ModpacksPage {
                 cx,
             )
             .loading(running_here && matches!(self.running, Some(Op::Share(_))))
-            .disabled(busy || !signed_in)
-            .when(!signed_in, |this| this.tooltip(t("errorSignedOut")))
+            .disabled(busy)
             .on_click(cx.listener(move |this, _, _, cx| this.run(Op::Share(name.to_string()), cx)))
         };
         let sync = {
@@ -1141,11 +1140,8 @@ impl Render for ModpacksPage {
         let page = v_flex().size_full().overflow_y_scrollbar();
         match &self.view {
             View::List => {
-                let banner = cloud::parse_share_code(&self.search.read(cx).value()).map(|code| {
-                    let signed_in = self.account(cx).is_some();
-                    self.render_share_banner(code, signed_in, cx)
-                        .into_any_element()
-                });
+                let banner = cloud::parse_share_code(&self.search.read(cx).value())
+                    .map(|code| self.render_share_banner(code, cx).into_any_element());
                 page.child(self.render_toolbar(cx))
                     .children(banner)
                     .child(self.render_list(cx))

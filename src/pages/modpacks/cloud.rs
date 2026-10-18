@@ -563,7 +563,6 @@ impl ModpacksPage {
     pub(super) fn render_share_banner(
         &self,
         code: String,
-        signed_in: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let resolving = matches!(self.running, Some(Op::ResolveShare(_)));
@@ -580,8 +579,7 @@ impl ModpacksPage {
         let button = theme::pill_button("share-download", tone, label, None, cx)
             .w_full()
             .mt_4()
-            .disabled(self.running.is_some() || !signed_in)
-            .when(!signed_in, |this| this.tooltip(t("errorSignedOut")))
+            .disabled(self.running.is_some())
             .on_click(cx.listener({
                 let code = code.clone();
                 move |this, _, _, cx| this.run(Op::ResolveShare(code.clone()), cx)
