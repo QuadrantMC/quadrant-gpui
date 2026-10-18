@@ -60,6 +60,28 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     capture(window, &dir.join("delete-confirm.png"), cx).await?;
     close_dialogs(window, cx)?;
 
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, window, cx| page.preview(Some("Alpha Pack"), true, window, cx),
+    )?;
+    capture(window, &dir.join("update-dialog.png"), cx).await?;
+    close_dialogs(window, cx)?;
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, window, cx| page.preview(Some("Alpha Pack"), false, window, cx),
+    )?;
+    capture(window, &dir.join("details.png"), cx).await?;
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, window, cx| page.preview(None, false, window, cx),
+    )?;
+
     let snackbars = dir.join("snackbar");
     std::fs::create_dir_all(&snackbars)?;
     cx.update(|cx| snackbar::show(cx, SnackbarKind::Success, t("setModpackSuccess")));

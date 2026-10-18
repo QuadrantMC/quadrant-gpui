@@ -1,9 +1,12 @@
 //! The Apply page: local modpacks, after `ApplyPage` in the desktop app.
 
+use std::path::PathBuf;
+
 use chrono::{Local, TimeZone as _};
 use gpui::{
     App, AppContext as _, ClickEvent, Context, Entity, FontWeight, IntoElement, ParentElement as _,
-    Render, SharedString, Styled as _, Subscription, Task, Window, div, px, rgb,
+    Render, SharedString, Styled as _, Subscription, Task, Window, div,
+    prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{
     Disableable as _, IndexPath, WindowExt as _,
@@ -26,6 +29,8 @@ use crate::{
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
 };
+
+mod details;
 
 /// Loader choices in the order the desktop app offers them.
 const LOADERS: [ModLoader; 13] = [
@@ -89,6 +94,15 @@ pub enum Op {
     /// Replaces the applied modpack with an empty one, like the desktop app's
     /// "Clear" button. Carries the Minecraft version the empty pack targets.
     Clear(String),
+    /// Renames a modpack or changes its version or loader.
+    Update {
+        from: String,
+        to: NewModpack,
+    },
+    Export {
+        name: String,
+        to: PathBuf,
+    },
 }
 
 impl Op {
@@ -104,6 +118,11 @@ impl Op {
                     .await?;
                 host.frontend_apply_modpack(FREE_MODPACK.into())
             }
+            Op::Update { from, to } => {
+                host.update_modpack(from, Some(to.name), Some(to.version), Some(to.loader))
+                    .await
+            }
+            Op::Export { name, to } => host.export_modpack_to(name, to).await,
         }
     }
 
@@ -113,13 +132,19 @@ impl Op {
             Op::Delete(name) => format!("Deleted \"{name}\"").into(),
             Op::Create(new) => format!("Created \"{}\"", new.name).into(),
             Op::Clear(_) => "Cleared the applied modpack".into(),
+            // The desktop app's own summary of the saved details.
+            Op::Update { to, .. } => format!("{} | {} | {}", to.name, to.version, to.loader).into(),
+            Op::Export { name, .. } => format!("Exported \"{name}\"").into(),
         }
     }
 
     /// The modpack whose card shows this op as running.
     fn target(&self) -> Option<&str> {
         match self {
-            Op::Apply(name) | Op::Delete(name) => Some(name),
+            Op::Apply(name)
+            | Op::Delete(name)
+            | Op::Update { from: name, .. }
+            | Op::Export { name, .. } => Some(name),
             Op::Create(_) | Op::Clear(_) => None,
         }
     }
@@ -204,13 +229,13 @@ impl VersionField {
 }
 
 #[derive(Clone)]
-struct CreateForm {
+struct ModpackForm {
     name: Entity<InputState>,
     version: VersionField,
     loader: Entity<SelectState<Vec<LoaderItem>>>,
 }
 
-impl CreateForm {
+impl ModpackForm {
     fn submit(&self, cx: &App) -> Result<NewModpack, &'static str> {
         NewModpack::parse(
             &self.name.read(cx).value(),
@@ -220,7 +245,14 @@ impl CreateForm {
     }
 }
 
+/// What the page shows: the list, or one modpack's mods.
+enum View {
+    List,
+    Details(LocalModpack),
+}
+
 pub struct ModpacksPage {
+    view: View,
     modpacks: Loadable<Vec<LocalModpack>>,
     /// Minecraft release versions, newest first.
     versions: Loadable<Vec<SharedString>>,
@@ -241,6 +273,7 @@ impl ModpacksPage {
             }
         });
         let mut page = Self {
+            view: View::List,
             modpacks: Loadable::Idle,
             versions: Loadable::Idle,
             running: None,
@@ -341,24 +374,64 @@ impl ModpacksPage {
     }
 
     pub fn open_create_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_form(None, window, cx);
+    }
+
+    /// The desktop app's `ModpackEditDialog` on an existing modpack.
+    pub fn open_update_dialog(
+        &mut self,
+        modpack: LocalModpack,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_form(Some(modpack), window, cx);
+    }
+
+    /// Creates a modpack, or updates `editing` when there is one.
+    fn open_form(
+        &mut self,
+        editing: Option<LocalModpack>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let version = match &self.versions {
             Loadable::Ready(versions) => {
+                let selected = editing
+                    .as_ref()
+                    .and_then(|modpack| versions.iter().position(|each| *each == modpack.version))
+                    .unwrap_or_default();
                 let versions = SearchableVec::new(versions.clone());
                 VersionField::Pick(cx.new(|cx| {
-                    SelectState::new(versions, Some(IndexPath::default()), window, cx)
-                        .searchable(true)
+                    SelectState::new(
+                        versions,
+                        Some(IndexPath::default().row(selected)),
+                        window,
+                        cx,
+                    )
+                    .searchable(true)
                 }))
             }
             Loadable::Idle | Loadable::Loading | Loadable::Failed(_) => {
-                VersionField::Type(cx.new(|cx| InputState::new(window, cx).placeholder("1.21.1")))
+                let typed = editing.as_ref().map(|modpack| modpack.version.clone());
+                VersionField::Type(cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .placeholder("1.21.1")
+                        .default_value(typed.unwrap_or_default())
+                }))
             }
         };
-        let form = CreateForm {
-            name: cx.new(|cx| InputState::new(window, cx)),
+        let loader = editing
+            .as_ref()
+            .and_then(|modpack| LOADERS.iter().position(|each| *each == modpack.mod_loader))
+            .map(|row| IndexPath::default().row(row));
+        let name = editing.as_ref().map(|modpack| modpack.name.clone());
+        let form = ModpackForm {
+            name: cx.new(|cx| InputState::new(window, cx).default_value(name.unwrap_or_default())),
             version,
             loader: cx
-                .new(|cx| SelectState::new(LOADERS.map(LoaderItem).to_vec(), None, window, cx)),
+                .new(|cx| SelectState::new(LOADERS.map(LoaderItem).to_vec(), loader, window, cx)),
         };
+        let original = editing.map(|modpack| modpack.name);
         let page = cx.entity();
         window.open_dialog(cx, move |dialog, _, cx| {
             let version_field = match &form.version {
@@ -372,27 +445,42 @@ impl ModpacksPage {
             let submit = {
                 let form = form.clone();
                 let page = page.clone();
+                let original = original.clone();
                 move |_: &ClickEvent, window: &mut Window, cx: &mut App| match form.submit(cx) {
                     Ok(new) => {
-                        page.update(cx, |page, cx| page.run(Op::Create(new), cx));
+                        let op = match &original {
+                            Some(from) => Op::Update {
+                                from: from.clone(),
+                                to: new,
+                            },
+                            None => Op::Create(new),
+                        };
+                        page.update(cx, |page, cx| page.run(op, cx));
                         window.close_dialog(cx);
                     }
                     Err(problem) => snackbar::show(cx, SnackbarKind::Error, problem),
                 }
             };
+            let (title, name_label) = match original {
+                Some(_) => (t("update"), t("chooseModpack")),
+                None => (t("createModpack"), t("name")),
+            };
             theme::dialog_surface(dialog)
                 .w(px(560.))
-                .title(theme::dialog_title(t("createModpack")))
+                .title(theme::dialog_title(title.clone()))
                 .child(
                     v_flex()
                         .gap_4()
+                        .when(original.is_some(), |this| {
+                            this.child(t("updateModpackDetails"))
+                        })
                         .child(field(t("chooseVersion"), version_field))
                         .child(field(
                             t("choosePreferredAPI"),
                             pill(Select::new(&form.loader).placeholder("-").appearance(false)),
                         ))
                         .child(field(
-                            t("name"),
+                            name_label,
                             pill(Input::new(&form.name).appearance(false)),
                         )),
                 )
@@ -400,14 +488,8 @@ impl ModpacksPage {
                     DialogFooter::new()
                         .justify_start()
                         .child(
-                            theme::pill_button(
-                                "create",
-                                Tone::Positive,
-                                t("createModpack"),
-                                None,
-                                cx,
-                            )
-                            .on_click(submit),
+                            theme::pill_button("create", Tone::Positive, title, None, cx)
+                                .on_click(submit),
                         )
                         .child(
                             theme::cancel_button("cancel", t("cancel"), cx)
@@ -415,6 +497,50 @@ impl ModpacksPage {
                         ),
                 )
         });
+    }
+
+    /// Asks where to save the export, then exports there.
+    fn export(&mut self, name: String, cx: &mut Context<Self>) {
+        let folder = dirs::download_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let chosen = cx.prompt_for_new_path(&folder, Some(&format!("{name}.quadrantExport.zip")));
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(to))) = chosen.await else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| this.run(Op::Export { name, to }, cx));
+        })
+        .detach();
+    }
+
+    /// Opens `name`'s Details or edit dialog, or goes back to the list, for
+    /// screenshots.
+    #[cfg(feature = "screenshot")]
+    pub fn preview(
+        &mut self,
+        name: Option<&str>,
+        edit: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let found = match (&self.modpacks, name) {
+            (Loadable::Ready(modpacks), Some(name)) => modpacks
+                .iter()
+                .find(|modpack| modpack.name == name)
+                .cloned(),
+            _ => None,
+        };
+        match found {
+            Some(modpack) if edit => self.open_update_dialog(modpack, window, cx),
+            Some(modpack) => self.show(View::Details(modpack), cx),
+            None => self.show(View::List, cx),
+        }
+    }
+
+    fn show(&mut self, view: View, cx: &mut Context<Self>) {
+        self.view = view;
+        cx.notify();
     }
 
     pub fn confirm_delete(
@@ -547,6 +673,47 @@ impl ModpacksPage {
                     this.confirm_delete(name.clone(), window, cx)
                 }))
             };
+        let update = {
+            let modpack = modpack.clone();
+            theme::pill_button(
+                ("update", index),
+                Tone::Primary,
+                t("update"),
+                Some(MdIcon::Edit),
+                cx,
+            )
+            .loading(running_here && matches!(self.running, Some(Op::Update { .. })))
+            .disabled(busy)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_update_dialog(modpack.clone(), window, cx)
+            }))
+        };
+        let export = {
+            let name = name.clone();
+            theme::pill_button(
+                ("export", index),
+                Tone::Neutral,
+                t("export"),
+                Some(MdIcon::Archive),
+                cx,
+            )
+            .loading(running_here && matches!(self.running, Some(Op::Export { .. })))
+            .disabled(busy)
+            .on_click(cx.listener(move |this, _, _, cx| this.export(name.to_string(), cx)))
+        };
+        let details = {
+            let modpack = modpack.clone();
+            theme::pill_button(
+                ("details", index),
+                Tone::Neutral,
+                t("details"),
+                Some(MdIcon::Info),
+                cx,
+            )
+            .on_click(
+                cx.listener(move |this, _, _, cx| this.show(View::Details(modpack.clone()), cx)),
+            )
+        };
         v_flex()
             .mx_5()
             .p_4()
@@ -577,10 +744,10 @@ impl ModpacksPage {
                     .child(apply)
                     .child(pending("share", Tone::Primary, "share", MdIcon::Share))
                     .child(pending("sync", Tone::Positive, "sync", MdIcon::Sync))
-                    .child(pending("update", Tone::Primary, "update", MdIcon::Edit))
-                    .child(pending("export", Tone::Neutral, "export", MdIcon::Archive))
+                    .child(update)
+                    .child(export)
                     .child(delete)
-                    .child(pending("details", Tone::Neutral, "details", MdIcon::Info)),
+                    .child(details),
             )
     }
 
@@ -651,11 +818,17 @@ fn field(label: SharedString, control: impl IntoElement) -> impl IntoElement {
 
 impl Render for ModpacksPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .size_full()
-            .overflow_y_scrollbar()
-            .child(self.render_toolbar(cx))
-            .child(self.render_list(cx))
+        let page = v_flex().size_full().overflow_y_scrollbar();
+        match &self.view {
+            View::List => page
+                .child(self.render_toolbar(cx))
+                .child(self.render_list(cx)),
+            View::Details(modpack) => {
+                let header = format!("{} | {}", modpack.name, metadata_line(modpack));
+                let mods = modpack.mods.clone();
+                page.child(details::render(header.into(), None, &mods, cx))
+            }
+        }
     }
 }
 
@@ -788,8 +961,29 @@ mod tests {
         run(Op::Clear("1.21.1".into())).unwrap();
         assert_eq!(names(), ["Alpha", "free*"]);
 
-        run(Op::Delete("Alpha".into())).unwrap();
+        run(Op::Update {
+            from: "Alpha".into(),
+            to: NewModpack {
+                name: "Beta".into(),
+                version: "1.20.1".into(),
+                loader: ModLoader::Forge,
+            },
+        })
+        .unwrap();
+        assert_eq!(names(), ["Beta", "free*"]);
+        let manifest = std::fs::read_to_string(mc.join("modpacks/Beta/modConfigV2.json")).unwrap();
+        assert!(manifest.contains("\"modLoader\": \"Forge\""), "{manifest}");
+
+        let archive = root.join("Beta.quadrantExport.zip");
+        run(Op::Export {
+            name: "Beta".into(),
+            to: archive.clone(),
+        })
+        .unwrap();
+        assert!(std::fs::metadata(&archive).unwrap().len() > 0);
+
+        run(Op::Delete("Beta".into())).unwrap();
         assert_eq!(names(), ["free*"]);
-        assert!(!mc.join("modpacks/Alpha").exists());
+        assert!(!mc.join("modpacks/Beta").exists());
     }
 }
