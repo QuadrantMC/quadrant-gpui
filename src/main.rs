@@ -11,7 +11,11 @@ mod screenshot;
 mod snackbar;
 mod theme;
 
-use std::{ffi::OsString, path::PathBuf, process::ExitCode};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use gpui::{
@@ -68,7 +72,15 @@ fn parse_args(
     Ok(parsed)
 }
 
+/// The OS keyring service the Quadrant ID sign-in is kept under. The desktop
+/// app's data folder shares the desktop app's sign-in; any other data folder
+/// gets one of its own, so a sandbox never acts as the user's real account.
+fn keyring_service(custom_data_dir: Option<&Path>) -> Option<String> {
+    custom_data_dir.map(|dir| format!("{APP_IDENTIFIER}@{}", dir.display()))
+}
+
 fn build_host(data_dir: Option<PathBuf>, mc_folder: Option<PathBuf>) -> Result<QuadrantHost> {
+    let keyring_service = keyring_service(data_dir.as_deref());
     let data_dir = match data_dir {
         Some(data_dir) => data_dir,
         None => dirs::data_dir()
@@ -83,6 +95,9 @@ fn build_host(data_dir: Option<PathBuf>, mc_folder: Option<PathBuf>) -> Result<Q
     );
     // The host persists this as the `mcFolder` setting in the data folder.
     options.mc_folder = mc_folder;
+    if let Some(service) = keyring_service {
+        options.keyring_service_name = service;
+    }
     let host = QuadrantHost::new(options)?;
     host.init_config()?;
     Ok(host)
@@ -197,6 +212,14 @@ mod tests {
             |key: &str| (key == "QUADRANT_GPUI_DATA_DIR").then(|| OsString::from("data"));
         assert!(parse_args(args(&["--mc-folder", "mc"]), env_data).is_ok());
         assert_eq!(parse_args(args(&[]), |_| None).unwrap(), Args::default());
+    }
+
+    #[test]
+    fn a_custom_data_folder_keeps_its_own_sign_in() {
+        assert_eq!(keyring_service(None), None);
+        let sandbox = keyring_service(Some(Path::new("sandbox"))).unwrap();
+        assert_ne!(sandbox, quadrant_core::account::KEYRING_SERVICE);
+        assert_ne!(Some(sandbox), keyring_service(Some(Path::new("other"))));
     }
 
     #[test]
