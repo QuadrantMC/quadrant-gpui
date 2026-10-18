@@ -15,7 +15,10 @@ use crate::{
     app::QuadrantApp,
     backend::Backend,
     i18n::{t, t_with},
-    pages::{ContentType, CurrentModpackPage, ModpacksPage, SearchPage, SettingsPage},
+    pages::{
+        ContentType, CurrentModpackPage, InstalledContentPage, ModpacksPage, SearchPage,
+        SettingsPage,
+    },
     route::Route,
     snackbar::{self, SnackbarKind},
 };
@@ -73,13 +76,27 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
 
     show(window, cx, Route::Settings)?;
     capture(window, &dir.join("settings.png"), cx).await?;
+    // A taller window shows the whole page in one picture.
+    resize(window, cx, 1750.)?;
+    capture(window, &dir.join("settings-full.png"), cx).await?;
+
+    show(window, cx, Route::InstalledContent)?;
+    resize(window, cx, 720.)?;
+    capture(window, &dir.join("installed-content.png"), cx).await?;
     with_page(
         window,
         cx,
-        Route::Settings,
-        |page: &mut SettingsPage, _, cx| page.preview_experimental(cx),
+        Route::InstalledContent,
+        |page: &mut InstalledContentPage, _, cx| page.preview_selection(cx),
     )?;
-    capture(window, &dir.join("settings-experimental.png"), cx).await
+    resize(window, cx, 1300.)?;
+    capture(window, &dir.join("installed-content-open.png"), cx).await
+}
+
+fn resize(window: WindowHandle<Root>, cx: &mut AsyncApp, height: f32) -> Result<()> {
+    window.update(cx, |_, window, _| {
+        window.resize(gpui::size(gpui::px(1150.), gpui::px(height)))
+    })
 }
 
 fn close_dialogs(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
@@ -98,8 +115,13 @@ fn app(root: &Root) -> Result<Entity<QuadrantApp>> {
 
 /// Opens `route` in the window, as a click on its rail button does.
 fn show(window: WindowHandle<Root>, cx: &mut AsyncApp, route: Route) -> Result<()> {
-    window.update(cx, |root, _, cx| {
-        app(root)?.update(cx, |app, cx| app.navigate(route, cx));
+    window.update(cx, |root, window, cx| {
+        app(root)?.update(cx, |app, cx| {
+            app.navigate(route, cx);
+            // Built now rather than at the next draw, so its first load
+            // runs while the capture waits.
+            app.page(route, window, cx);
+        });
         anyhow::Ok(())
     })?
 }

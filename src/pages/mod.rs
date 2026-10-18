@@ -5,6 +5,7 @@ use gpui::{
 use gpui_component::v_flex;
 
 mod current_modpack;
+mod installed_content;
 mod mod_install;
 mod mod_ui;
 mod modpacks;
@@ -12,6 +13,7 @@ mod search;
 mod settings;
 
 pub use current_modpack::CurrentModpackPage;
+pub use installed_content::InstalledContentPage;
 pub use modpacks::ModpacksPage;
 pub use search::SearchPage;
 #[cfg(feature = "screenshot")]
@@ -28,7 +30,8 @@ pub fn build(route: Route, window: &mut Window, cx: &mut App) -> AnyView {
         Route::Search => cx.new(|cx| SearchPage::new(window, cx)).into(),
         Route::CurrentModpack => cx.new(CurrentModpackPage::new).into(),
         Route::Settings => cx.new(SettingsPage::new).into(),
-        Route::InstalledContent | Route::Account => cx.new(|_| Placeholder { route }).into(),
+        Route::InstalledContent => cx.new(InstalledContentPage::new).into(),
+        Route::Account => cx.new(|_| Placeholder { route }).into(),
     }
 }
 

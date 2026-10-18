@@ -223,13 +223,6 @@ impl SettingsPage {
         cx.notify();
     }
 
-    /// Turns the experimental features on, so a screenshot shows the Prism
-    /// Launcher folder row.
-    #[cfg(feature = "screenshot")]
-    pub fn preview_experimental(&mut self, cx: &mut Context<Self>) {
-        self.run(Op::Set(Toggle::ExperimentalFeatures, true), cx);
-    }
-
     /// Asks for a folder, then runs the op `pick` makes of it.
     fn pick_folder(
         &mut self,
