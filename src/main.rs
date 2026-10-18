@@ -57,6 +57,14 @@ fn parse_args(
             .ok_or_else(|| anyhow!("{} needs a path", arg.to_string_lossy()))?;
         *slot = Some(PathBuf::from(value));
     }
+    // The host saves the Minecraft folder as the data folder's `mcFolder`
+    // setting, so without a data folder of its own it would rewrite the
+    // desktop app's.
+    if parsed.mc_folder.is_some() && parsed.data_dir.is_none() {
+        bail!(
+            "--mc-folder (or QUADRANT_GPUI_MC_FOLDER) needs --data-dir (or QUADRANT_GPUI_DATA_DIR) too, or it would change the desktop app's Minecraft folder setting"
+        );
+    }
     Ok(parsed)
 }
 
@@ -175,9 +183,20 @@ mod tests {
     #[test]
     fn environment_fills_missing_flags() {
         let env = |key: &str| (key == "QUADRANT_GPUI_MC_FOLDER").then(|| OsString::from("env-mc"));
-        let parsed = parse_args(args(&[]), env).unwrap();
+        let parsed = parse_args(args(&["--data-dir", "data"]), env).unwrap();
         assert_eq!(parsed.mc_folder, Some("env-mc".into()));
-        assert_eq!(parsed.data_dir, None);
+        assert_eq!(parsed.data_dir, Some("data".into()));
+    }
+
+    #[test]
+    fn a_minecraft_folder_needs_its_own_data_folder() {
+        assert!(parse_args(args(&["--mc-folder", "mc"]), |_| None).is_err());
+        let env_mc = |key: &str| (key == "QUADRANT_GPUI_MC_FOLDER").then(|| OsString::from("mc"));
+        assert!(parse_args(args(&[]), env_mc).is_err());
+        let env_data =
+            |key: &str| (key == "QUADRANT_GPUI_DATA_DIR").then(|| OsString::from("data"));
+        assert!(parse_args(args(&["--mc-folder", "mc"]), env_data).is_ok());
+        assert_eq!(parse_args(args(&[]), |_| None).unwrap(), Args::default());
     }
 
     #[test]
