@@ -40,6 +40,8 @@ const SETTLE: Duration = Duration::from_millis(1500);
 /// Scroll speed: about 2900 px/s at 143 Hz, a brisk wheel flick.
 const SCROLL_PER_FRAME: f32 = 20.;
 const HOVER_PER_FRAME: f32 = 24.;
+/// The middle of the page rail's buttons.
+const RAIL_X: Pixels = px(30.);
 /// A search with a full page of results that have icons.
 const SEARCH_QUERY: &str = "sodium";
 /// Longest wait for a search to answer.
@@ -484,8 +486,11 @@ fn pointer(scenario: Scenario, viewport: Size<Pixels>) -> gpui::Point<Pixels> {
 
 /// Steps `scenario` once per frame for `DURATION` and returns how many frames
 /// the window was unfocused. Each step runs as a next-frame callback, inside
-/// the frame it changes, and refreshes the window, so every refresh draws a
-/// whole frame, as it does during any real motion.
+/// the frame it changes. A step invalidates only what its change would: a
+/// scroll step notifies the page, as a moving scroll does, so the page redraws
+/// every refresh even where its content can't move; a snackbar, a dialog or
+/// the pointer redraw what they touch, so a page that skips work it doesn't
+/// need to redo shows up as a cheaper frame.
 async fn drive(
     scenario: Scenario,
     window: WindowHandle<Root>,
@@ -552,7 +557,6 @@ impl Driver {
                 self.inactive_frames += 1;
             }
             self.step(elapsed, window, cx);
-            window.refresh();
             self.frame += 1;
             self.schedule(window);
         });
@@ -593,6 +597,12 @@ impl Driver {
                     touch_phase: TouchPhase::Moved,
                 };
                 window.dispatch_event(PlatformInput::ScrollWheel(event), cx);
+                let page = app(window, cx).map(|app| {
+                    app.update(cx, |app, cx| app.page(self.scenario.route(), window, cx))
+                });
+                if let Some(page) = page {
+                    cx.notify(page.entity_id());
+                }
             }
             Scenario::SwitchPages => {
                 let route = Route::ALL[(self.frame as usize + 1) % Route::ALL.len()];
@@ -636,20 +646,22 @@ impl Driver {
     }
 }
 
-/// A zigzag over the window, one row of eight per sweep, so the pointer
-/// crosses the rail, the toolbar and the cards' buttons.
+/// The pointer's path: down the rail's buttons, then across the window at
+/// one of six heights through the toolbar and the first cards' buttons,
+/// in turn. Only crossing something hoverable redraws.
 fn sweep(frame: u32, viewport: Size<Pixels>) -> gpui::Point<Pixels> {
-    let width = f32::from(viewport.width);
-    let per_row = (width / HOVER_PER_FRAME).ceil() as u32;
-    let row = frame / per_row;
-    let along = (frame % per_row) as f32 * HOVER_PER_FRAME;
-    let x = if row.is_multiple_of(2) {
-        along
-    } else {
-        width - along
-    };
-    let y = viewport.height * ((row % 8) as f32 + 0.5) / 8.;
-    point(px(x), y)
+    let down = (f32::from(viewport.height) / HOVER_PER_FRAME).ceil() as u32;
+    let across = (f32::from(viewport.width) / HOVER_PER_FRAME).ceil() as u32;
+    let pass = frame / (down + across);
+    let step = frame % (down + across);
+    if step < down {
+        return point(RAIL_X, px(step as f32 * HOVER_PER_FRAME));
+    }
+    let row = (pass % 6) as f32;
+    point(
+        px((step - down) as f32 * HOVER_PER_FRAME),
+        px(90. + 72. * row),
+    )
 }
 
 /// A triangle wave between the restored size and about twice it, two
@@ -678,7 +690,6 @@ fn navigate(route: Route, window: &mut Window, cx: &mut App) {
     if let Some(app) = app(window, cx) {
         app.update(cx, |app, cx| app.navigate(route, cx));
     }
-    window.refresh();
 }
 
 /// `route`'s page, built if it hasn't been.
