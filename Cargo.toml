@@ -16,7 +16,7 @@ curseforge = ["quadrant-host/curseforge"]
 # Adds `--screenshot <dir>`, which renders the window to PNGs for visual checks.
 screenshot = ["gpui/test-support", "gpui_platform/test-support"]
 # Adds `--perf <scenario|all>`, which drives the window and records its frame times.
-perf = ["dep:raw-window-handle", "dep:windows"]
+perf = ["dep:raw-window-handle"]
 # The self-updater: checks Quadrant's update server for quadrant-native and
 # installs signed releases. Release CI turns it on; dev builds leave it off.
 updater = ["dep:base64", "dep:minisign-verify", "dep:serde"]
@@ -46,9 +46,10 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-threa
 url = "2"
 
 [target.'cfg(windows)'.dependencies]
-# Already in the tree through gpui; perf mode times frames from the window procedure.
+# Already in the tree through gpui. Perf mode times frames from the window
+# procedure; `console` attaches a console for --debug and shows fatal errors.
 raw-window-handle = { version = "0.6", optional = true }
-windows = { version = "0.62", optional = true, features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,13 +1,10 @@
-// Installed builds open no console window. Screenshot and perf runs keep
-// it, since their callers read what they print.
-#![cfg_attr(
-    not(any(debug_assertions, feature = "screenshot", feature = "perf")),
-    windows_subsystem = "windows"
-)]
+// No console window on Windows; `console` explains where output goes.
+#![cfg_attr(not(test), windows_subsystem = "windows")]
 
 mod app;
 mod assets;
 mod backend;
+mod console;
 mod events;
 mod i18n;
 mod loadable;
@@ -25,7 +22,7 @@ mod theme;
 mod updater;
 
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -59,6 +56,8 @@ struct Args {
     /// `--noupdater`, as the desktop app takes it: the package manager
     /// (AUR, Flatpak) owns updates.
     no_updater: bool,
+    /// `--debug` or `--log`: a console on Windows, and verbose logs.
+    debug: bool,
 }
 
 /// Who drives the window.
@@ -83,11 +82,15 @@ fn parse_args(
     let mut mc_folder = env("QUADRANT_GPUI_MC_FOLDER");
     let mut screenshot = None;
     let [mut perf, mut perf_out, mut perf_runs, mut perf_placement] = [None, None, None, None];
-    let mut no_updater = false;
+    let [mut no_updater, mut debug] = [false; 2];
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         if arg == "--noupdater" {
             no_updater = true;
+            continue;
+        }
+        if is_debug_flag(&arg) {
+            debug = true;
             continue;
         }
         let slot = match arg.to_str() {
@@ -123,6 +126,7 @@ fn parse_args(
             _ => bail!("--screenshot and --perf can't run together"),
         },
         no_updater,
+        debug,
     };
     #[cfg(not(feature = "perf"))]
     let _ = (perf_out, perf_runs, perf_placement);
@@ -142,6 +146,10 @@ fn parse_args(
         );
     }
     Ok(parsed)
+}
+
+fn is_debug_flag(arg: &OsStr) -> bool {
+    arg == "--debug" || arg == "--log"
 }
 
 /// The OS keyring service the Quadrant ID sign-in is kept under. The desktop
@@ -198,6 +206,10 @@ fn start(args: &Args) -> Result<Backend> {
         args.mc_folder.clone(),
         credentials(&args.mode),
     )?;
+    log::debug!(
+        "Quadrant-Native {} started with {args:?}",
+        env!("CARGO_PKG_VERSION")
+    );
     Ok(Backend::new(host, runtime))
 }
 
@@ -258,12 +270,15 @@ fn open_main_window(mode: &Mode, cx: &mut App) -> Result<WindowHandle<Root>> {
 }
 
 fn main() -> ExitCode {
-    let started = parse_args(std::env::args_os().skip(1), |key| std::env::var_os(key))
+    let raw_args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    // Before parsing, so a bad argument is reported in the console too.
+    let console = console::Console::setup(raw_args.iter().any(|arg| is_debug_flag(arg)));
+    let started = parse_args(raw_args, |key| std::env::var_os(key))
         .and_then(|args| Ok((start(&args)?, args)));
     let (backend, args) = match started {
         Ok(started) => started,
         Err(error) => {
-            eprintln!("Error: {error:#}");
+            console.fatal(&format!("{error:#}"));
             return ExitCode::FAILURE;
         }
     };
@@ -284,9 +299,8 @@ fn main() -> ExitCode {
             let window = match open_main_window(&args.mode, cx) {
                 Ok(window) => window,
                 Err(error) => {
-                    eprintln!("Error: failed to open the window: {error:#}");
-                    cx.quit();
-                    return;
+                    console.fatal(&format!("failed to open the window: {error:#}"));
+                    std::process::exit(1);
                 }
             };
             if !background_window() {
@@ -327,6 +341,7 @@ mod tests {
                 mc_folder: Some("mc".into()),
                 mode: Mode::Interactive,
                 no_updater: false,
+                debug: false,
             }
         );
     }
@@ -416,6 +431,16 @@ mod tests {
         assert!(parsed.no_updater);
         assert_eq!(parsed.data_dir, Some("data".into()));
         assert!(!parse_args(args(&[]), |_| None).unwrap().no_updater);
+    }
+
+    #[test]
+    fn debug_and_log_are_the_same_switch() {
+        for flag in ["--debug", "--log"] {
+            let parsed = parse_args(args(&[flag, "--data-dir", "data"]), |_| None).unwrap();
+            assert!(parsed.debug);
+            assert_eq!(parsed.data_dir, Some("data".into()));
+        }
+        assert!(!parse_args(args(&[]), |_| None).unwrap().debug);
     }
 
     #[test]

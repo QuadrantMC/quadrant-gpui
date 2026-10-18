@@ -138,6 +138,8 @@ try {
     # Windows without focus, which Hide moves off-screen, so the test
     # doesn't take over the screen. The setup's relaunch inherits both.
     $env:QUADRANT_NATIVE_BACKGROUND = "1"
+    # A startup error goes to the log, never to a dialog on the desktop.
+    $env:QUADRANT_NATIVE_NO_DIALOG = "1"
     $exe = Join-Path $installDir "quadrant-native.exe"
 
     Add-Type -Namespace E2E -Name Win32 -MemberDefinition @"

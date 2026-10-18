@@ -36,6 +36,9 @@ The default build needs no credentials. Quadrant ID, Quadrant Share and telemetr
 | `--data-dir <path>` | `QUADRANT_GPUI_DATA_DIR` | the Tauri app's data folder |
 | `--mc-folder <path>` | `QUADRANT_GPUI_MC_FOLDER` | the `mcFolder` setting, else the platform's `.minecraft` |
 | `--noupdater` | | the updater runs in installed release builds |
+| `--debug` or `--log` | | quiet: no console on Windows, info-level logs |
+
+On Windows the exe is a GUI app, so starting it from the Start menu, the installer or Explorer opens no console window. Its output still reaches a parent that pipes or redirects it: `cargo run`, `Start-Process -RedirectStandardError`, or a PowerShell pipeline such as `& $exe ... 2>&1 | ForEach-Object { "$_" }`, which also waits for it and sets `$LASTEXITCODE`. A bare `& $exe ...` in PowerShell, or `cmd /c`, neither waits nor shows the output. `--debug` (or `--log`) attaches to the terminal it was started from, or opens a console of its own, and turns on debug logs for the app and the backend (unless `RUST_LOG` says otherwise); on Linux and macOS it only raises the log level. An error that stops the app before or while it opens its window goes to stderr, and on Windows also to a message box when nothing reads stderr. Set `QUADRANT_NATIVE_NO_DIALOG` to keep it out of a dialog, as tests and scripts should.
 
 Flags win over the environment. The host saves `--mc-folder` as the `mcFolder` setting of the data folder in use, so the app refuses `--mc-folder` without `--data-dir`: it would otherwise change the Tauri app's setting. A `--data-dir` also gets its own Quadrant ID sign-in in the OS keyring, so a sandbox starts signed out and never uses the Tauri app's account.
 
