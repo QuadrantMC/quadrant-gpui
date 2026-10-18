@@ -77,7 +77,7 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
         window,
         cx,
         Route::Settings,
-        |page: &mut SettingsPage, window, cx| page.preview_experimental(window, cx),
+        |page: &mut SettingsPage, _, cx| page.preview_experimental(cx),
     )?;
     capture(window, &dir.join("settings-experimental.png"), cx).await
 }

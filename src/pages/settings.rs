@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use gpui::{
-    App, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
     div, prelude::FluentBuilder as _, rgb,
 };
@@ -197,7 +197,7 @@ impl SettingsPage {
         cx.notify();
     }
 
-    fn run(&mut self, op: Op, window: &mut Window, cx: &mut Context<Self>) {
+    fn run(&mut self, op: Op, cx: &mut Context<Self>) {
         if self.running.is_some() {
             return;
         }
@@ -209,9 +209,9 @@ impl SettingsPage {
         }
         self.running = Some(op.clone());
         let task = Backend::global(cx).run(cx, move |host| op.perform(host));
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let result = task.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            let _ = this.update(cx, |this, cx| {
                 this.running = None;
                 if let Err(error) = result {
                     snackbar::show(cx, SnackbarKind::Error, describe(error));
@@ -226,8 +226,8 @@ impl SettingsPage {
     /// Turns the experimental features on, so a screenshot shows the Prism
     /// Launcher folder row.
     #[cfg(feature = "screenshot")]
-    pub fn preview_experimental(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.run(Op::Set(Toggle::ExperimentalFeatures, true), window, cx);
+    pub fn preview_experimental(&mut self, cx: &mut Context<Self>) {
+        self.run(Op::Set(Toggle::ExperimentalFeatures, true), cx);
     }
 
     /// Asks for a folder, then runs the op `pick` makes of it.
@@ -235,7 +235,6 @@ impl SettingsPage {
         &mut self,
         title: SharedString,
         pick: fn(PathBuf) -> Op,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let chosen = cx.prompt_for_paths(PathPromptOptions {
@@ -244,14 +243,14 @@ impl SettingsPage {
             multiple: false,
             prompt: Some(title),
         });
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let Ok(Ok(Some(paths))) = chosen.await else {
                 return;
             };
             let Some(folder) = paths.into_iter().next() else {
                 return;
             };
-            let _ = this.update_in(cx, |this, window, cx| this.run(pick(folder), window, cx));
+            let _ = this.update(cx, |this, cx| this.run(pick(folder), cx));
         })
         .detach();
     }
@@ -276,9 +275,11 @@ impl SettingsPage {
             .my_4()
             .items_center()
             .font_weight(FontWeight::BOLD)
-            .child(theme::setting_switch(toggle.key(), on).on_click(
-                cx.listener(move |this, _, window, cx| this.run(Op::Set(toggle, !on), window, cx)),
-            ))
+            .child(
+                theme::setting_switch(toggle.key(), on).on_click(
+                    cx.listener(move |this, _, _, cx| this.run(Op::Set(toggle, !on), cx)),
+                ),
+            )
             .child(div().ml_4().child(toggle.label()))
     }
 
@@ -313,11 +314,11 @@ impl SettingsPage {
                                 cx,
                             )
                             .flex_1()
-                            .on_click(cx.listener(
-                                |this, _, window, cx| {
-                                    this.run(Op::MinecraftFolder(None), window, cx)
-                                },
-                            )),
+                            .on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.run(Op::MinecraftFolder(None), cx)
+                                }),
+                            ),
                         )
                         .child(
                             theme::pill_button(
@@ -328,16 +329,13 @@ impl SettingsPage {
                                 cx,
                             )
                             .flex_1()
-                            .on_click(cx.listener(
-                                |this, _, window, cx| {
-                                    this.pick_folder(
-                                        t("overrideMinecraftFolder"),
-                                        |folder| Op::MinecraftFolder(Some(folder)),
-                                        window,
-                                        cx,
-                                    )
-                                },
-                            )),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.pick_folder(
+                                    t("overrideMinecraftFolder"),
+                                    |folder| Op::MinecraftFolder(Some(folder)),
+                                    cx,
+                                )
+                            })),
                         ),
                 ),
             )
@@ -347,8 +345,8 @@ impl SettingsPage {
                     .items_start()
                     .child(
                         usage_button("collect-data", Tone::Neutral, t("collectData"), cx).on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.run(Op::Set(Toggle::CollectData, true), window, cx)
+                            cx.listener(|this, _, _, cx| {
+                                this.run(Op::Set(Toggle::CollectData, true), cx)
                             }),
                         ),
                     )
@@ -372,8 +370,8 @@ impl SettingsPage {
                             t("deleteYourUsageData"),
                             cx,
                         )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.run(Op::Set(Toggle::CollectData, false), window, cx)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.run(Op::Set(Toggle::CollectData, false), cx)
                         })),
                     ),
             )
@@ -436,11 +434,10 @@ impl SettingsPage {
                     cx,
                 )
                 .px_2()
-                .on_click(cx.listener(|this, _, window, cx| {
+                .on_click(cx.listener(|this, _, _, cx| {
                     this.pick_folder(
                         t("prismLauncherFolder"),
                         |folder| Op::PrismFolder(Some(folder)),
-                        window,
                         cx,
                     )
                 })),
@@ -454,9 +451,7 @@ impl SettingsPage {
                     cx,
                 )
                 .px_2()
-                .on_click(
-                    cx.listener(|this, _, window, cx| this.run(Op::PrismFolder(None), window, cx)),
-                ),
+                .on_click(cx.listener(|this, _, _, cx| this.run(Op::PrismFolder(None), cx))),
             )
     }
 }
