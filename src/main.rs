@@ -112,7 +112,9 @@ fn start(args: &Args) -> Result<Backend> {
     Ok(Backend::new(host, runtime))
 }
 
-fn open_main_window(cx: &mut App) -> Result<WindowHandle<Root>> {
+/// A `hidden` window never shows or takes focus, so the user's clicks can't
+/// reach it while screenshot mode drives it.
+fn open_main_window(hidden: bool, cx: &mut App) -> Result<WindowHandle<Root>> {
     let bounds = Bounds::centered(None, size(px(1150.), px(720.)), cx);
     let options = WindowOptions {
         // The title bar is drawn by the app; the title still names the window
@@ -125,6 +127,8 @@ fn open_main_window(cx: &mut App) -> Result<WindowHandle<Root>> {
         window_decorations: Some(WindowDecorations::Client),
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(800.), px(500.))),
+        show: !hidden,
+        focus: !hidden,
         ..Default::default()
     };
     let handle = cx.open_window(options, |window, cx| {
@@ -153,7 +157,7 @@ fn main() -> ExitCode {
             cx.set_global(backend);
             snackbar::install(cx);
             events::forward(cx);
-            let window = match open_main_window(cx) {
+            let window = match open_main_window(args.screenshot_dir.is_some(), cx) {
                 Ok(window) => window,
                 Err(error) => {
                     eprintln!("Error: failed to open the window: {error:#}");

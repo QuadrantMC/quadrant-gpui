@@ -1,11 +1,12 @@
 //! `--screenshot <dir>` (feature `screenshot`): renders the window's own frames
 //! to PNGs and quits. It reads gpui's scene, not the screen, so other windows
-//! never end up in the picture and the window may be covered.
+//! never end up in the picture. The window stays hidden, so the user's clicks
+//! can't land on it while it is driven.
 
 use std::{path::Path, path::PathBuf, time::Duration};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AsyncApp, Context, Window, WindowHandle};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Window, WindowHandle};
 use gpui_component::{Root, WindowExt as _};
 
 use quadrant_core::models::{InstalledMod, ModSource};
@@ -36,21 +37,23 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     std::fs::create_dir_all(dir)?;
     capture(window, &dir.join("modpacks.png"), cx).await?;
 
-    with_modpacks_page(window, cx, |page, window, cx| {
-        page.open_create_dialog(window, cx)
-    })?;
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, window, cx| page.open_create_dialog(window, cx),
+    )?;
     capture(window, &dir.join("create-dialog.png"), cx).await?;
-    window.update(cx, |_, window, cx| {
-        window.defer(cx, |window, cx| window.close_all_dialogs(cx))
-    })?;
+    close_dialogs(window, cx)?;
 
-    with_modpacks_page(window, cx, |page, window, cx| {
-        page.confirm_delete("Beta Pack".into(), window, cx)
-    })?;
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, window, cx| page.confirm_delete("Beta Pack".into(), window, cx),
+    )?;
     capture(window, &dir.join("delete-confirm.png"), cx).await?;
-    window.update(cx, |_, window, cx| {
-        window.defer(cx, |window, cx| window.close_all_dialogs(cx))
-    })?;
+    close_dialogs(window, cx)?;
 
     let snackbars = dir.join("snackbar");
     std::fs::create_dir_all(&snackbars)?;
@@ -69,38 +72,30 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     capture_mod_pages(window, dir, cx).await
 }
 
-fn with_modpacks_page(
-    window: WindowHandle<Root>,
-    cx: &mut AsyncApp,
-    f: impl FnOnce(&mut ModpacksPage, &mut Window, &mut Context<ModpacksPage>) + 'static,
-) -> Result<()> {
-    window.update(cx, |root, window, cx| {
-        let app = root
-            .view()
-            .clone()
-            .downcast::<QuadrantApp>()
-            .ok()
-            .context("root is not the app")?;
-        let page = app.update(cx, |app, cx| app.page(Route::Modpacks, window, cx));
-        let page = page
-            .downcast::<ModpacksPage>()
-            .ok()
-            .context("not the modpacks page")?;
-        // Deferred until the root is released: dialogs read it when they open.
-        window.defer(cx, move |window, cx| {
-            page.update(cx, |page, cx| f(page, window, cx))
-        });
-        anyhow::Ok(())
-    })?
+fn close_dialogs(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
+    window.update(cx, |_, window, cx| {
+        window.defer(cx, |window, cx| window.close_all_dialogs(cx))
+    })
+}
+
+fn app(root: &Root) -> Result<Entity<QuadrantApp>> {
+    root.view()
+        .clone()
+        .downcast::<QuadrantApp>()
+        .ok()
+        .context("root is not the app")
 }
 
 async fn capture(window: WindowHandle<Root>, path: &Path, cx: &mut AsyncApp) -> Result<()> {
     cx.background_executor().timer(SETTLE).await;
-    window.update(cx, |_, window, _| window.refresh())?;
-    cx.background_executor()
-        .timer(Duration::from_millis(500))
-        .await;
-    let image = window.update(cx, |_, window, _| window.render_to_image())??;
+    // The window is hidden, so the platform never asks it for frames; each
+    // picture draws one itself. `update_window` leaves the root view free for
+    // the draw to render.
+    let image = cx.update_window(window.into(), |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+        window.render_to_image()
+    })??;
     image.save(path)?;
     println!("{}", path.display());
     Ok(())
