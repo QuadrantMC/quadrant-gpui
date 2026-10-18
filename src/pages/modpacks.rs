@@ -15,7 +15,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{
-    Disableable as _, IndexPath, WindowExt as _,
+    IndexPath, WindowExt as _,
     dialog::DialogFooter,
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -114,8 +114,8 @@ impl SyncTarget {
     }
 }
 
-/// A change to the modpacks folder or to Quadrant Sync. At most one runs at
-/// a time.
+/// A change to the modpacks folder or to Quadrant Sync. Changes run side by
+/// side unless they share a [`Lane`].
 #[derive(Clone, Debug)]
 pub enum Op {
     Apply(String),
@@ -257,6 +257,33 @@ impl Op {
         })
     }
 
+    /// What this op works on. Of two ops that share a lane, the second
+    /// waits for the first.
+    fn lanes(&self) -> Vec<Lane<'_>> {
+        match self {
+            Op::Apply(name) => vec![Lane::Modpack(name), Lane::Applied],
+            Op::Clear(_) => vec![Lane::Modpack(FREE_MODPACK), Lane::Applied],
+            Op::Delete(name) | Op::Export { name, .. } | Op::Share(name) => {
+                vec![Lane::Modpack(name)]
+            }
+            Op::Create(new) => vec![Lane::Modpack(&new.name)],
+            Op::Update { from, to } => vec![Lane::Modpack(from), Lane::Modpack(&to.name)],
+            Op::Sync { modpack, .. } => vec![Lane::Modpack(&modpack.name)],
+            Op::ShareRaw(modpack) => vec![Lane::Modpack(&modpack.name)],
+            // One download at a time: its progress events don't say whose.
+            Op::Install { modpack, .. } => vec![Lane::Modpack(&modpack.name), Lane::Download],
+            Op::Kick { modpack_id, .. }
+            | Op::Invite { modpack_id, .. }
+            | Op::DeleteSynced(modpack_id) => vec![Lane::Cloud(modpack_id)],
+            Op::ResolveShare(_) => vec![Lane::ShareCode],
+        }
+    }
+
+    fn conflicts(&self, other: &Op) -> bool {
+        let lanes = other.lanes();
+        self.lanes().iter().any(|lane| lanes.contains(lane))
+    }
+
     /// The modpack whose card shows this op as running.
     fn target(&self) -> Option<&str> {
         match self {
@@ -276,6 +303,19 @@ impl Op {
             | Op::ResolveShare(_) => None,
         }
     }
+}
+
+/// What an [`Op`] works on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lane<'a> {
+    /// A local modpack, by name.
+    Modpack(&'a str),
+    /// Which modpack is applied.
+    Applied,
+    /// A Quadrant Sync pack, by id.
+    Cloud(&'a str),
+    Download,
+    ShareCode,
 }
 
 /// `account`, if it may use Quadrant Sync: signed in, with a sync limit.
@@ -387,7 +427,8 @@ pub struct ModpacksPage {
     modpacks: Loadable<Vec<LocalModpack>>,
     /// Minecraft release versions, newest first.
     versions: Loadable<Vec<SharedString>>,
-    running: Option<Op>,
+    /// Changes in flight, none sharing a lane.
+    running: Vec<Op>,
     search: Entity<InputState>,
     /// The newest listing request; replacing it drops a stale one's answer.
     listing: Task<()>,
@@ -428,7 +469,7 @@ impl ModpacksPage {
             this.load_synced(cx)
         });
         events::listen(&["modpackDownloadProgress"], cx, |this, event, cx| {
-            if matches!(this.running, Some(Op::Install { .. })) {
+            if this.running_any(|op| matches!(op, Op::Install { .. })) {
                 // Only the op's own answer confirms success.
                 this.install_progress = event.payload.as_f64().map(|done| done.min(0.99));
                 cx.notify();
@@ -438,7 +479,7 @@ impl ModpacksPage {
             view: View::List,
             modpacks: Loadable::Idle,
             versions: Loadable::Idle,
-            running: None,
+            running: Vec::new(),
             search,
             listing: Task::ready(()),
             session,
@@ -537,12 +578,23 @@ impl ModpacksPage {
         .detach();
     }
 
+    fn running_any(&self, matches: impl Fn(&Op) -> bool) -> bool {
+        self.running.iter().any(matches)
+    }
+
+    /// Whether an op of the kind `matches` picks runs on modpack `name`.
+    fn running_on(&self, name: &str, matches: impl Fn(&Op) -> bool) -> bool {
+        self.running_any(|op| op.target() == Some(name) && matches(op))
+    }
+
     fn run(&mut self, op: Op, cx: &mut Context<Self>) {
-        if self.running.is_some() {
+        if self.running_any(|running| running.conflicts(&op)) {
             return;
         }
-        self.running = Some(op.clone());
-        self.install_progress = None;
+        if matches!(op, Op::Install { .. }) {
+            self.install_progress = None;
+        }
+        self.running.push(op.clone());
         let task = Backend::global(cx).run(cx, {
             let op = op.clone();
             move |host| op.perform(host)
@@ -550,8 +602,10 @@ impl ModpacksPage {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.running = None;
-                this.install_progress = None;
+                this.running.retain(|running| !running.conflicts(&op));
+                if matches!(op, Op::Install { .. }) {
+                    this.install_progress = None;
+                }
                 match result {
                     Ok(outcome) => {
                         match outcome {
@@ -837,6 +891,20 @@ impl ModpacksPage {
         }
     }
 
+    /// Shows `name` as exporting, or nothing running with `None`, for
+    /// screenshots. Nothing is exported.
+    #[cfg(feature = "screenshot")]
+    pub fn preview_exporting(&mut self, name: Option<&str>, cx: &mut Context<Self>) {
+        self.running = name
+            .map(|name| Op::Export {
+                name: name.to_string(),
+                to: PathBuf::new(),
+            })
+            .into_iter()
+            .collect();
+        cx.notify();
+    }
+
     /// Scrolls an open Details view down by `distance`, for screenshots.
     #[cfg(feature = "screenshot")]
     pub fn scroll_details(&mut self, distance: gpui::Pixels, cx: &mut Context<Self>) {
@@ -911,7 +979,6 @@ impl ModpacksPage {
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let busy = self.running.is_some();
         h_flex()
             .mx_8()
             .my_4()
@@ -924,7 +991,6 @@ impl ModpacksPage {
             .child(
                 theme::pill_button("create", Tone::Positive, t("createModpack"), None, cx)
                     .icon(gpui_component::Icon::new(MdIcon::Add).size_5())
-                    .disabled(busy)
                     .on_click(
                         cx.listener(|this, _, window, cx| this.open_create_dialog(window, cx)),
                     ),
@@ -932,7 +998,6 @@ impl ModpacksPage {
             .child(
                 theme::toolbar_button("clear", Tone::Control, MdIcon::Clear, cx)
                     .tooltip(t("clear"))
-                    .disabled(busy)
                     .on_click(cx.listener(|this, _, _, cx| this.clear(cx))),
             )
             .child(
@@ -956,9 +1021,6 @@ impl ModpacksPage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let name = SharedString::from(modpack.name.clone());
-        let running_here =
-            self.running.as_ref().and_then(Op::target) == Some(modpack.name.as_str());
-        let busy = self.running.is_some();
         let share = {
             let name = name.clone();
             theme::pill_button(
@@ -968,8 +1030,7 @@ impl ModpacksPage {
                 Some(MdIcon::Share),
                 cx,
             )
-            .loading(running_here && matches!(self.running, Some(Op::Share(_))))
-            .disabled(busy)
+            .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Share(_))))
             .on_click(cx.listener(move |this, _, _, cx| this.run(Op::Share(name.to_string()), cx)))
         };
         let sync = account.is_some().then(|| {
@@ -981,8 +1042,7 @@ impl ModpacksPage {
                 Some(MdIcon::Sync),
                 cx,
             )
-            .loading(running_here && matches!(self.running, Some(Op::Sync { .. })))
-            .disabled(busy)
+            .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Sync { .. })))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.run(
                     Op::Sync {
@@ -1022,8 +1082,7 @@ impl ModpacksPage {
                 Some(MdIcon::Check),
                 cx,
             )
-            .loading(running_here && matches!(self.running, Some(Op::Apply(_))))
-            .disabled(busy)
+            .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Apply(_))))
             .on_click(cx.listener(move |this, _, _, cx| this.run(Op::Apply(name.to_string()), cx)))
         };
         let delete =
@@ -1036,8 +1095,7 @@ impl ModpacksPage {
                     Some(MdIcon::Delete),
                     cx,
                 )
-                .loading(running_here && matches!(self.running, Some(Op::Delete(_))))
-                .disabled(busy)
+                .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Delete(_))))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.confirm_delete(name.clone(), window, cx)
                 }))
@@ -1051,8 +1109,7 @@ impl ModpacksPage {
                 Some(MdIcon::Edit),
                 cx,
             )
-            .loading(running_here && matches!(self.running, Some(Op::Update { .. })))
-            .disabled(busy)
+            .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Update { .. })))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_update_dialog(modpack.clone(), window, cx)
             }))
@@ -1066,8 +1123,7 @@ impl ModpacksPage {
                 Some(MdIcon::Archive),
                 cx,
             )
-            .loading(running_here && matches!(self.running, Some(Op::Export { .. })))
-            .disabled(busy)
+            .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Export { .. })))
             .on_click(cx.listener(move |this, _, _, cx| this.export(name.to_string(), cx)))
         };
         let details = {
@@ -1265,6 +1321,20 @@ mod tests {
             last_synced,
             modpack_id: None,
         }
+    }
+
+    #[test]
+    fn ops_wait_only_for_ops_on_the_same_thing() {
+        let export = |name: &str| Op::Export {
+            name: name.into(),
+            to: PathBuf::new(),
+        };
+        assert!(!export("Alpha").conflicts(&Op::Delete("Beta".into())));
+        assert!(export("Alpha").conflicts(&Op::Delete("Alpha".into())));
+        // Applying swaps the mods folder, whichever pack it applies.
+        assert!(Op::Apply("Alpha".into()).conflicts(&Op::Apply("Beta".into())));
+        assert!(Op::Clear("1.21.1".into()).conflicts(&Op::Apply("Beta".into())));
+        assert!(!Op::Apply("Alpha".into()).conflicts(&export("Beta")));
     }
 
     #[test]

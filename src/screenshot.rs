@@ -285,13 +285,7 @@ async fn capture_widths(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncAp
         with_page::<SearchPage>(window, cx, Route::Search, |page, _, cx| {
             page.close_details(cx)
         })?;
-        // The results take their column count from the width the last
-        // frame measured, so one frame at the new size goes first.
-        cx.background_executor()
-            .timer(Duration::from_millis(500))
-            .await;
-        park_pointer(window, cx)?;
-        draw(window, cx)?;
+        settle_layout(window, cx).await?;
         capture(window, &shots.join(format!("search-{width}.png")), cx).await?;
         with_page::<SearchPage>(window, cx, Route::Search, |page, window, cx| {
             page.open_first_result(window, cx)
@@ -325,6 +319,24 @@ async fn capture_widths(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncAp
         page.close_details(cx)
     })?;
     resize_to(window, cx, restore.width.into(), restore.height.into())?;
+
+    // One card at work leaves every other card, and the card's other
+    // buttons, as they were.
+    with_page::<SearchPage>(window, cx, Route::Search, |page, _, cx| {
+        page.preview_installing(Some(42), cx)
+    })?;
+    settle_layout(window, cx).await?;
+    capture(window, &dir.join("search-installing.png"), cx).await?;
+    with_page::<SearchPage>(window, cx, Route::Search, |page, _, cx| {
+        page.preview_installing(None, cx)
+    })?;
+    with_page::<ModpacksPage>(window, cx, Route::Modpacks, |page, _, cx| {
+        page.preview_exporting(Some("Beta Pack"), cx)
+    })?;
+    capture(window, &dir.join("modpacks-exporting.png"), cx).await?;
+    with_page::<ModpacksPage>(window, cx, Route::Modpacks, |page, _, cx| {
+        page.preview_exporting(None, cx)
+    })?;
 
     // A pack's Details: its header scrolls away with the mods, and back
     // leaves for the list.
@@ -378,6 +390,16 @@ fn show(window: WindowHandle<Root>, cx: &mut AsyncApp, route: Route) -> Result<(
         });
         anyhow::Ok(())
     })?
+}
+
+/// Lets a resize land and draws one frame at the new size: search results
+/// take their column count from the width the last frame measured.
+async fn settle_layout(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
+    cx.background_executor()
+        .timer(Duration::from_millis(500))
+        .await;
+    park_pointer(window, cx)?;
+    draw(window, cx)
 }
 
 /// Moves the pointer to the empty corner above the rail, so no tooltip

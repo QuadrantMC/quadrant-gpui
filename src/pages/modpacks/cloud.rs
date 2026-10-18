@@ -9,7 +9,7 @@ use gpui::{
     Window, div, prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{
-    Disableable as _, WindowExt as _,
+    WindowExt as _,
     button::Button,
     dialog::DialogFooter,
     h_flex,
@@ -182,20 +182,16 @@ impl ModpacksPage {
         sync: Option<SyncTarget>,
         cx: &mut Context<Self>,
     ) -> Button {
-        let installing = match &self.running {
-            Some(Op::Install {
-                modpack: running, ..
-            }) => running.name == modpack.name,
-            _ => false,
-        };
+        let installing = self.running_any(
+            |op| matches!(op, Op::Install { modpack: running, .. } if running.name == modpack.name),
+        );
         let (tone, label) = match (installing, self.install_progress) {
             (true, Some(progress)) => (Tone::Neutral, format!("{:.2}%", progress * 100.).into()),
             (true, None) => (Tone::Neutral, "0.00%".into()),
             (false, _) => (Tone::Positive, label),
         };
-        theme::pill_button(id, tone, label, Some(MdIcon::Download), cx)
-            .disabled(self.running.is_some())
-            .on_click(cx.listener(move |this, _, _, cx| {
+        theme::pill_button(id, tone, label, Some(MdIcon::Download), cx).on_click(cx.listener(
+            move |this, _, _, cx| {
                 this.run(
                     Op::Install {
                         modpack: Box::new(modpack.clone()),
@@ -203,7 +199,8 @@ impl ModpacksPage {
                     },
                     cx,
                 )
-            }))
+            },
+        ))
     }
 
     /// A Quadrant Sync pack that isn't installed here.
@@ -235,7 +232,6 @@ impl ModpacksPage {
                 Some(MdIcon::Share),
                 cx,
             )
-            .disabled(self.running.is_some())
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.run(Op::ShareRaw(Box::new(modpack.clone())), cx)
             }))
@@ -309,7 +305,6 @@ impl ModpacksPage {
     ) -> impl IntoElement {
         let id = synced.modpack_id.clone();
         let open = self.open_panels.contains(&id);
-        let busy = self.running.is_some();
         let element_id = |what: &str| gpui::ElementId::Name(format!("{what}:{id}").into());
         let header = h_flex()
             .id(element_id("sync-panel"))
@@ -361,7 +356,6 @@ impl ModpacksPage {
                         cx,
                     )
                     .mr_4()
-                    .disabled(busy)
                     .on_click(cx.listener(move |this, _, _, cx| this.run(op.clone(), cx)))
                 });
                 h_flex()
@@ -397,7 +391,6 @@ impl ModpacksPage {
                     cx,
                 )
                 .flex_1()
-                .disabled(busy)
                 .on_click(cx.listener(move |this, _, _, cx| this.run(op.clone(), cx)))
             };
             let invite = {
@@ -410,7 +403,6 @@ impl ModpacksPage {
                     cx,
                 )
                 .flex_1()
-                .disabled(busy)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.open_invite_dialog(id.clone(), window, cx)
                 }))
@@ -565,7 +557,7 @@ impl ModpacksPage {
         code: String,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let resolving = matches!(self.running, Some(Op::ResolveShare(_)));
+        let resolving = self.running_any(|op| matches!(op, Op::ResolveShare(_)));
         let label = if resolving {
             t("loadingMore")
         } else {
@@ -579,7 +571,6 @@ impl ModpacksPage {
         let button = theme::pill_button("share-download", tone, label, None, cx)
             .w_full()
             .mt_4()
-            .disabled(self.running.is_some())
             .on_click(cx.listener({
                 let code = code.clone();
                 move |this, _, _, cx| this.run(Op::ResolveShare(code.clone()), cx)

@@ -8,7 +8,7 @@ use gpui::{
     SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
     prelude::FluentBuilder as _, px, rgb,
 };
-use gpui_component::{Disableable as _, Icon, h_flex, select::SelectItem, v_flex};
+use gpui_component::{Icon, h_flex, select::SelectItem, v_flex};
 use quadrant_core::{
     mc_mod::{Mod, ModType},
     models::ModSource,
@@ -112,10 +112,9 @@ pub enum CardPress {
 pub struct CardStatus {
     pub installed: bool,
     pub finished: bool,
-    /// The running install's progress, when it is this card's.
+    /// This card's running install's progress. Other cards stay usable
+    /// while it runs; the page ignores a second press on this one.
     pub progress: Option<i32>,
-    /// Another change is running, so the card's actions wait.
-    pub busy: bool,
 }
 
 pub fn source_label(source: &ModSource) -> &'static str {
@@ -161,7 +160,6 @@ pub fn mod_card<P: 'static>(
                 MdIcon::Delete,
                 cx,
             )
-            .disabled(status.busy)
             .on_click(press(CardPress::Delete))
             .into_any_element(),
         );
@@ -192,7 +190,6 @@ pub fn mod_card<P: 'static>(
         };
         buttons.push(
             button
-                .disabled(status.busy)
                 .on_click(press(CardPress::Primary(primary)))
                 .into_any_element(),
         );
@@ -206,7 +203,6 @@ pub fn mod_card<P: 'static>(
                 MdIcon::Check,
                 cx,
             )
-            .disabled(status.busy)
             .on_click(press(CardPress::Select))
             .into_any_element(),
         );

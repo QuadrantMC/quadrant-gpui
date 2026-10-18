@@ -3,7 +3,7 @@
 
 pub mod logic;
 
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _,
@@ -96,8 +96,9 @@ pub struct SearchPage {
     modpacks: Loadable<Vec<LocalModpack>>,
     results: Loadable<Results>,
     page: usize,
-    running: Option<InstallRequest>,
-    progress: Option<i32>,
+    /// Installs in flight, by mod id, with their download progress once it
+    /// is reported. Each card installs on its own.
+    installs: HashMap<String, Option<i32>>,
     /// Results installed from here, whose download button retires.
     finished: Vec<String>,
     /// Install pages opened from a result, the newest on top.
@@ -167,12 +168,10 @@ impl SearchPage {
             }),
         ];
         let progress = watch_mod_progress(cx, |this: &mut Self, progress, cx| {
-            let ours = this
-                .running
-                .as_ref()
-                .is_some_and(|running| running.id == progress.mod_id);
-            if ours && progress.stage == ModStage::Download {
-                this.progress = Some(progress.percent);
+            if progress.stage == ModStage::Download
+                && let Some(done) = this.installs.get_mut(&progress.mod_id)
+            {
+                *done = Some(progress.percent);
                 cx.notify();
             }
         });
@@ -186,8 +185,7 @@ impl SearchPage {
             modpacks: Loadable::Loading,
             results: Loadable::Loading,
             page: 0,
-            running: None,
-            progress: None,
+            installs: HashMap::new(),
             finished: Vec::new(),
             details: Vec::new(),
             target_picker,
@@ -543,18 +541,16 @@ impl SearchPage {
     }
 
     fn install(&mut self, request: InstallRequest, window: &mut Window, cx: &mut Context<Self>) {
-        if self.running.is_some() {
+        if self.installs.contains_key(&request.id) {
             return;
         }
-        self.running = Some(request.clone());
-        self.progress = None;
+        self.installs.insert(request.id.clone(), None);
         let id = request.id.clone();
         let task = Backend::global(cx).run(cx, move |host| request.perform(host));
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.running = None;
-                this.progress = None;
+                this.installs.remove(&id);
                 match result {
                     Ok(()) => {
                         this.finished.push(id);
@@ -584,6 +580,24 @@ impl SearchPage {
             cx.notify();
         });
         self.details.push((view, subscription));
+        cx.notify();
+    }
+
+    /// Shows the first result not in the target pack as installing at
+    /// `progress` percent, or no install with `None`, for screenshots.
+    /// Nothing is installed.
+    #[cfg(feature = "screenshot")]
+    pub fn preview_installing(&mut self, progress: Option<i32>, cx: &mut Context<Self>) {
+        self.installs.clear();
+        let target = self.target_modpack();
+        if let (Some(progress), Loadable::Ready(results)) = (progress, &self.results)
+            && let Some(first) = results
+                .shown
+                .iter()
+                .find(|item| installed_in(item, target).is_none())
+        {
+            self.installs.insert(first.id.clone(), Some(progress));
+        }
         cx.notify();
     }
 
@@ -1250,7 +1264,6 @@ impl SearchPage {
         let pages = page_count(results.shown.len());
         let page = self.page.min(pages - 1);
         let target = self.target_modpack();
-        let busy = self.running.is_some();
         let on_press: OnCardPress<Self> =
             Rc::new(|this, press, item, window, cx| this.press(press, item, window, cx));
         let mut cells: Vec<AnyElement> = results
@@ -1260,15 +1273,10 @@ impl SearchPage {
             .take(PAGE_SIZE)
             .enumerate()
             .map(|(index, item)| {
-                let running_here = self
-                    .running
-                    .as_ref()
-                    .is_some_and(|running| running.id == item.id);
                 let status = CardStatus {
                     installed: installed_in(item, target).is_some(),
                     finished: self.finished.contains(&item.id),
-                    progress: running_here.then(|| self.progress.unwrap_or(0)),
-                    busy,
+                    progress: self.installs.get(&item.id).map(|done| done.unwrap_or(0)),
                 };
                 mod_card(page * PAGE_SIZE + index, item, status, on_press.clone(), cx)
             })
