@@ -8,10 +8,13 @@ use anyhow::{Context as _, Result};
 use gpui::{App, AsyncApp, Context, Window, WindowHandle};
 use gpui_component::{Root, WindowExt as _};
 
+use quadrant_core::models::{InstalledMod, ModSource};
+
 use crate::{
     app::QuadrantApp,
+    backend::Backend,
     i18n::{t, t_with},
-    pages::ModpacksPage,
+    pages::{ContentType, CurrentModpackPage, ModpacksPage, SearchPage},
     route::Route,
     snackbar::{self, SnackbarKind},
 };
@@ -61,7 +64,9 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
             t_with("failedToDelete", &[("reason", reason)]),
         )
     });
-    capture(window, &snackbars.join("error.png"), cx).await
+    capture(window, &snackbars.join("error.png"), cx).await?;
+
+    capture_mod_pages(window, dir, cx).await
 }
 
 fn with_modpacks_page(
@@ -99,4 +104,101 @@ async fn capture(window: WindowHandle<Root>, path: &Path, cx: &mut AsyncApp) -> 
     image.save(path)?;
     println!("{}", path.display());
     Ok(())
+}
+
+/// Long enough for a provider search and its icons to arrive.
+const NETWORK_SETTLE: Duration = Duration::from_secs(8);
+
+/// The Search, mod install and Current modpack pages, against the live
+/// Modrinth API. Nothing here installs: a download would also land in the
+/// host's shared download cache, outside the sandbox.
+async fn capture_mod_pages(
+    window: WindowHandle<Root>,
+    dir: &Path,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let shots = dir.join("mods");
+    std::fs::create_dir_all(&shots)?;
+    let wait = |cx: &mut AsyncApp| cx.background_executor().timer(NETWORK_SETTLE);
+
+    // The page restores its saved filters first; changes made before that
+    // would be overwritten.
+    with_page::<SearchPage>(window, cx, Route::Search, |_, _, _| {})?;
+    wait(cx).await;
+    with_page::<SearchPage>(window, cx, Route::Search, |page, window, cx| {
+        page.set_content(ContentType::Shaders, window, cx)
+    })?;
+    wait(cx).await;
+    capture(window, &shots.join("search-shaders.png"), cx).await?;
+
+    with_page::<SearchPage>(window, cx, Route::Search, |page, window, cx| {
+        page.set_content(ContentType::Mods, window, cx);
+        page.set_target("Alpha Pack", window, cx);
+        page.set_query("iris", window, cx);
+    })?;
+    wait(cx).await;
+    capture(window, &shots.join("search-into-modpack.png"), cx).await?;
+
+    with_page::<SearchPage>(window, cx, Route::Search, |page, _, cx| {
+        page.set_filters_open(false, cx)
+    })?;
+    capture(window, &shots.join("search-filters-collapsed.png"), cx).await?;
+
+    with_page::<SearchPage>(window, cx, Route::Search, |page, window, cx| {
+        page.set_filters_open(true, cx);
+        page.open_first_result(window, cx);
+    })?;
+    wait(cx).await;
+    capture(window, &shots.join("mod-install.png"), cx).await?;
+
+    // An old Mod Menu for the applied pack, so the update check has
+    // something to offer. Registering only writes the pack's manifest.
+    let register = cx.update(|cx| {
+        Backend::global(cx).run(cx, |host| async move {
+            let old = InstalledMod::minimal(
+                "mOgUt4GM".into(),
+                ModSource::Modrinth,
+                "https://cdn.modrinth.com/data/mOgUt4GM/versions/xhN1IvHi/modmenu-11.0.1.jar"
+                    .into(),
+            );
+            host.register_mod(old, "Alpha Pack".into()).await
+        })
+    });
+    register.await?;
+    with_page::<CurrentModpackPage>(window, cx, Route::CurrentModpack, |page, _, cx| {
+        page.refresh(cx)
+    })?;
+    capture(window, &shots.join("current-modpack.png"), cx).await?;
+
+    with_page::<CurrentModpackPage>(window, cx, Route::CurrentModpack, |page, _, cx| {
+        page.toggle_updates(cx)
+    })?;
+    wait(cx).await;
+    capture(window, &shots.join("current-modpack-updates.png"), cx).await
+}
+
+/// Opens `route` and runs `f` on its page once the root is released.
+fn with_page<P: 'static>(
+    window: WindowHandle<Root>,
+    cx: &mut AsyncApp,
+    route: Route,
+    f: impl FnOnce(&mut P, &mut Window, &mut Context<P>) + 'static,
+) -> Result<()> {
+    window.update(cx, |root, window, cx| {
+        let app = root
+            .view()
+            .clone()
+            .downcast::<QuadrantApp>()
+            .ok()
+            .context("root is not the app")?;
+        let page = app.update(cx, |app, cx| {
+            app.navigate(route, cx);
+            app.page(route, window, cx)
+        });
+        let page = page.downcast::<P>().ok().context("not the expected page")?;
+        window.defer(cx, move |window, cx| {
+            page.update(cx, |page, cx| f(page, window, cx))
+        });
+        anyhow::Ok(())
+    })?
 }

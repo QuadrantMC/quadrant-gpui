@@ -13,6 +13,8 @@ mod search;
 pub use current_modpack::CurrentModpackPage;
 pub use modpacks::ModpacksPage;
 pub use search::SearchPage;
+#[cfg(feature = "screenshot")]
+pub use search::logic::ContentType;
 
 use crate::{route::Route, theme};
 

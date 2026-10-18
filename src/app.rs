@@ -37,7 +37,7 @@ impl QuadrantApp {
         }
     }
 
-    fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
+    pub fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
         if self.history.navigate(route) {
             cx.notify();
         }

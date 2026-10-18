@@ -593,6 +593,38 @@ impl SearchPage {
         cx.notify();
     }
 
+    #[cfg(feature = "screenshot")]
+    pub fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.query.update(cx, |input, cx| {
+            input.set_value(query.to_string(), window, cx)
+        });
+        self.search(false, cx);
+    }
+
+    #[cfg(feature = "screenshot")]
+    pub fn set_content(
+        &mut self,
+        content: ContentType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.change(window, cx, |filters| filters.select_content(content));
+    }
+
+    #[cfg(feature = "screenshot")]
+    pub fn set_target(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.pick_target(Some(name.to_string()), window, cx);
+    }
+
+    #[cfg(feature = "screenshot")]
+    pub fn open_first_result(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Loadable::Ready(results) = &self.results
+            && let Some(first) = results.shown.first().cloned()
+        {
+            self.open_details(first, window, cx);
+        }
+    }
+
     fn set_page(&mut self, page: usize, cx: &mut Context<Self>) {
         self.page = page;
         self.results_scroll.set_offset(point(px(0.), px(0.)));
