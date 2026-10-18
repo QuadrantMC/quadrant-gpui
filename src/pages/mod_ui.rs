@@ -253,8 +253,10 @@ pub fn mod_card<P: 'static>(
                                 .truncate()
                                 .child(item.name.clone()),
                         )
+                        // Wraps rather than spilling out of a narrow card.
                         .child(
                             h_flex()
+                                .flex_wrap()
                                 .gap_1p5()
                                 .items_center()
                                 .text_xs()
@@ -269,10 +271,8 @@ pub fn mod_card<P: 'static>(
                                     ))
                                 })
                                 .when(status.installed, |this| {
-                                    this.child(dot()).child(
-                                        theme::source_pill(t("installed"), false)
-                                            .child(Icon::new(MdIcon::Check).size_3()),
-                                    )
+                                    this.child(dot())
+                                        .child(theme::installed_pill(t("installed")))
                                 }),
                         )
                         .child(
@@ -291,6 +291,7 @@ pub fn mod_card<P: 'static>(
         .child(
             h_flex()
                 .mt_auto()
+                .flex_wrap()
                 .gap_2()
                 .items_center()
                 .justify_end()

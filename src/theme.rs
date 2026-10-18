@@ -466,9 +466,19 @@ pub fn warning_note(text: impl Into<SharedString>) -> impl IntoElement {
         .child(text.into())
 }
 
-/// The provider pill on a mod card: orange for CurseForge, green otherwise
-/// (Modrinth, and the "Installed" pill).
+/// The provider pill on a mod card: orange for CurseForge, green otherwise.
 pub fn source_pill(label: impl Into<SharedString>, curseforge: bool) -> gpui::Div {
+    meta_pill(curseforge).child(label.into())
+}
+
+/// The green "Installed" pill on a mod card, its check before the label.
+pub fn installed_pill(label: impl Into<SharedString>) -> gpui::Div {
+    meta_pill(false)
+        .child(Icon::new(MdIcon::Check).size_3())
+        .child(label.into())
+}
+
+fn meta_pill(curseforge: bool) -> gpui::Div {
     let (fill, text) = if curseforge {
         (0xf9731633, 0xfb923c)
     } else {
@@ -485,7 +495,6 @@ pub fn source_pill(label: impl Into<SharedString>, curseforge: bool) -> gpui::Di
         .text_color(rgb(text))
         .text_size(px(11.))
         .font_weight(FontWeight::EXTRA_BOLD)
-        .child(label.into())
 }
 
 /// An `h-8` action on a mod card, the icon after the label.
