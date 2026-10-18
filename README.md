@@ -10,6 +10,8 @@ Status: phase 1. The shell (title bar, page rail, theme) and the Modpacks page w
 
 Rust 1.99 or newer, edition 2024.
 
+On Linux the app runs on Wayland only. GPUI's X11 backend is not compiled in, so an X11 session can't open the window.
+
 ```sh
 cargo run              # debug build
 cargo build --release
