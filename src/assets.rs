@@ -70,6 +70,8 @@ md_icons! {
     Cloud => "cloud",
     CloudDone => "cloud-done",
     PersonAdd => "person-add",
+    // Prism Launcher menu
+    ViewList => "view-list",
     // Title bar
     #[cfg_attr(not(feature = "updater"), expect(dead_code))]
     InstallDesktop => "install-desktop",

@@ -54,6 +54,8 @@ const icons = {
   cloud: "MdCloud",
   "cloud-done": "MdCloudDone",
   "person-add": "MdPersonAdd",
+  // Prism Launcher menu
+  "view-list": "MdViewList",
   // Title bar
   "install-desktop": "MdInstallDesktop",
 };

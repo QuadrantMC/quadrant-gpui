@@ -65,15 +65,22 @@ function New-FixtureFiles([string]$Dir, [hashtable]$Files) {
 }
 New-FixtureFiles (Join-Path $Root "mc\resourcepacks") @{ "FA+All_Extensions-v1.9.2.zip" = 380621; "FreshAnimations_v1.10.5.zip" = 645632 }
 New-FixtureFiles (Join-Path $Root "mc\shaderpacks") @{ "Bliss_v2.1.2.zip" = 1782579; "ComplementaryReimagined_r5.5.zip" = 912000 }
-function New-FixtureInstance([string]$Name) {
+function New-FixtureInstance([string]$Name, [string]$Components = '{"uid":"net.minecraft","version":"1.21.1"}') {
     $dir = Join-Path $Root "prism\instances\$Name"
     New-Item -ItemType Directory -Force $dir | Out-Null
     Set-Content -Path (Join-Path $dir "instance.cfg") -Value "[General]`nname=$Name"
-    [IO.File]::WriteAllText((Join-Path $dir "mmc-pack.json"), '{"formatVersion":1,"components":[{"uid":"net.minecraft","version":"1.21.1"}]}')
+    [IO.File]::WriteAllText((Join-Path $dir "mmc-pack.json"), "{`"formatVersion`":1,`"components`":[$Components]}")
     $dir
 }
 $instance = New-FixtureInstance "Survival"
 New-FixtureFiles (Join-Path $instance "minecraft\resourcepacks") @{ "FreshAnimations_v1.10.5.zip" = 645632 }
+if (-not $Large) {
+    # An instance Alpha Pack is already applied to, the way Quadrant links one:
+    # its `mods` links to the modpack's folder and its components match.
+    $linked = New-FixtureInstance "Modded" '{"uid":"net.minecraft","version":"1.21.1"},{"uid":"net.fabricmc.fabric-loader","version":"0.16.5"}'
+    New-Item -ItemType Directory -Force (Join-Path $linked "minecraft") | Out-Null
+    New-Item -ItemType SymbolicLink -Path (Join-Path $linked "minecraft\mods") -Target (Join-Path $modpacks "Alpha Pack") | Out-Null
+}
 
 if ($Large) {
     $loaders = @("Fabric", "Forge", "NeoForge", "Quilt")
