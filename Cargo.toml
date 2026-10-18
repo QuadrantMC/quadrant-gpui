@@ -29,6 +29,8 @@ anyhow = "1"
 base64 = { version = "0.22", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "6"
+# Already in the tree through gpui; runs the mod catalog's requests side by side.
+futures = "0.3"
 getrandom = "0.3"
 gpui = { package = "gpui-pre", version = "=0.3.9" }
 gpui-component = "0.7.3"

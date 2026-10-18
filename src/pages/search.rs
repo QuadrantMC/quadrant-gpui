@@ -6,9 +6,10 @@ pub mod logic;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Task, Window, div, point, prelude::FluentBuilder as _, px, rgb,
+    AnyElement, App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _,
+    IntoElement, ParentElement as _, Pixels, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, point,
+    prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{
     Disableable as _, Icon, Sizable as _, h_flex,
@@ -36,6 +37,7 @@ use crate::{
     i18n::{describe, t, t_with},
     loadable::Loadable,
     pages::{
+        mod_grid::{self, WidthProbe},
         mod_install::{InstallRequest, InstallViewEvent, ModInstallView, remember},
         mod_ui::{CardPress, CardStatus, Choice, OnCardPress, Primary, mod_card},
     },
@@ -104,6 +106,8 @@ pub struct SearchPage {
     version_picker: Picker<Option<String>>,
     sort_picker: Picker<Sort>,
     results_scroll: ScrollHandle,
+    /// How wide the results panel was last frame, for its column count.
+    results_width: WidthProbe,
     filters_scroll: ScrollHandle,
     /// The newest search; replacing it drops a stale one's answer.
     searching: Task<()>,
@@ -190,6 +194,7 @@ impl SearchPage {
             version_picker,
             sort_picker,
             results_scroll: ScrollHandle::new(),
+            results_width: WidthProbe::default(),
             filters_scroll: ScrollHandle::new(),
             searching: Task::ready(()),
             loading_categories: Task::ready(()),
@@ -295,7 +300,7 @@ impl SearchPage {
         self.sync_pickers(window, cx);
     }
 
-    fn refresh_modpacks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn refresh_modpacks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let task = Backend::global(cx).run(cx, |host| async move { host.get_modpacks(true).await });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(modpacks) = task.await else {
@@ -580,6 +585,27 @@ impl SearchPage {
         });
         self.details.push((view, subscription));
         cx.notify();
+    }
+
+    /// Closes every open install page, for screenshots.
+    #[cfg(feature = "screenshot")]
+    pub fn close_details(&mut self, cx: &mut Context<Self>) {
+        self.details.clear();
+        cx.notify();
+    }
+
+    /// The open install page's mod, which the title bar names as the desktop
+    /// app does.
+    pub fn title(&self, cx: &App) -> Option<SharedString> {
+        self.details()
+            .map(|view| view.read(cx).item().name.clone().into())
+    }
+
+    /// Closes the install page on top; false when none is open.
+    pub fn back(&mut self, cx: &mut Context<Self>) -> bool {
+        let closed = self.details.pop().is_some();
+        cx.notify();
+        closed
     }
 
     /// The install page on top, if one is open.
@@ -1212,10 +1238,11 @@ impl SearchPage {
                             .size_full()
                             .track_scroll(&self.results_scroll)
                             .overflow_y_scroll()
-                            .p(px(18.9))
+                            .p(RESULTS_PADDING)
                             .child(body),
                     )
-                    .vertical_scrollbar(&self.results_scroll),
+                    .vertical_scrollbar(&self.results_scroll)
+                    .child(self.results_width.element(cx.entity_id(), result_columns)),
             )
     }
 
@@ -1276,7 +1303,13 @@ impl SearchPage {
             );
         }
         v_flex()
-            .child(div().grid().grid_cols(2).gap_3().children(cells))
+            .child(
+                div()
+                    .grid()
+                    .grid_cols(result_columns(self.results_width.width()) as u16)
+                    .gap_3()
+                    .children(cells),
+            )
             .when(pages > 1, |this| {
                 this.child(
                     h_flex()
@@ -1330,6 +1363,19 @@ impl SearchPage {
             })
             .into_any_element()
     }
+}
+
+/// The results panel's padding on each side.
+const RESULTS_PADDING: Pixels = px(18.9);
+
+/// `grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3` in a results
+/// panel `panel_width` wide.
+fn result_columns(panel_width: Pixels) -> usize {
+    mod_grid::auto_fill_columns(
+        panel_width - RESULTS_PADDING * 2.,
+        mod_grid::SEARCH_CARD_MIN,
+        px(0.75 * theme::FONT_SIZE),
+    )
 }
 
 /// Runs each request in turn. A failed provider contributes an empty list

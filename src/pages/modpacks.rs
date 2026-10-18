@@ -33,6 +33,8 @@ use crate::{
     events,
     i18n::{describe, t, t_with},
     loadable::Loadable,
+    mod_catalog::ModCatalog,
+    pages::modpack_view::{ModpackView, ModpackViewEvent, catalog_keys},
     session::Session,
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
@@ -368,7 +370,11 @@ impl ModpackForm {
 /// What the page shows: the list, or one modpack's mods.
 enum View {
     List,
-    Details(LocalModpack),
+    /// A local pack's Details.
+    Details {
+        view: Entity<ModpackView>,
+        _events: Subscription,
+    },
     /// A Quadrant Share or Quadrant Sync pack, with its download.
     Shared {
         modpack: Box<InstalledModpack>,
@@ -410,6 +416,14 @@ impl ModpacksPage {
         });
         let session = Session::global(cx);
         let session_changed = cx.observe(&session, |this, _, cx| this.load_synced(cx));
+        // A shared pack's cards fill in as their providers answer.
+        let catalog = ModCatalog::global(cx);
+        cx.observe(&catalog, |this, _, cx| {
+            if matches!(this.view, View::Shared { .. }) {
+                cx.notify();
+            }
+        })
+        .detach();
         events::listen(&["refreshSyncedModpacks"], cx, |this, _, cx| {
             this.load_synced(cx)
         });
@@ -473,7 +487,7 @@ impl ModpacksPage {
         cx.notify();
     }
 
-    fn refresh(&mut self, cx: &mut Context<Self>) {
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
         // A loaded list stays on screen while it reloads, so acting on a card
         // doesn't blank the page.
         if !matches!(self.modpacks, Loadable::Ready(_)) {
@@ -484,10 +498,24 @@ impl ModpacksPage {
             let result = task.await.map(sort_modpacks);
             let _ = this.update(cx, |this, cx| {
                 this.modpacks = Loadable::from_result(result);
+                this.refresh_details(cx);
                 cx.notify();
             });
         });
         cx.notify();
+    }
+
+    /// Hands an open Details view its pack's re-read manifest.
+    fn refresh_details(&mut self, cx: &mut Context<Self>) {
+        let (View::Details { view, .. }, Loadable::Ready(modpacks)) = (&self.view, &self.modpacks)
+        else {
+            return;
+        };
+        let name = &view.read(cx).modpack().name;
+        if let Some(modpack) = modpacks.iter().find(|modpack| &modpack.name == name) {
+            let modpack = modpack.clone();
+            view.update(cx, |view, cx| view.set_modpack(modpack, cx));
+        }
     }
 
     fn load_versions(&mut self, cx: &mut Context<Self>) {
@@ -754,7 +782,7 @@ impl ModpacksPage {
         };
         match found {
             Some(modpack) if edit => self.open_update_dialog(modpack, window, cx),
-            Some(modpack) => self.show(View::Details(modpack), cx),
+            Some(modpack) => self.open_details(modpack, cx),
             None => self.show(View::List, cx),
         }
     }
@@ -791,8 +819,54 @@ impl ModpacksPage {
     }
 
     fn show(&mut self, view: View, cx: &mut Context<Self>) {
+        if let View::Shared { modpack, .. } = &view {
+            let keys = catalog_keys(&details::cards(modpack));
+            ModCatalog::global(cx).update(cx, |catalog, cx| catalog.want(keys, cx));
+        }
         self.view = view;
         cx.notify();
+    }
+
+    /// What the title bar names while a pack's mods are open, as the desktop
+    /// app titles that content with the pack's name.
+    pub fn title(&self, cx: &App) -> Option<SharedString> {
+        match &self.view {
+            View::List => None,
+            View::Details { view, .. } => Some(view.read(cx).modpack().name.clone().into()),
+            View::Shared { modpack, .. } => Some(modpack.name.clone().into()),
+        }
+    }
+
+    /// Scrolls an open Details view down by `distance`, for screenshots.
+    #[cfg(feature = "screenshot")]
+    pub fn scroll_details(&mut self, distance: gpui::Pixels, cx: &mut Context<Self>) {
+        if let View::Details { view, .. } = &self.view {
+            view.update(cx, |view, cx| view.scroll_by(distance, cx));
+        }
+    }
+
+    /// Goes back from a pack's mods to the list; false when already there.
+    pub fn back(&mut self, cx: &mut Context<Self>) -> bool {
+        if matches!(self.view, View::List) {
+            return false;
+        }
+        self.show(View::List, cx);
+        true
+    }
+
+    fn open_details(&mut self, modpack: LocalModpack, cx: &mut Context<Self>) {
+        let view = cx.new(|cx| ModpackView::new(modpack, true, cx));
+        let events = cx.subscribe(&view, |this, _, event, cx| match event {
+            ModpackViewEvent::Back => this.show(View::List, cx),
+            ModpackViewEvent::Changed => this.refresh(cx),
+        });
+        self.show(
+            View::Details {
+                view,
+                _events: events,
+            },
+            cx,
+        );
     }
 
     pub fn confirm_delete(
@@ -1005,9 +1079,7 @@ impl ModpacksPage {
                 Some(MdIcon::Info),
                 cx,
             )
-            .on_click(
-                cx.listener(move |this, _, _, cx| this.show(View::Details(modpack.clone()), cx)),
-            )
+            .on_click(cx.listener(move |this, _, _, cx| this.open_details(modpack.clone(), cx)))
         };
         v_flex()
             .mx_5()
@@ -1148,12 +1220,9 @@ impl Render for ModpacksPage {
                 page.child(self.render_toolbar(cx))
                     .children(banner)
                     .child(self.render_list(cx))
+                    .into_any_element()
             }
-            View::Details(modpack) => {
-                let header = format!("{} | {}", modpack.name, metadata_line(modpack));
-                let mods = modpack.mods.clone();
-                page.child(details::render(header.into(), None, &mods, cx))
-            }
+            View::Details { view, .. } => view.clone().into_any_element(),
             View::Shared { modpack, sync } => {
                 let header = format!(
                     "{} | {} | {} | {}",
@@ -1171,8 +1240,9 @@ impl Render for ModpacksPage {
                         cx,
                     )
                     .into_any_element();
-                let mods = modpack.mods.clone();
-                page.child(details::render(header.into(), Some(download), &mods, cx))
+                let cards = details::cards(modpack);
+                page.child(details::render(header.into(), download, &cards, window, cx))
+                    .into_any_element()
             }
         }
     }

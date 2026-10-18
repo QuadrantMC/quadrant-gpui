@@ -5732,6 +5732,7 @@ dependencies = [
  "chrono",
  "dirs 6.0.0",
  "embed-resource",
+ "futures",
  "getrandom 0.3.4",
  "gpui-component",
  "gpui-kit-assets",

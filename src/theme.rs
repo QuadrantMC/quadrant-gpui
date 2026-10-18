@@ -21,7 +21,7 @@ use gpui_component::{
 use crate::{assets::MdIcon, route::Route, snackbar::SnackbarKind};
 
 pub const FONT_FAMILY: &str = "Inter";
-const FONT_SIZE: f32 = 16.8;
+pub const FONT_SIZE: f32 = 16.8;
 
 /// slate-900: the window background.
 pub const PAGE: u32 = 0x0f172a;

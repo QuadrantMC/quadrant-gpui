@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, ScrollHandle, SharedString,
+    IntoElement, ParentElement as _, Pixels, Render, ScrollHandle, SharedString,
     StatefulInteractiveElement as _, Styled as _, StyledImage as _, Subscription, Task, Window,
     div, prelude::FluentBuilder as _, px, rgb,
 };
@@ -28,6 +28,7 @@ use crate::{
     i18n::{describe, t, t_with},
     loadable::Loadable,
     pages::{
+        mod_grid,
         mod_ui::{CardPress, CardStatus, Choice, OnCardPress, mod_card, source_label},
         search::logic::{Provider, compact_count, installed_in, loader_options},
     },
@@ -263,6 +264,10 @@ impl ModInstallView {
         view.load_setup(window, cx);
         view.load_details(cx);
         view
+    }
+
+    pub fn item(&self) -> &Mod {
+        &self.item
     }
 
     fn record(&mut self, progress: ModProgress) {
@@ -518,7 +523,7 @@ impl ModInstallView {
         .detach();
     }
 
-    fn render_details(&self) -> impl IntoElement {
+    fn render_details(&self, window_width: Pixels) -> impl IntoElement {
         let item = &self.item;
         let source = source_label(&item.source);
         let type_key = match item.mod_type {
@@ -613,30 +618,39 @@ impl ModInstallView {
                     ),
             )
             .when(!item.thumbnail_urls.is_empty(), |this| {
-                this.child(div().mt_4().grid().grid_cols(4).gap_2().children(
-                    item.thumbnail_urls.iter().enumerate().map(|(index, url)| {
-                        let open = url.clone();
-                        div()
-                            .id(("thumbnail", index))
-                            .w_full()
-                            .aspect_ratio(16. / 9.)
-                            .overflow_hidden()
-                            .rounded_2xl()
-                            .bg(rgb(theme::PAGE))
-                            .cursor_pointer()
-                            .on_click(move |_, _, cx| cx.open_url(&open))
-                            .child(
-                                gpui::img(SharedString::from(url.clone()))
-                                    .size_full()
-                                    .rounded_2xl()
-                                    .object_fit(gpui::ObjectFit::Cover),
-                            )
-                    }),
-                ))
+                this.child(
+                    div()
+                        .mt_4()
+                        .grid()
+                        .grid_cols(mod_grid::screenshot_columns(window_width) as u16)
+                        .gap_2()
+                        .children(item.thumbnail_urls.iter().enumerate().map(|(index, url)| {
+                            let open = url.clone();
+                            div()
+                                .id(("thumbnail", index))
+                                .w_full()
+                                .aspect_ratio(16. / 9.)
+                                .overflow_hidden()
+                                .rounded_2xl()
+                                .bg(rgb(theme::PAGE))
+                                .cursor_pointer()
+                                .on_click(move |_, _, cx| cx.open_url(&open))
+                                .child(
+                                    gpui::img(SharedString::from(url.clone()))
+                                        .size_full()
+                                        .rounded_2xl()
+                                        .object_fit(gpui::ObjectFit::Cover),
+                                )
+                        })),
+                )
             })
     }
 
-    fn render_deps(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    fn render_deps(
+        &self,
+        window_width: Pixels,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
         let Loadable::Ready(deps) = &self.deps else {
             return None;
         };
@@ -684,7 +698,13 @@ impl ModInstallView {
                         )
                         .child(count_badge(deps.len())),
                 )
-                .child(div().grid().grid_cols(2).gap_2().children(cards)),
+                .child(
+                    div()
+                        .grid()
+                        .grid_cols(mod_grid::dependency_columns(window_width) as u16)
+                        .gap_2()
+                        .children(cards),
+                ),
         )
     }
 
@@ -821,7 +841,9 @@ fn count_badge(count: usize) -> impl IntoElement {
 }
 
 impl Render for ModInstallView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let window_width = window.viewport_size().width;
+        let wide = mod_grid::at_least(window_width, 64.);
         v_flex()
             .id("mod-install")
             .size_full()
@@ -837,22 +859,30 @@ impl Render for ModInstallView {
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(InstallViewEvent::Close))),
                 ),
             )
+            // `lg:grid-cols-[minmax(0,1fr)_22rem]`: the form beside the
+            // details from Tailwind's `lg` up, below them before that.
             .child(
-                h_flex()
-                    .items_start()
+                div()
+                    .flex()
                     .gap_3()
+                    .map(|this| {
+                        if wide {
+                            this.flex_row().items_start()
+                        } else {
+                            this.flex_col()
+                        }
+                    })
                     .child(
                         v_flex()
                             .flex_1()
                             .min_w_0()
                             .gap_3()
-                            .child(self.render_details())
-                            .children(self.render_deps(cx)),
+                            .child(self.render_details(window_width))
+                            .children(self.render_deps(window_width, cx)),
                     )
                     .child(
                         div()
-                            .w(px(22. * 16.8))
-                            .flex_none()
+                            .when(wide, |this| this.w(px(22. * theme::FONT_SIZE)).flex_none())
                             .child(self.render_form(cx)),
                     ),
             )

@@ -265,14 +265,13 @@ pub fn mod_card<P: 'static>(
                                 .child(Icon::new(MdIcon::Download).size(px(13.6)))
                                 .child(compact_count(item.download_count))
                                 .when(!source.is_empty(), |this| {
-                                    this.child(dot()).child(theme::source_pill(
+                                    this.child(dotted(theme::source_pill(
                                         source,
                                         item.source == ModSource::CurseForge,
-                                    ))
+                                    )))
                                 })
                                 .when(status.installed, |this| {
-                                    this.child(dot())
-                                        .child(theme::installed_pill(t("installed")))
+                                    this.child(dotted(theme::installed_pill(t("installed"))))
                                 }),
                         )
                         .child(
@@ -300,8 +299,13 @@ pub fn mod_card<P: 'static>(
         .into_any_element()
 }
 
-fn dot() -> impl IntoElement {
-    div().text_color(rgb(theme::TEXT_DISABLED)).child("·")
+/// `pill` after a separating dot, the two wrapping as one.
+fn dotted(pill: impl IntoElement) -> impl IntoElement {
+    h_flex()
+        .gap_1p5()
+        .items_center()
+        .child(div().text_color(rgb(theme::TEXT_DISABLED)).child("·"))
+        .child(pill)
 }
 
 #[cfg(test)]

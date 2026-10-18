@@ -8,6 +8,7 @@ mod console;
 mod events;
 mod i18n;
 mod loadable;
+mod mod_catalog;
 mod oauth;
 mod pages;
 #[cfg(feature = "perf")]

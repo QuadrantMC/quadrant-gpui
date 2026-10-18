@@ -48,6 +48,13 @@ impl QuadrantApp {
     }
 
     fn step(&mut self, direction: NavigationDirection, cx: &mut Context<Self>) {
+        if direction == NavigationDirection::Back
+            && let Some(page) = self.pages.get(&self.history.current()).cloned()
+            && pages::back(&page, cx)
+        {
+            cx.notify();
+            return;
+        }
         let moved = match direction {
             NavigationDirection::Back => self.history.back(),
             NavigationDirection::Forward => self.history.forward(),
@@ -88,7 +95,8 @@ impl QuadrantApp {
             .child(div().w(px(4.)).h_full().bg(rgb(theme::CONTROL)))
     }
 
-    fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_title_bar(&self, page: &AnyView, cx: &mut Context<Self>) -> impl IntoElement {
+        let title = pages::title(page, cx).unwrap_or_else(|| self.history.current().label());
         h_flex()
             .id("title-bar")
             .w_full()
@@ -115,7 +123,7 @@ impl QuadrantApp {
                     }
                 }))
             })
-            .child(theme::title_pill(self.history.current().label()))
+            .child(theme::title_pill(title))
             .child(
                 h_flex()
                     .gap_4()
@@ -183,7 +191,7 @@ impl Render for QuadrantApp {
                     .flex_1()
                     .h_full()
                     .overflow_hidden()
-                    .child(self.render_title_bar(cx))
+                    .child(self.render_title_bar(&page, cx))
                     .child(div().flex_1().overflow_hidden().child(page)),
             )
             .child(self.snackbar.clone());

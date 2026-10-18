@@ -103,6 +103,7 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     capture(window, &snackbars.join("error.png"), cx).await?;
 
     capture_mod_pages(window, dir, cx).await?;
+    capture_widths(window, dir, cx).await?;
 
     show(window, cx, Route::Settings)?;
     capture(window, &dir.join("settings.png"), cx).await?;
@@ -250,9 +251,106 @@ fn sample_synced() -> Vec<SyncedModpack> {
 }
 
 fn resize(window: WindowHandle<Root>, cx: &mut AsyncApp, height: f32) -> Result<()> {
+    resize_to(window, cx, 1150., height)
+}
+
+fn resize_to(window: WindowHandle<Root>, cx: &mut AsyncApp, width: f32, height: f32) -> Result<()> {
     window.update(cx, |_, window, _| {
-        window.resize(gpui::size(gpui::px(1150.), gpui::px(height)))
+        window.resize(gpui::size(gpui::px(width), gpui::px(height)))
     })
+}
+
+/// The grids that follow the window's width, at a narrow, a middling and a
+/// wide window: Search with an installed result, a modpack's Details and
+/// the Current modpack page. Runs after `capture_mod_pages` registered Mod
+/// Menu in Alpha Pack, so the search finds it installed.
+async fn capture_widths(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
+    let shots = dir.join("widths");
+    std::fs::create_dir_all(&shots)?;
+    let restore = window.update(cx, |_, window, _| window.viewport_size())?;
+    with_page::<CurrentModpackPage>(window, cx, Route::CurrentModpack, |page, _, cx| {
+        page.toggle_updates(cx)
+    })?;
+    with_page::<ModpacksPage>(window, cx, Route::Modpacks, |page, _, cx| page.refresh(cx))?;
+    with_page::<SearchPage>(window, cx, Route::Search, |page, window, cx| {
+        page.close_details(cx);
+        page.refresh_modpacks(window, cx);
+        page.set_content(ContentType::Mods, window, cx);
+        page.set_target("Alpha Pack", window, cx);
+        page.set_query("mod menu", window, cx);
+    })?;
+    cx.background_executor().timer(NETWORK_SETTLE).await;
+    for width in [900., 1400., 2200.] {
+        resize_to(window, cx, width, 1000.)?;
+        with_page::<SearchPage>(window, cx, Route::Search, |page, _, cx| {
+            page.close_details(cx)
+        })?;
+        // The results take their column count from the width the last
+        // frame measured, so one frame at the new size goes first.
+        cx.background_executor()
+            .timer(Duration::from_millis(500))
+            .await;
+        park_pointer(window, cx)?;
+        draw(window, cx)?;
+        capture(window, &shots.join(format!("search-{width}.png")), cx).await?;
+        with_page::<SearchPage>(window, cx, Route::Search, |page, window, cx| {
+            page.open_first_result(window, cx)
+        })?;
+        cx.background_executor().timer(NETWORK_SETTLE).await;
+        capture(window, &shots.join(format!("mod-install-{width}.png")), cx).await?;
+        with_page(
+            window,
+            cx,
+            Route::Modpacks,
+            |page: &mut ModpacksPage, window, cx| {
+                page.preview(Some("Alpha Pack"), false, window, cx)
+            },
+        )?;
+        capture(window, &shots.join(format!("details-{width}.png")), cx).await?;
+        with_page(
+            window,
+            cx,
+            Route::Modpacks,
+            |page: &mut ModpacksPage, window, cx| page.preview(None, false, window, cx),
+        )?;
+        show(window, cx, Route::CurrentModpack)?;
+        capture(
+            window,
+            &shots.join(format!("current-modpack-{width}.png")),
+            cx,
+        )
+        .await?;
+    }
+    with_page::<SearchPage>(window, cx, Route::Search, |page, _, cx| {
+        page.close_details(cx)
+    })?;
+    resize_to(window, cx, restore.width.into(), restore.height.into())?;
+
+    // A pack's Details: its header scrolls away with the mods, and back
+    // leaves for the list.
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, window, cx| page.preview(Some("Alpha Pack"), false, window, cx),
+    )?;
+    capture(window, &dir.join("details-top.png"), cx).await?;
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, _, cx| page.scroll_details(gpui::px(400.), cx),
+    )?;
+    capture(window, &dir.join("details-scrolled.png"), cx).await?;
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, _, cx| {
+            page.back(cx);
+        },
+    )?;
+    capture(window, &dir.join("details-back.png"), cx).await
 }
 
 fn close_dialogs(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
@@ -280,6 +378,19 @@ fn show(window: WindowHandle<Root>, cx: &mut AsyncApp, route: Route) -> Result<(
         });
         anyhow::Ok(())
     })?
+}
+
+/// Moves the pointer to the empty corner above the rail, so no tooltip
+/// opens over what a picture shows.
+fn park_pointer(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
+    cx.update_window(window.into(), |_, window, cx| {
+        let event = gpui::MouseMoveEvent {
+            position: gpui::point(gpui::px(1.), gpui::px(1.)),
+            pressed_button: None,
+            modifiers: gpui::Modifiers::default(),
+        };
+        window.dispatch_event(gpui::PlatformInput::MouseMove(event), cx);
+    })
 }
 
 /// Draws one frame, for work a view defers until after it renders.

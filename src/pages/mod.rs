@@ -1,10 +1,12 @@
-use gpui::{AnyView, App, AppContext as _, Window};
+use gpui::{AnyView, App, AppContext as _, SharedString, Window};
 
 mod account;
 mod current_modpack;
 mod installed_content;
+mod mod_grid;
 mod mod_install;
 mod mod_ui;
+mod modpack_view;
 mod modpacks;
 mod search;
 mod settings;
@@ -19,6 +21,30 @@ pub use search::logic::ContentType;
 pub use settings::SettingsPage;
 
 use crate::route::Route;
+
+/// What the title bar names while `page` shows content of its own (a pack's
+/// mods, a mod's install page); `None` for the route's own label.
+pub fn title(page: &AnyView, cx: &App) -> Option<SharedString> {
+    if let Ok(modpacks) = page.clone().downcast::<ModpacksPage>() {
+        return modpacks.read(cx).title(cx);
+    }
+    if let Ok(search) = page.clone().downcast::<SearchPage>() {
+        return search.read(cx).title(cx);
+    }
+    None
+}
+
+/// Closes the content `page` shows of its own, as the desktop app's back
+/// does before it leaves the page; false when there is none.
+pub fn back(page: &AnyView, cx: &mut App) -> bool {
+    if let Ok(modpacks) = page.clone().downcast::<ModpacksPage>() {
+        return modpacks.update(cx, |page, cx| page.back(cx));
+    }
+    if let Ok(search) = page.clone().downcast::<SearchPage>() {
+        return search.update(cx, |page, cx| page.back(cx));
+    }
+    false
+}
 
 /// Builds the view for `route`. Called once per route; the app keeps the
 /// view alive across navigation.
