@@ -4,9 +4,13 @@ use gpui::{
 };
 use gpui_component::v_flex;
 
+mod mod_install;
+mod mod_ui;
 mod modpacks;
+mod search;
 
 pub use modpacks::ModpacksPage;
+pub use search::SearchPage;
 
 use crate::{route::Route, theme};
 
@@ -15,11 +19,10 @@ use crate::{route::Route, theme};
 pub fn build(route: Route, window: &mut Window, cx: &mut App) -> AnyView {
     match route {
         Route::Modpacks => cx.new(|cx| ModpacksPage::new(window, cx)).into(),
-        Route::CurrentModpack
-        | Route::Search
-        | Route::InstalledContent
-        | Route::Account
-        | Route::Settings => cx.new(|_| Placeholder { route }).into(),
+        Route::Search => cx.new(|cx| SearchPage::new(window, cx)).into(),
+        Route::CurrentModpack | Route::InstalledContent | Route::Account | Route::Settings => {
+            cx.new(|_| Placeholder { route }).into()
+        }
     }
 }
 

@@ -32,6 +32,20 @@ const icons = {
   settings: "MdSettings",
   share: "MdShare",
   sync: "MdSync",
+  // Search and mod pages
+  "arrow-forward": "MdArrowForward",
+  "chevron-left": "MdChevronLeft",
+  download: "MdDownload",
+  "expand-more": "MdExpandMore",
+  extension: "MdExtension",
+  "file-download": "MdFileDownload",
+  "filter-alt": "MdFilterAlt",
+  "first-page": "MdFirstPage",
+  "grid-view": "MdGridView",
+  "last-page": "MdLastPage",
+  "open-in-new": "MdOpenInNew",
+  person: "MdPerson",
+  "wb-sunny": "MdWbSunny",
 };
 
 const source = readFileSync(join(quadrant, "node_modules", "react-icons", "md", "index.mjs"), "utf8");

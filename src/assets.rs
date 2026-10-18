@@ -48,6 +48,20 @@ md_icons! {
     Settings => "settings",
     Share => "share",
     Sync => "sync",
+    // Search and mod pages
+    ArrowForward => "arrow-forward",
+    ChevronLeft => "chevron-left",
+    Download => "download",
+    ExpandMore => "expand-more",
+    Extension => "extension",
+    FileDownload => "file-download",
+    FilterAlt => "filter-alt",
+    FirstPage => "first-page",
+    GridView => "grid-view",
+    LastPage => "last-page",
+    OpenInNew => "open-in-new",
+    Person => "person",
+    WbSunny => "wb-sunny",
 }
 
 /// The app's own icons, falling back to gpui-component's for its widgets.

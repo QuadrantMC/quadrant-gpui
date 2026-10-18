@@ -280,6 +280,340 @@ pub fn snackbar_surface(kind: SnackbarKind) -> Div {
         .font_weight(FontWeight::BOLD)
 }
 
+// Search and mod pages
+
+/// slate-300: unpicked option labels.
+pub const TEXT_SOFT: u32 = 0xcbd5e1;
+/// slate-500: hints and secondary labels.
+pub const TEXT_SUBTLE: u32 = 0x64748b;
+/// slate-600: disabled labels.
+pub const TEXT_DISABLED: u32 = 0x475569;
+/// blue-600: a picked option, the filter count.
+pub const SELECTED: u32 = PRIMARY;
+/// white at 10%: rules between filter sections.
+pub const RULE: u32 = 0xffffff1a;
+/// slate-100: a hovered quiet icon button.
+pub const TEXT_BRIGHT: u32 = 0xf1f5f9;
+/// red-400: a hovered "Clear all".
+pub const TEXT_DANGER: u32 = 0xf87171;
+/// white at 5%: a hovered filter option.
+pub const OPTION_HOVER: u32 = 0xffffff0d;
+/// red-900 with red-200 text: a hovered filter chip, which removes it.
+pub const CHIP_REMOVE: u32 = 0x7f1d1d;
+pub const CHIP_REMOVE_TEXT: u32 = 0xfecaca;
+/// red-700: a failed search.
+pub const ERROR_FILL: u32 = DESTRUCTIVE_HOVER;
+/// slate-950: a hovered mod card.
+pub const CARD_HOVER: u32 = 0x020617;
+/// emerald-600: the "search further" arrow.
+pub const POSITIVE_FILL: u32 = POSITIVE;
+/// The providers' brand dots.
+pub const CURSEFORGE_DOT: u32 = 0xf16436;
+pub const MODRINTH_DOT: u32 = 0x1bd96a;
+/// amber-300 on amber-900/25 with an amber-700/20 border: notes that warn.
+const WARNING_TEXT: u32 = 0xfcd34d;
+const WARNING_FILL: u32 = 0x78350f40;
+const WARNING_BORDER: u32 = 0xb4530933;
+/// sky-700 and sky-600: the Search button.
+const SEARCH: u32 = 0x0369a1;
+const SEARCH_HOVER: u32 = 0x0284c7;
+
+/// The Search button: sky-700, the search icon before the label.
+pub fn search_button(id: impl Into<ElementId>, label: impl Into<SharedString>, cx: &App) -> Button {
+    filled(id, rgb(SEARCH), rgb(SEARCH_HOVER), cx)
+        .h_10()
+        .px_5()
+        .font_weight(FontWeight::EXTRA_BOLD)
+        .child(
+            gpui_component::h_flex()
+                .gap_2()
+                .items_center()
+                .text_sm()
+                .child(Icon::new(MdIcon::Search).size(px(18.9)))
+                .child(label.into()),
+        )
+}
+
+/// An `h-8` option pill: blue-600 when picked, slate-700 otherwise.
+pub fn option_pill(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: Option<MdIcon>,
+    picked: bool,
+    cx: &App,
+) -> Button {
+    let tone = if picked { Tone::Primary } else { Tone::Control };
+    let (color, hover) = tone.colors();
+    filled(id, color, hover, cx)
+        .h_8()
+        .px_3()
+        .font_weight(FontWeight::BOLD)
+        .when(!picked, |this| this.text_color(rgb(TEXT_BADGE)))
+        .child(
+            gpui_component::h_flex()
+                .gap_1p5()
+                .items_center()
+                .text_size(px(13.))
+                .when_some(icon, |this, icon| this.child(Icon::new(icon).size_4()))
+                .child(label.into()),
+        )
+}
+
+/// A source toggle: a brand dot and the provider's name, outlined blue
+/// while it is searched and dashed when something rules it out.
+pub fn source_toggle(
+    id: impl Into<ElementId>,
+    label: &'static str,
+    dot: u32,
+    active: bool,
+    disabled: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let base = div()
+        .id(id)
+        .flex_1()
+        .h(px(2.625 * FONT_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .rounded_full()
+        .text_size(px(13.5))
+        .font_weight(FontWeight::EXTRA_BOLD);
+    let styled = if disabled {
+        base.bg(rgb(SURFACE))
+            .border_1()
+            .border_dashed()
+            .border_color(rgb(CONTROL))
+            .text_color(rgb(TEXT_DISABLED))
+    } else if active {
+        base.bg(rgb(CONTROL))
+            .border_2()
+            .border_color(rgb(PRIMARY))
+            .cursor_pointer()
+    } else {
+        base.bg(rgb(SURFACE))
+            .border_2()
+            .border_color(rgba(0))
+            .text_color(rgb(TEXT_SUBTLE))
+            .cursor_pointer()
+    };
+    styled
+        .child(div().size_2p5().flex_none().rounded_full().bg(rgb(dot)))
+        .child(label)
+}
+
+/// A filter section's heading.
+pub fn filter_label(label: impl Into<SharedString>) -> impl IntoElement {
+    div()
+        .mb_2p5()
+        .text_size(px(13.))
+        .font_weight(FontWeight::EXTRA_BOLD)
+        .text_color(rgb(TEXT_MUTED))
+        .child(label.into())
+}
+
+/// A filter checkbox: a `rounded-[7px]` square, filled blue with a check
+/// when picked.
+pub fn check_box(picked: bool, disabled: bool) -> impl IntoElement {
+    let border = if disabled {
+        CONTROL
+    } else if picked {
+        PRIMARY
+    } else {
+        TEXT_SUBTLE
+    };
+    div()
+        .flex_none()
+        .size_5()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(rgb(border))
+        .when(picked && !disabled, |this| {
+            this.bg(rgb(PRIMARY))
+                .child(Icon::new(MdIcon::Check).size_3().text_color(rgb(TEXT)))
+        })
+}
+
+/// An on/off switch: a white knob on slate-700, or on blue-600 when on.
+pub fn switch(on: bool) -> impl IntoElement {
+    div()
+        .flex_none()
+        .w(px(2.625 * FONT_SIZE))
+        .h_6()
+        .p_0p5()
+        .rounded_full()
+        .bg(rgb(if on { PRIMARY } else { CONTROL }))
+        .flex()
+        .when(on, |this| this.justify_end())
+        .child(div().size_5().rounded_full().bg(rgb(0xffffff)))
+}
+
+/// The amber note the desktop app uses for "already installed" and the
+/// source lock.
+pub fn warning_note(text: impl Into<SharedString>) -> impl IntoElement {
+    div()
+        .px_3()
+        .py_2()
+        .rounded_2xl()
+        .border_1()
+        .border_color(rgba(WARNING_BORDER))
+        .bg(rgba(WARNING_FILL))
+        .text_color(rgb(WARNING_TEXT))
+        .text_size(px(11.5))
+        .child(text.into())
+}
+
+/// The provider pill on a mod card: orange for CurseForge, green otherwise
+/// (Modrinth, and the "Installed" pill).
+pub fn source_pill(label: impl Into<SharedString>, curseforge: bool) -> gpui::Div {
+    let (fill, text) = if curseforge {
+        (0xf9731633, 0xfb923c)
+    } else {
+        (0x10b98126, 0x34d399)
+    };
+    div()
+        .flex()
+        .gap_1()
+        .items_center()
+        .px_2()
+        .py_0p5()
+        .rounded_full()
+        .bg(rgba(fill))
+        .text_color(rgb(text))
+        .text_size(px(11.))
+        .font_weight(FontWeight::EXTRA_BOLD)
+        .child(label.into())
+}
+
+/// An `h-8` action on a mod card, the icon after the label.
+pub fn card_button(
+    id: impl Into<ElementId>,
+    tone: Tone,
+    label: impl Into<SharedString>,
+    icon: MdIcon,
+    cx: &App,
+) -> Button {
+    let (color, hover) = tone.colors();
+    filled(id, color, hover, cx)
+        .h_8()
+        .px_5()
+        .font_weight(FontWeight::EXTRA_BOLD)
+        .child(
+            gpui_component::h_flex()
+                .gap_1p5()
+                .items_center()
+                .text_xs()
+                .child(label.into())
+                .child(Icon::new(icon).size_5()),
+        )
+}
+
+/// The round "open in the web" button on a mod card.
+pub fn card_icon_button(id: impl Into<ElementId>, icon: MdIcon, cx: &App) -> Button {
+    filled(id, rgb(SURFACE), rgb(CONTROL), cx)
+        .size(px(38.))
+        .text_color(rgb(TEXT_SOFT))
+        .child(Icon::new(icon).size_4())
+}
+
+/// A wide `h-10` action, the icon before the label, as on the mod install
+/// panel.
+pub fn wide_button(
+    id: impl Into<ElementId>,
+    tone: Tone,
+    label: impl Into<SharedString>,
+    icon: MdIcon,
+    cx: &App,
+) -> Button {
+    let (color, hover) = tone.colors();
+    filled(id, color, hover, cx)
+        .h_10()
+        .px_4()
+        .font_weight(FontWeight::EXTRA_BOLD)
+        .child(
+            gpui_component::h_flex()
+                .gap_2()
+                .items_center()
+                .text_sm()
+                .child(Icon::new(icon).size_5())
+                .child(label.into()),
+        )
+}
+
+/// A mod's icon, round, over the desktop app's gradient letter tile, which
+/// also stands in while it loads and when it has none.
+pub fn mod_icon(url: &str, name: &str, size: gpui::Pixels) -> gpui::AnyElement {
+    let letter: SharedString = name
+        .trim()
+        .chars()
+        .next()
+        .map_or("?".into(), |first| first.to_uppercase().to_string())
+        .into();
+    let hue = name
+        .chars()
+        .fold(0u32, |hue, char| (hue * 31 + char as u32) % 360) as f32;
+    let tile = move || {
+        div()
+            .size(size)
+            .flex_none()
+            .rounded_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::linear_gradient(
+                135.,
+                gpui::linear_color_stop(gpui::hsla(hue / 360., 0.58, 0.50, 1.), 0.),
+                gpui::linear_color_stop(
+                    gpui::hsla(((hue + 45.) % 360.) / 360., 0.55, 0.38, 1.),
+                    1.,
+                ),
+            ))
+            .text_2xl()
+            .font_weight(FontWeight::EXTRA_BOLD)
+            .child(letter.clone())
+            .into_any_element()
+    };
+    if url.trim().is_empty() {
+        return tile();
+    }
+    let loading = tile.clone();
+    use gpui::StyledImage as _;
+    gpui::img(SharedString::from(url.to_string()))
+        .size(size)
+        .flex_none()
+        .rounded_full()
+        .object_fit(gpui::ObjectFit::Cover)
+        .with_loading(loading)
+        .with_fallback(tile)
+        .into_any_element()
+}
+
+/// The desktop app's `LinearProgress`: a blue bar labelled with its percent.
+pub fn progress_bar(percent: i32) -> impl IntoElement {
+    let percent = percent.clamp(0, 100);
+    div().w_full().rounded_full().bg(rgb(CONTROL)).child(
+        div()
+            .w(gpui::relative(percent as f32 / 100.))
+            .p_0p5()
+            .rounded_full()
+            .bg(rgb(if percent == 0 { SURFACE } else { PRIMARY }))
+            .text_xs()
+            .line_height(px(12.6))
+            .font_weight(FontWeight::MEDIUM)
+            .text_center()
+            .child(format!("{percent}%")),
+    )
+}
+
+/// A `rounded-[28px]` slate-800 panel, as the filters, results and install
+/// panels are drawn.
+pub fn panel() -> gpui::Div {
+    div().rounded(px(28.)).bg(rgb(SURFACE))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
