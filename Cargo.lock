@@ -5698,6 +5698,7 @@ dependencies = [
  "log",
  "quadrant-core",
  "quadrant-host",
+ "reqwest",
  "serde_json",
  "tempfile",
  "tokio",

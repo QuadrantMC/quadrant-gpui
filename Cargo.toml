@@ -23,6 +23,8 @@ gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = 
 log = "0.4"
 quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "5957faf11733163e5272cc756cc227905a6080ae" }
 quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "5957faf11733163e5272cc756cc227905a6080ae" }
+# Already in the tree through quadrant-core; fetches remote images for `img(url)`.
+reqwest = { version = "0.13", default-features = false }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 

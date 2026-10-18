@@ -126,6 +126,7 @@ fn main() -> ExitCode {
         .run(move |cx| {
             gpui_component::init(cx);
             theme::install(cx);
+            cx.set_http_client(backend.http_client());
             cx.set_global(backend);
             snackbar::install(cx);
             events::forward(cx);
