@@ -1,17 +1,19 @@
 # AGENTS.md
 
-Native GPUI frontend for Quadrant. The Tauri app in `../quadrant` is the functional and visual spec: `src/components/Pages/*` for screens, `src/tools.ts` for which backend call a UI action makes, `Screenshots/*.png` and `.design-sync/conventions.md` for the look.
+Quadrant-Native, a native GPUI frontend for Quadrant. The Tauri app in `../quadrant` is the functional and visual spec: `src/components/Pages/*` for screens, `src/tools.ts` for which backend call a UI action makes, `Screenshots/*.png` and `.design-sync/conventions.md` for the look.
 
 ## Commands
 
 | Task | Command |
 |---|---|
 | Build, test | `cargo build`, `cargo test` |
-| Lint, format | `cargo clippy --all-targets --features screenshot` and `--features perf`, `cargo fmt` |
+| Lint, format | `cargo clippy --all-targets` with no features, `--features updater`, `screenshot`, `screenshot,updater` and `perf`; `cargo fmt` |
 | Fixture folders | `scripts\sandbox.ps1` (writes `%TEMP%\quadrant-gpui-sandbox`) |
 | Visual check | `cargo run --features screenshot -- --data-dir <sandbox>\data --mc-folder <sandbox>\mc --screenshot <dir>` |
 | Frame times | `scripts\perf.ps1 [-Scenario <name>] [-Runs <n>] [-Sandbox large\|small]` (release build with `perf`, off-screen window; see README) |
 | Refresh icons | `node scripts/extract-icons.mjs` |
+| Package | `cargo build --release --features updater`, then `cargo packager --release -f <nsis\|deb,appimage\|app>`; `cargo generate-rpm` (README, "Packaging") |
+| Update end to end | `scripts\update-e2e.ps1` (installs for this user, then uninstalls; README, "Updates") |
 
 Never run the app or the op test against real data. Without `--data-dir` and `--mc-folder` the app uses the Tauri app's data folder and Minecraft folder, and apply, create and delete change them. Installing a mod or updating one (`install_mod`, `install_remote_file`) also writes the host's shared download cache under the real user cache folder (`%LOCALAPPDATA%\mrquantumoff.dev\QuadrantNextCache`), whatever `--data-dir` says, so verification doesn't install; searching, update checks and registering are fine. Don't capture the screen for visual checks either: the user's other windows end up in the picture. Use `--screenshot`, which renders the window's own frames.
 
@@ -27,7 +29,16 @@ Worktrees share `refs/stash`, so `git stash pop` can take another agent's work. 
 - **The route table drives navigation.** `Route::ALL` is the rail, in order; `label()` and `icon()` are matches on `Route`. Adding a page means a `Route` variant, its arms, and an arm in `pages::build`. `History` is a pure back/forward stack with unit tests.
 - **Pages are lazy, kept-alive entities.** `QuadrantApp::page` builds a route's view on first visit through `pages::build` and keeps it, so page state survives navigation.
 - **`Session::global(cx)` is the Quadrant ID sign-in every page shares.** Pages observe it; it starts the host's background workers once someone is signed in and stops them after signing out.
+- **The updater is its own module behind the `updater` feature.** `updater.rs` is the gpui side (`Updater` global, title bar button, channel picker); `updater/protocol.rs` is the pure Tauri protocol (endpoint, answer, signature check) and is where tests go; `updater/install.rs` applies an update per install kind. Its network calls run inside `Backend::run`. Nothing is installed whose minisign signature doesn't check out against `protocol::PUBKEY`, Quadrant's key.
 - **One change at a time per page.** A page's mutations are an `Op` enum whose `perform(host)` makes the host calls. The page holds `running: Option<Op>`, disables actions while one runs, then notifies and reloads. Test ops against a temp folder (see `ops_change_the_modpacks_folder`).
+
+## Releases and updates
+
+- Identity: product `Quadrant-Native`, binary `quadrant-native`, bundle identifier `dev.mrquantumoff.quadrant-native`, update app `quadrant-native`, Wayland app id `quadrant-native` (the desktop file's name). Only the data folder is shared with the Tauri app.
+- Versions are Quadrant's `YY.MM.REVISION-<channel>` in `Cargo.toml`; the release tag is `v` plus that version, and CI refuses a tag that doesn't match.
+- Never call the production `add_updates` endpoint, create tags or releases, or set secrets by hand; `release.yml` does that from a tag. GETs to the production updates endpoint are harmless.
+- Test updates with `scripts\update-e2e.ps1`, never against production. The debug-only `QUADRANT_NATIVE_UPDATE_ENDPOINT` and `QUADRANT_NATIVE_BACKGROUND` exist for it; release builds ignore both.
+- Windows that only need to exist in a test (update runs, sandbox runs) must not take the user's focus or screen: set `QUADRANT_NATIVE_BACKGROUND`, hide the console, move the window off-screen, as the e2e script does. Use `--screenshot` for anything visual.
 
 ## Look
 
