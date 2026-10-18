@@ -8,6 +8,7 @@ mod pages;
 mod route;
 #[cfg(feature = "screenshot")]
 mod screenshot;
+mod snackbar;
 mod theme;
 
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
@@ -104,7 +105,7 @@ fn open_main_window(cx: &mut App) -> Result<WindowHandle<Root>> {
         ..Default::default()
     };
     let handle = cx.open_window(options, |window, cx| {
-        let view = cx.new(|cx| QuadrantApp::new(window, cx));
+        let view = cx.new(QuadrantApp::new);
         cx.new(|cx| Root::new(view, window, cx))
     })?;
     Ok(handle)
@@ -126,6 +127,8 @@ fn main() -> ExitCode {
             gpui_component::init(cx);
             theme::install(cx);
             cx.set_global(backend);
+            snackbar::install(cx);
+            events::forward(cx);
             let window = match open_main_window(cx) {
                 Ok(window) => window,
                 Err(error) => {

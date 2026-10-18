@@ -10,7 +10,6 @@ use gpui_component::{
     dialog::DialogFooter,
     h_flex,
     input::{Input, InputEvent, InputState},
-    notification::Notification,
     scroll::ScrollableElement as _,
     select::{SearchableVec, Select, SelectItem, SelectState},
     spinner::Spinner,
@@ -24,6 +23,7 @@ use crate::{
     backend::Backend,
     i18n::{describe, t, t_with},
     loadable::Loadable,
+    snackbar::{self, SnackbarKind},
     theme::{self, Tone},
 };
 
@@ -289,22 +289,21 @@ impl ModpacksPage {
         .detach();
     }
 
-    fn run(&mut self, op: Op, window: &mut Window, cx: &mut Context<Self>) {
+    fn run(&mut self, op: Op, cx: &mut Context<Self>) {
         if self.running.is_some() {
             return;
         }
         self.running = Some(op.clone());
         let done_text = op.done_text();
         let task = Backend::global(cx).run(cx, move |host| op.perform(host));
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let result = task.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            let _ = this.update(cx, |this, cx| {
                 this.running = None;
-                let note = match result {
-                    Ok(()) => Notification::success(done_text),
-                    Err(error) => Notification::error(describe(error)),
-                };
-                window.push_notification(note, cx);
+                match result {
+                    Ok(()) => snackbar::show(cx, SnackbarKind::Success, done_text),
+                    Err(error) => snackbar::show(cx, SnackbarKind::Error, describe(error)),
+                }
                 this.refresh(cx);
             });
         })
@@ -312,18 +311,17 @@ impl ModpacksPage {
         cx.notify();
     }
 
-    fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn clear(&mut self, cx: &mut Context<Self>) {
         let newest = match &self.versions {
             Loadable::Ready(versions) => versions.first().cloned(),
             Loadable::Idle | Loadable::Loading | Loadable::Failed(_) => None,
         };
         match newest {
-            Some(version) => self.run(Op::Clear(version.to_string()), window, cx),
-            None => window.push_notification(
-                Notification::warning(
-                    "Clearing needs the Minecraft version list, which hasn't loaded.",
-                ),
+            Some(version) => self.run(Op::Clear(version.to_string()), cx),
+            None => snackbar::show(
                 cx,
+                SnackbarKind::Error,
+                "Clearing needs the Minecraft version list, which hasn't loaded.",
             ),
         }
     }
@@ -376,10 +374,10 @@ impl ModpacksPage {
                 let page = page.clone();
                 move |_: &ClickEvent, window: &mut Window, cx: &mut App| match form.submit(cx) {
                     Ok(new) => {
-                        page.update(cx, |page, cx| page.run(Op::Create(new), window, cx));
+                        page.update(cx, |page, cx| page.run(Op::Create(new), cx));
                         window.close_dialog(cx);
                     }
-                    Err(problem) => window.push_notification(Notification::warning(problem), cx),
+                    Err(problem) => snackbar::show(cx, SnackbarKind::Error, problem),
                 }
             };
             theme::dialog_surface(dialog)
@@ -431,9 +429,7 @@ impl ModpacksPage {
                 let page = page.clone();
                 let name = name.clone();
                 move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                    page.update(cx, |page, cx| {
-                        page.run(Op::Delete(name.to_string()), window, cx)
-                    });
+                    page.update(cx, |page, cx| page.run(Op::Delete(name.to_string()), cx));
                     window.close_dialog(cx);
                 }
             };
@@ -485,7 +481,7 @@ impl ModpacksPage {
                 theme::toolbar_button("clear", Tone::Control, MdIcon::Clear, cx)
                     .tooltip(t("clear"))
                     .disabled(busy)
-                    .on_click(cx.listener(|this, _, window, cx| this.clear(window, cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.clear(cx))),
             )
             .child(
                 theme::toolbar_button("open-folder", Tone::Control, MdIcon::Folder, cx)
@@ -533,9 +529,7 @@ impl ModpacksPage {
             )
             .loading(running_here && matches!(self.running, Some(Op::Apply(_))))
             .disabled(busy)
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.run(Op::Apply(name.to_string()), window, cx)
-            }))
+            .on_click(cx.listener(move |this, _, _, cx| this.run(Op::Apply(name.to_string()), cx)))
         };
         let delete =
             {

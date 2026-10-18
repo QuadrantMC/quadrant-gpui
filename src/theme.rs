@@ -9,8 +9,8 @@
 use std::borrow::Cow;
 
 use gpui::{
-    App, ElementId, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Styled, div, prelude::FluentBuilder as _, px, rgb, rgba,
+    App, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    Rgba, SharedString, Styled, div, prelude::FluentBuilder as _, px, rgb, rgba,
 };
 use gpui_component::{
     Icon, Theme, ThemeMode,
@@ -18,7 +18,7 @@ use gpui_component::{
     dialog::Dialog,
 };
 
-use crate::{assets::MdIcon, route::Route};
+use crate::{assets::MdIcon, route::Route, snackbar::SnackbarKind};
 
 pub const FONT_FAMILY: &str = "Inter";
 const FONT_SIZE: f32 = 16.8;
@@ -43,11 +43,16 @@ const POSITIVE: u32 = 0x059669;
 const POSITIVE_HOVER: u32 = 0x047857;
 /// emerald-900: an action already in effect, e.g. "Applied".
 const POSITIVE_DONE: u32 = 0x064e3b;
+/// red-700
 const DESTRUCTIVE_HOVER: u32 = 0xb91c1c;
 /// red-800
 const DANGER_HOVER: u32 = 0x991b1b;
 /// slate-950 at 30%, behind dialogs.
 const OVERLAY: u32 = 0x0206174d;
+/// slate-900 at 50%: a button on a colored surface, e.g. the snackbar's clear.
+const SCRIM: u32 = 0x0f172a80;
+/// slate-900 at 70%
+const SCRIM_HOVER: u32 = 0x0f172ab3;
 
 /// Tailwind's `rounded-4xl`, the desktop app's card radius.
 pub fn radius_card() -> gpui::Pixels {
@@ -107,11 +112,13 @@ pub enum Tone {
     Danger,
     /// slate-700 round toolbar and window buttons.
     Control,
+    /// Translucent slate-900 over a colored surface: the snackbar's clear.
+    Scrim,
 }
 
 impl Tone {
-    fn colors(self) -> (u32, u32) {
-        match self {
+    fn colors(self) -> (Rgba, Rgba) {
+        let (color, hover) = match self {
             Self::Primary => (PRIMARY, PRIMARY_HOVER),
             Self::Positive => (POSITIVE, POSITIVE_HOVER),
             Self::Done => (POSITIVE_DONE, POSITIVE_DONE),
@@ -119,23 +126,25 @@ impl Tone {
             Self::Destructive => (SURFACE, DESTRUCTIVE_HOVER),
             Self::Danger => (DESTRUCTIVE_HOVER, DANGER_HOVER),
             Self::Control => (CONTROL, CONTROL_HOVER),
-        }
+            Self::Scrim => return (rgba(SCRIM), rgba(SCRIM_HOVER)),
+        };
+        (rgb(color), rgb(hover))
     }
 }
 
 /// A fully rounded button in `color` that turns `hover` under the pointer.
-fn filled(id: impl Into<ElementId>, color: u32, hover: u32, cx: &App) -> Button {
+fn filled(id: impl Into<ElementId>, color: Rgba, hover: Rgba, cx: &App) -> Button {
     let variant = ButtonCustomVariant::new(cx)
-        .color(rgb(color).into())
-        .hover(rgb(hover).into())
-        .active(rgb(hover).into())
+        .color(color.into())
+        .hover(hover.into())
+        .active(hover.into())
         .foreground(rgb(TEXT).into());
     Button::new(id)
         .custom(variant)
         .rounded(ButtonRounded::Size(px(999.)))
         // A custom variant paints its resting color at 20% strength; the
         // explicit background restores the solid fill, and hover still wins.
-        .bg(rgb(color))
+        .bg(color)
 }
 
 /// An `h-10` extrabold pill with the label first and the icon after it, as
@@ -189,7 +198,7 @@ pub fn rail_button(route: Route, active: bool, cx: &App) -> Button {
         Route::Settings => TEXT_MUTED,
     };
     let base = if active { CONTROL } else { SURFACE };
-    filled(route.id(), base, accent, cx)
+    filled(route.id(), rgb(base), rgb(accent), cx)
         .size_12()
         .child(Icon::new(route.icon()).size_6())
 }
@@ -250,4 +259,36 @@ pub fn dialog_title(title: impl Into<SharedString>) -> impl IntoElement {
 /// The desktop app's dialog panel: `rounded-4xl bg-slate-800 p-8`, no border.
 pub fn dialog_surface(dialog: Dialog) -> Dialog {
     dialog.bg(rgb(SURFACE)).border_0().p_8()
+}
+
+fn snackbar_color(kind: SnackbarKind) -> u32 {
+    match kind {
+        SnackbarKind::Neutral => CONTROL,
+        SnackbarKind::Success => POSITIVE,
+        SnackbarKind::Error => DESTRUCTIVE_HOVER,
+    }
+}
+
+/// The desktop app's snackbar: `p-4 rounded-4xl font-bold text-slate-50` on
+/// the kind's color.
+pub fn snackbar_surface(kind: SnackbarKind) -> Div {
+    div()
+        .p_4()
+        .rounded(radius_card())
+        .bg(rgb(snackbar_color(kind)))
+        .text_color(rgb(TEXT))
+        .font_weight(FontWeight::BOLD)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snackbar_kinds_use_the_desktop_apps_colors() {
+        // bg-slate-700, bg-emerald-600, bg-red-700
+        assert_eq!(snackbar_color(SnackbarKind::Neutral), 0x334155);
+        assert_eq!(snackbar_color(SnackbarKind::Success), 0x059669);
+        assert_eq!(snackbar_color(SnackbarKind::Error), 0xb91c1c);
+    }
 }

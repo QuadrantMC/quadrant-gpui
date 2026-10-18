@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 
 use gpui::{
-    AnyView, Context, InteractiveElement as _, IntoElement, MouseButton, NavigationDirection,
-    ParentElement as _, Render, Styled as _, Window, WindowControlArea, div,
+    AnyView, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
+    NavigationDirection, ParentElement as _, Render, Styled as _, Window, WindowControlArea, div,
     prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{h_flex, v_flex};
 
 use crate::{
     assets::MdIcon,
-    events, pages,
+    pages,
     route::{History, Route},
+    snackbar::{self, Snackbar},
     theme::{self, Tone},
 };
 
@@ -23,15 +24,16 @@ pub struct QuadrantApp {
     /// Set by a press on the title bar, so the next mouse move drags the
     /// window on platforms without a native drag region.
     pressed_title_bar: bool,
+    snackbar: Entity<Snackbar>,
 }
 
 impl QuadrantApp {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        events::forward(window, cx);
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             history: History::new(Route::Modpacks),
             pages: HashMap::new(),
             pressed_title_bar: false,
+            snackbar: snackbar::view(cx),
         }
     }
 
@@ -154,5 +156,6 @@ impl Render for QuadrantApp {
                     .child(self.render_title_bar(cx))
                     .child(div().flex_1().overflow_hidden().child(page)),
             )
+            .child(self.snackbar.clone())
     }
 }

@@ -8,7 +8,13 @@ use anyhow::{Context as _, Result};
 use gpui::{App, AsyncApp, Context, Window, WindowHandle};
 use gpui_component::{Root, WindowExt as _};
 
-use crate::{app::QuadrantApp, pages::ModpacksPage, route::Route};
+use crate::{
+    app::QuadrantApp,
+    i18n::{t, t_with},
+    pages::ModpacksPage,
+    route::Route,
+    snackbar::{self, SnackbarKind},
+};
 
 /// Long enough for the first host calls to answer and the page to redraw.
 const SETTLE: Duration = Duration::from_secs(3);
@@ -38,7 +44,24 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     with_modpacks_page(window, cx, |page, window, cx| {
         page.confirm_delete("Beta Pack".into(), window, cx)
     })?;
-    capture(window, &dir.join("delete-confirm.png"), cx).await
+    capture(window, &dir.join("delete-confirm.png"), cx).await?;
+    window.update(cx, |_, window, cx| {
+        window.defer(cx, |window, cx| window.close_all_dialogs(cx))
+    })?;
+
+    let snackbars = dir.join("snackbar");
+    std::fs::create_dir_all(&snackbars)?;
+    cx.update(|cx| snackbar::show(cx, SnackbarKind::Success, t("setModpackSuccess")));
+    capture(window, &snackbars.join("success.png"), cx).await?;
+    cx.update(|cx| {
+        let reason = "The process cannot access the file because it is being used by another process. (os error 32)";
+        snackbar::show(
+            cx,
+            SnackbarKind::Error,
+            t_with("failedToDelete", &[("reason", reason)]),
+        )
+    });
+    capture(window, &snackbars.join("error.png"), cx).await
 }
 
 fn with_modpacks_page(
