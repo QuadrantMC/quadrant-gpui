@@ -22,13 +22,16 @@ if (-not $Out) {
     $Out = Join-Path $repo ("perf-log\runs\{0:yyyyMMdd-HHmmss}-{1}-{2}" -f (Get-Date), $Sandbox, $Scenario)
 }
 
-cargo build --release --locked --features perf --manifest-path (Join-Path $repo "Cargo.toml")
+# Its own target folder, so a running `cargo run --release` doesn't hold the
+# binary this build replaces.
+$target = Join-Path $repo "target\perf"
+cargo build --release --locked --features perf --manifest-path (Join-Path $repo "Cargo.toml") --target-dir $target
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
 $root = Join-Path $env:TEMP ($(if ($Sandbox -eq "large") { "quadrant-gpui-sandbox-large" } else { "quadrant-gpui-sandbox" }))
 & (Join-Path $PSScriptRoot "sandbox.ps1") -Large:($Sandbox -eq "large") -Root $root | Out-Null
 
-$exe = Join-Path $repo "target\release\quadrant-native.exe"
+$exe = Join-Path $target "release\quadrant-native.exe"
 # A fatal error prints instead of opening a message box on the user's screen.
 $env:QUADRANT_NATIVE_NO_DIALOG = "1"
 & $exe --data-dir (Join-Path $root "data") --mc-folder (Join-Path $root "mc") `
