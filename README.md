@@ -4,7 +4,7 @@ A native desktop frontend for [Quadrant](https://github.com/QuadrantMC/quadrant)
 
 It drives the same backend as the Tauri app through the `quadrant-host` crate. It shares that app's data folder (`<data dir>/dev.mrquantumoff.mcmodpackmanager`), so settings and modpacks are the same in both.
 
-Status: phase 1. The shell (title bar, page rail, theme) and the Modpacks page work. The other pages show a placeholder.
+Status: phase 2. Every page of the rail works: Apply (with Quadrant Sync and Quadrant Share once signed in), Current modpack, Search and mod install, Installed content, Account and Settings. The title bar's notification bell does nothing yet.
 
 ## Build and run
 
@@ -25,7 +25,7 @@ The default build needs no credentials. Quadrant ID, Quadrant Share and telemetr
 | Feature | What it adds |
 |---|---|
 | `curseforge` | CurseForge support in the backend. Needs `ETERNAL_API_TOKEN` at compile time, so it is off by default. |
-| `screenshot` | `--screenshot <dir>`: renders the window's own frames to PNGs (the Modpacks page, the create dialog, the delete confirmation) and quits. It reads GPUI's scene, not the screen. |
+| `screenshot` | `--screenshot <dir>`: renders every page and its main states to PNGs and quits. The window stays hidden, so clicks can't reach it, and it runs without the Quadrant ID client and API key, so it never signs in, syncs or shares. It reads GPUI's scene, not the screen. |
 
 ### Pointing it somewhere else
 
@@ -39,7 +39,7 @@ Flags win over the environment. The host saves `--mc-folder` as the `mcFolder` s
 Applying, creating and deleting modpacks changes the Minecraft folder. Try things against the sandbox instead:
 
 ```powershell
-scripts\sandbox.ps1   # two fixture modpacks under %TEMP%\quadrant-gpui-sandbox, one applied
+scripts\sandbox.ps1   # under %TEMP%\quadrant-gpui-sandbox: two fixture modpacks (one applied), packs, a Prism Launcher instance
 cargo run -- --data-dir "$env:TEMP\quadrant-gpui-sandbox\data" --mc-folder "$env:TEMP\quadrant-gpui-sandbox\mc"
 cargo run --features screenshot -- --data-dir "$env:TEMP\quadrant-gpui-sandbox\data" --mc-folder "$env:TEMP\quadrant-gpui-sandbox\mc" --screenshot "$env:TEMP\quadrant-gpui-shots"
 ```
