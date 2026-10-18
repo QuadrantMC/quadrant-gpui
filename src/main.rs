@@ -79,7 +79,25 @@ fn keyring_service(custom_data_dir: Option<&Path>) -> Option<String> {
     custom_data_dir.map(|dir| format!("{APP_IDENTIFIER}@{}", dir.display()))
 }
 
-fn build_host(data_dir: Option<PathBuf>, mc_folder: Option<PathBuf>) -> Result<QuadrantHost> {
+/// The Quadrant ID client and API key baked in at build time, or none at all
+/// while screenshot mode drives the window: a picture must never sign in,
+/// sync or share for real.
+fn credentials(screenshot: bool) -> [&'static str; 3] {
+    if screenshot {
+        return ["", "", ""];
+    }
+    [
+        option_env!("QUADRANT_OAUTH2_CLIENT_ID").unwrap_or_default(),
+        option_env!("QUADRANT_OAUTH2_CLIENT_SECRET").unwrap_or_default(),
+        option_env!("QUADRANT_API_KEY").unwrap_or_default(),
+    ]
+}
+
+fn build_host(
+    data_dir: Option<PathBuf>,
+    mc_folder: Option<PathBuf>,
+    [client_id, client_secret, api_key]: [&str; 3],
+) -> Result<QuadrantHost> {
     let keyring_service = keyring_service(data_dir.as_deref());
     let data_dir = match data_dir {
         Some(data_dir) => data_dir,
@@ -87,12 +105,7 @@ fn build_host(data_dir: Option<PathBuf>, mc_folder: Option<PathBuf>) -> Result<Q
             .ok_or_else(|| anyhow!("no data folder on this system; pass --data-dir"))?
             .join(APP_IDENTIFIER),
     };
-    let mut options = QuadrantHostOptions::new(
-        data_dir,
-        option_env!("QUADRANT_OAUTH2_CLIENT_ID").unwrap_or_default(),
-        option_env!("QUADRANT_OAUTH2_CLIENT_SECRET").unwrap_or_default(),
-        option_env!("QUADRANT_API_KEY").unwrap_or_default(),
-    );
+    let mut options = QuadrantHostOptions::new(data_dir, client_id, client_secret, api_key);
     // The host persists this as the `mcFolder` setting in the data folder.
     options.mc_folder = mc_folder;
     if let Some(service) = keyring_service {
@@ -108,7 +121,11 @@ fn start(args: &Args) -> Result<Backend> {
         .enable_all()
         .build()
         .context("failed to start the async runtime")?;
-    let host = build_host(args.data_dir.clone(), args.mc_folder.clone())?;
+    let host = build_host(
+        args.data_dir.clone(),
+        args.mc_folder.clone(),
+        credentials(args.screenshot_dir.is_some()),
+    )?;
     Ok(Backend::new(host, runtime))
 }
 
@@ -224,6 +241,11 @@ mod tests {
         let sandbox = keyring_service(Some(Path::new("sandbox"))).unwrap();
         assert_ne!(sandbox, quadrant_core::account::KEYRING_SERVICE);
         assert_ne!(Some(sandbox), keyring_service(Some(Path::new("other"))));
+    }
+
+    #[test]
+    fn screenshots_run_without_credentials() {
+        assert_eq!(credentials(true), ["", "", ""]);
     }
 
     #[test]
