@@ -5748,6 +5748,7 @@ name = "quadrant-gpui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "dirs 6.0.0",
  "gpui-component",
  "gpui-kit-assets",

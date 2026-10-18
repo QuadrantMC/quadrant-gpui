@@ -4,14 +4,18 @@ use gpui::{
 };
 use gpui_component::v_flex;
 
+mod modpacks;
+
+pub use modpacks::ModpacksPage;
+
 use crate::{route::Route, theme};
 
 /// Builds the view for `route`. Called once per route; the app keeps the
 /// view alive across navigation.
-pub fn build(route: Route, _window: &mut Window, cx: &mut App) -> AnyView {
+pub fn build(route: Route, window: &mut Window, cx: &mut App) -> AnyView {
     match route {
-        Route::Modpacks
-        | Route::CurrentModpack
+        Route::Modpacks => cx.new(|cx| ModpacksPage::new(window, cx)).into(),
+        Route::CurrentModpack
         | Route::Search
         | Route::InstalledContent
         | Route::Account

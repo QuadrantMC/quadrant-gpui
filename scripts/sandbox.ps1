@@ -32,4 +32,7 @@ function New-FixtureModpack([string]$Name, [string]$Version, [string]$Loader, [s
 
 New-FixtureModpack "Alpha Pack" "1.21.1" "Fabric" @("sodium", "lithium", "iris")
 New-FixtureModpack "Beta Pack" "1.20.1" "Forge" @("jei")
+# Applied the way Quadrant applies a pack: `mods` links to its folder. Needs
+# Developer Mode (or admin) on Windows to create the link.
+New-Item -ItemType SymbolicLink -Path (Join-Path $Root "mc\mods") -Target (Join-Path $modpacks "Alpha Pack") | Out-Null
 Get-ChildItem -Recurse $Root | Select-Object -ExpandProperty FullName
