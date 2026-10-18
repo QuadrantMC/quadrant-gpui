@@ -58,7 +58,9 @@ impl Backend {
             runtime: self.runtime.handle().clone(),
             client: reqwest::Client::new(),
             user_agent: HeaderValue::from_static(concat!(
-                "QuadrantMC/quadrant-gpui/v",
+                "QuadrantMC/",
+                env!("CARGO_PKG_NAME"),
+                "/v",
                 env!("CARGO_PKG_VERSION")
             )),
         })

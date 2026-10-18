@@ -28,7 +28,7 @@ if ($LASTEXITCODE -ne 0) { throw "build failed" }
 $root = Join-Path $env:TEMP ($(if ($Sandbox -eq "large") { "quadrant-gpui-sandbox-large" } else { "quadrant-gpui-sandbox" }))
 & (Join-Path $PSScriptRoot "sandbox.ps1") -Large:($Sandbox -eq "large") -Root $root | Out-Null
 
-$exe = Join-Path $repo "target\release\quadrant-gpui.exe"
+$exe = Join-Path $repo "target\release\quadrant-native.exe"
 & $exe --data-dir (Join-Path $root "data") --mc-folder (Join-Path $root "mc") `
     --perf $Scenario --perf-runs $Runs --perf-placement $Placement --perf-out $Out 2>&1 |
     Where-Object { "$_" -notmatch "^\[\*\]" } | ForEach-Object { "$_" }

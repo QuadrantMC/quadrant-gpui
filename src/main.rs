@@ -33,6 +33,14 @@ use crate::{app::QuadrantApp, backend::Backend};
 
 /// The desktop app's Tauri identifier, whose data folder this app shares.
 const APP_IDENTIFIER: &str = "dev.mrquantumoff.mcmodpackmanager";
+/// This app's own identity: its installers, Start menu entry and taskbar
+/// group sit beside the desktop app's instead of replacing them.
+const PRODUCT_NAME: &str = "Quadrant-Native";
+const BUNDLE_IDENTIFIER: &str = "dev.mrquantumoff.quadrant-native";
+/// The Wayland app id. Desktops match it to `quadrant-native.desktop` for
+/// the window's name and icon, so it is the binary's name, as the packages
+/// name the desktop file.
+const WAYLAND_APP_ID: &str = "quadrant-native";
 
 #[derive(Debug, Default, PartialEq)]
 struct Args {
@@ -185,7 +193,7 @@ fn open_main_window(mode: &Mode, cx: &mut App) -> Result<WindowHandle<Root>> {
         // The title bar is drawn by the app; the title still names the window
         // for the taskbar and window switchers.
         titlebar: Some(TitlebarOptions {
-            title: Some("Quadrant".into()),
+            title: Some(PRODUCT_NAME.into()),
             appears_transparent: true,
             traffic_light_position: Some(point(px(12.), px(12.))),
         }),
@@ -194,6 +202,7 @@ fn open_main_window(mode: &Mode, cx: &mut App) -> Result<WindowHandle<Root>> {
         window_min_size: Some(size(px(800.), px(500.))),
         show: !hidden,
         focus: !hidden,
+        app_id: Some(WAYLAND_APP_ID.into()),
         ..Default::default()
     };
     // Perf mode times the real swap chain at the display's own resolution:
@@ -234,6 +243,7 @@ fn main() -> ExitCode {
     gpui_platform::application()
         .with_assets(assets::Assets)
         .run(move |cx| {
+            cx.set_app_identity(BUNDLE_IDENTIFIER, PRODUCT_NAME);
             gpui_component::init(cx);
             theme::install(cx);
             cx.set_http_client(backend.http_client());

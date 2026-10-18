@@ -1,8 +1,12 @@
 [package]
-name = "quadrant-gpui"
-version = "0.1.0"
+name = "quadrant-native"
+# YY.MM.REVISION with the release channel as the pre-release, like Quadrant.
+# The release tag is `v` plus this version.
+version = "26.10.0-stable"
 edition = "2024"
-description = "Native GPUI desktop frontend for Quadrant"
+description = "Manage your mods and modpacks with ease."
+authors = ["MrQuantumOFF (Demir Yerli) <me@mrquantumoff.dev>"]
+homepage = "https://usequadrant.dev"
 license = "MPL-2.0"
 publish = false
 
@@ -42,6 +46,10 @@ windows = { version = "0.62", optional = true, features = ["Win32_Foundation", "
 
 [dev-dependencies]
 tempfile = "3"
+
+[build-dependencies]
+# Already in the tree through gpui; embeds the icon in the Windows exe.
+embed-resource = "3"
 
 # Uncomment to build against a sibling checkout of the quadrant repo instead of
 # the pinned upstream revision.
