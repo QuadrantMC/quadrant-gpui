@@ -45,7 +45,7 @@ Flags win over the environment. The host saves `--mc-folder` as the `mcFolder` s
 Applying, creating and deleting modpacks changes the Minecraft folder. Try things against the sandbox instead:
 
 ```powershell
-scripts\sandbox.ps1   # under %TEMP%\quadrant-gpui-sandbox: two fixture modpacks (one applied), packs, a Prism Launcher instance
+scripts\sandbox.ps1   # under %TEMP%\quadrant-gpui-sandbox: two fixture modpacks (one applied), packs, two Prism Launcher instances (one with Alpha Pack applied)
 cargo run -- --data-dir "$env:TEMP\quadrant-gpui-sandbox\data" --mc-folder "$env:TEMP\quadrant-gpui-sandbox\mc"
 cargo run --features screenshot -- --data-dir "$env:TEMP\quadrant-gpui-sandbox\data" --mc-folder "$env:TEMP\quadrant-gpui-sandbox\mc" --screenshot "$env:TEMP\quadrant-gpui-shots"
 ```
