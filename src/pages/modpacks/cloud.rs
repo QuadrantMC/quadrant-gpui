@@ -89,7 +89,7 @@ pub fn merge_modpacks<'a>(
         .iter()
         .filter(|modpack| !claimed.contains(&modpack.modpack_id.as_str()))
         .collect();
-    cloud_only.sort_by(|a, b| b.last_synced.cmp(&a.last_synced));
+    cloud_only.sort_by_key(|modpack| std::cmp::Reverse(modpack.last_synced));
     rows.extend(cloud_only.into_iter().map(|synced| Row {
         local: None,
         synced: Some(synced),
@@ -355,11 +355,9 @@ impl ModpacksPage {
                         modpack_id: id.clone(),
                         username: owner.username.clone(),
                     };
-                    theme::pill_button(
+                    theme::kick_button(
                         element_id(&format!("kick-{}", owner.username)),
-                        Tone::Destructive,
                         t("kick"),
-                        None,
                         cx,
                     )
                     .mr_4()

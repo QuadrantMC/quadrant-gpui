@@ -66,7 +66,6 @@ md_icons! {
     WbSunny => "wb-sunny",
     // Content, settings and account pages
     ContentCopy => "content-copy",
-    Remove => "remove",
     OpenInBrowser => "open-in-browser",
     Cloud => "cloud",
     CloudDone => "cloud-done",

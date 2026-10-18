@@ -495,14 +495,13 @@ impl InstalledContentPage {
         let busy = self.running.is_some();
         let bulk = label.is_some();
         let button = match label {
-            Some(label) => theme::pill_button(
+            Some(label) => theme::small_pill_button(
                 control.id("copy"),
                 Tone::Control,
                 label,
                 Some(MdIcon::ContentCopy),
                 cx,
-            )
-            .text_sm(),
+            ),
             None => {
                 theme::toolbar_button(control.id("copy"), Tone::Control, MdIcon::ContentCopy, cx)
             }
@@ -553,15 +552,16 @@ impl InstalledContentPage {
         let armed = self.armed.as_ref() == Some(&control);
         let id = control.id("delete");
         let button = match (armed, text) {
-            (true, _) => theme::pill_button(id, Tone::Danger, armed_text, Some(MdIcon::Delete), cx),
+            (true, _) => {
+                theme::small_pill_button(id, Tone::Danger, armed_text, Some(MdIcon::Delete), cx)
+            }
             (false, Some(text)) => {
-                theme::pill_button(id, Tone::Destructive, text, Some(MdIcon::Delete), cx)
+                theme::small_pill_button(id, Tone::Destructive, text, Some(MdIcon::Delete), cx)
             }
             (false, None) => theme::toolbar_button(id, Tone::Destructive, MdIcon::Delete, cx),
         };
         let loading = self.running.as_ref().map(Op::control) == Some(&control);
         button
-            .text_sm()
             .loading(loading)
             .disabled(self.running.is_some())
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -594,14 +594,13 @@ impl InstalledContentPage {
                     .child(t_count("installedContentSelected", count, &[])),
             )
             .child(
-                theme::pill_button(
+                theme::small_pill_button(
                     "clear-selection",
                     Tone::Control,
                     t("installedContentClearSelection"),
                     None,
                     cx,
                 )
-                .text_sm()
                 .disabled(self.running.is_some())
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.selection.clear();
@@ -756,14 +755,13 @@ impl InstalledContentPage {
                 ))
             })
             .child(
-                theme::pill_button(
+                theme::small_pill_button(
                     Control::CopyAll(section.clone()).id("open"),
                     Tone::Control,
                     t("installedContentOpenFolder"),
                     Some(MdIcon::Folder),
                     cx,
                 )
-                .text_sm()
                 .tooltip(t_with(
                     "installedContentOpenFolderLabel",
                     &[
@@ -791,14 +789,13 @@ impl InstalledContentPage {
                 v_flex()
                     .child(
                         h_flex().mt_3().child(
-                            theme::pill_button(
+                            theme::small_pill_button(
                                 Control::CopyAll(section.clone()).id("select-all"),
                                 Tone::Control,
                                 t("installedContentSelectAll"),
                                 None,
                                 cx,
                             )
-                            .text_sm()
                             .disabled(self.running.is_some())
                             .on_click(cx.listener({
                                 let section = section.clone();

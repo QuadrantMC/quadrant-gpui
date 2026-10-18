@@ -107,7 +107,7 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     show(window, cx, Route::Settings)?;
     capture(window, &dir.join("settings.png"), cx).await?;
     // A taller window shows the whole page in one picture.
-    resize(window, cx, 1750.)?;
+    resize(window, cx, 2300.)?;
     capture(window, &dir.join("settings-full.png"), cx).await?;
 
     show(window, cx, Route::InstalledContent)?;
@@ -160,6 +160,8 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
             page.preview_cloud(sample_synced(), "", Some("Alpha Pack"), window, cx)
         },
     )?;
+    // The page opens the dialog after the frame that sees the refusal.
+    draw(window, cx)?;
     capture(window, &dir.join("sync-conflict.png"), cx).await?;
     close_dialogs(window, cx)?;
     with_page(
@@ -259,6 +261,14 @@ fn show(window: WindowHandle<Root>, cx: &mut AsyncApp, route: Route) -> Result<(
         });
         anyhow::Ok(())
     })?
+}
+
+/// Draws one frame, for work a view defers until after it renders.
+fn draw(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
+    cx.update_window(window.into(), |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    })
 }
 
 async fn capture(window: WindowHandle<Root>, path: &Path, cx: &mut AsyncApp) -> Result<()> {

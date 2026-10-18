@@ -50,7 +50,6 @@ const icons = {
   "wb-sunny": "MdWbSunny",
   // Content, settings and account pages
   "content-copy": "MdContentCopy",
-  remove: "MdRemove",
   "open-in-browser": "MdOpenInBrowser",
   cloud: "MdCloud",
   "cloud-done": "MdCloudDone",

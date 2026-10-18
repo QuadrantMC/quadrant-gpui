@@ -718,6 +718,38 @@ pub fn warning_box(text: impl Into<SharedString>) -> impl IntoElement {
         .child(text.into())
 }
 
+/// `pill_button` with a `text-sm` label, as on the Installed content page.
+pub fn small_pill_button(
+    id: impl Into<ElementId>,
+    tone: Tone,
+    label: impl Into<SharedString>,
+    icon: Option<MdIcon>,
+    cx: &App,
+) -> Button {
+    let (color, hover) = tone.colors();
+    filled(id, color, hover, cx)
+        .h_10()
+        .px_4()
+        .font_weight(FontWeight::EXTRA_BOLD)
+        .child(
+            gpui_component::h_flex()
+                .gap_2()
+                .items_center()
+                .text_sm()
+                .child(label.into())
+                .when_some(icon, |this, icon| this.child(Icon::new(icon).size_5())),
+        )
+}
+
+/// slate-700 that turns red-700 on hover: kicking a Quadrant Sync member.
+pub fn kick_button(id: impl Into<ElementId>, label: impl Into<SharedString>, cx: &App) -> Button {
+    filled(id, rgb(CONTROL), rgb(DESTRUCTIVE_HOVER), cx)
+        .h_10()
+        .px_4()
+        .font_weight(FontWeight::EXTRA_BOLD)
+        .child(label.into())
+}
+
 /// A full-width button whose label wraps, like the Account page's terms of
 /// service notice. gpui-component's `Button` keeps its label on one line.
 pub fn block_button(

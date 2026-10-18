@@ -287,19 +287,6 @@ pub fn sort_modpacks(mut modpacks: Vec<LocalModpack>) -> Vec<LocalModpack> {
     modpacks
 }
 
-/// The packs whose name, version or loader contains `query`, ignoring case.
-pub fn matches_query(modpack: &LocalModpack, query: &str) -> bool {
-    let query = query.trim().to_lowercase();
-    query.is_empty()
-        || modpack.name.to_lowercase().contains(&query)
-        || modpack.version.to_lowercase().contains(&query)
-        || modpack
-            .mod_loader
-            .to_string()
-            .to_lowercase()
-            .contains(&query)
-}
-
 /// "1.21.1 | Fabric | 3 Mod(s)", plus the local sync date once there is one.
 pub fn metadata_line(modpack: &LocalModpack) -> String {
     let mut line = format!(
@@ -1221,16 +1208,6 @@ mod tests {
         ]);
         let names: Vec<_> = sorted.iter().map(|modpack| modpack.name.as_str()).collect();
         assert_eq!(names, ["applied", "synced", "Alpha", "beta"]);
-    }
-
-    #[test]
-    fn search_matches_name_version_and_loader() {
-        let pack = modpack("Alpha Pack", false, 0);
-        assert!(matches_query(&pack, ""));
-        assert!(matches_query(&pack, "alpha"));
-        assert!(matches_query(&pack, "1.21"));
-        assert!(matches_query(&pack, "FABRIC"));
-        assert!(!matches_query(&pack, "forge"));
     }
 
     #[test]
