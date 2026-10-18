@@ -26,6 +26,7 @@ The default build needs no credentials. Quadrant ID, Quadrant Share and telemetr
 |---|---|
 | `curseforge` | CurseForge support in the backend. Needs `ETERNAL_API_TOKEN` at compile time, so it is off by default. |
 | `screenshot` | `--screenshot <dir>`: renders every page and its main states to PNGs and quits. The window stays hidden, so clicks can't reach it, and it runs without the Quadrant ID client and API key, so it never signs in, syncs or shares. It reads GPUI's scene, not the screen. |
+| `perf` | `--perf <scenario\|all> --perf-out <dir> [--perf-runs <n>]`: drives a maximized window through fixed scenarios and records every frame's time. Needs `--data-dir` and `--mc-folder`, runs without credentials, and ignores real mouse and keyboard input. Windows only so far. |
 
 ### Pointing it somewhere else
 
@@ -45,6 +46,17 @@ cargo run --features screenshot -- --data-dir "$env:TEMP\quadrant-gpui-sandbox\d
 ```
 
 Applying a modpack links `mods` to its folder. On Windows that needs Developer Mode or an elevated shell.
+
+## Frame times
+
+The app has to keep up with the display: a frame every refresh, and never less than 120 a second, so the budget is `1000 / max(120, refresh rate)` ms. `scripts\perf.ps1` measures it in one command. It builds a release binary with `perf`, rebuilds a large sandbox (`scripts\sandbox.ps1 -Large`: 300 modpacks, 500 mods in the applied one, about 1000 resource and shader packs) and runs every scenario five times in a visible, maximized window, then prints the median of each statistic.
+
+```powershell
+scripts\perf.ps1                                   # every scenario, 5 runs, large sandbox
+scripts\perf.ps1 -Scenario scroll-modpacks -Runs 3 -Sandbox small
+```
+
+Each frame is timed from the window procedure, around the `WM_PAINT` that GPUI's vsync thread asks for every refresh: next-frame callbacks, render, layout, paint and `Present`. A frame presented more than 1.5 refresh periods after the one before counts as dropped. The scenarios step once per frame through GPUI (scroll-wheel and mouse-move events, navigation, snackbars, dialogs, window resizes) and refresh the window, so every refresh draws. `idle` instead leaves each page alone for five seconds and counts what it draws anyway. Results go to `perf-log\runs\` (ignored by git): a JSON file per scenario with every frame, and `summary.txt`. Keep the mouse and keyboard away while it runs; the window ignores them but warns when it sees any.
 
 ## Developing against a local quadrant checkout
 

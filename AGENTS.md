@@ -7,9 +7,10 @@ Native GPUI frontend for Quadrant. The Tauri app in `../quadrant` is the functio
 | Task | Command |
 |---|---|
 | Build, test | `cargo build`, `cargo test` |
-| Lint, format | `cargo clippy --all-targets --features screenshot`, `cargo fmt` |
+| Lint, format | `cargo clippy --all-targets --features screenshot` and `--features perf`, `cargo fmt` |
 | Fixture folders | `scripts\sandbox.ps1` (writes `%TEMP%\quadrant-gpui-sandbox`) |
 | Visual check | `cargo run --features screenshot -- --data-dir <sandbox>\data --mc-folder <sandbox>\mc --screenshot <dir>` |
+| Frame times | `scripts\perf.ps1 [-Scenario <name>] [-Runs <n>] [-Sandbox large\|small]` (release build with `perf`; see README) |
 | Refresh icons | `node scripts/extract-icons.mjs` |
 
 Never run the app or the op test against real data. Without `--data-dir` and `--mc-folder` the app uses the Tauri app's data folder and Minecraft folder, and apply, create and delete change them. Installing a mod or updating one (`install_mod`, `install_remote_file`) also writes the host's shared download cache under the real user cache folder (`%LOCALAPPDATA%\mrquantumoff.dev\QuadrantNextCache`), whatever `--data-dir` says, so verification doesn't install; searching, update checks and registering are fine. Don't capture the screen for visual checks either: the user's other windows end up in the picture. Use `--screenshot`, which renders the window's own frames.
@@ -45,3 +46,10 @@ Worktrees share `refs/stash`, so `git stash pop` can take another agent's work. 
 - `Input` and `Select` draw their own border and background unless `.appearance(false)`.
 - `Window::render_to_image` exists only with gpui's `test-support` feature, which the `screenshot` feature turns on.
 - The `--screenshot` window is hidden, so the platform never asks it for frames: each capture draws one. Work a view defers to after it renders (a dialog it opens from `render`) needs an extra `draw` before the capture.
+
+## Frame times
+
+- The target is a frame every refresh, at least 120 a second: a budget of `1000 / max(120, Hz)` ms. `scripts\perf.ps1` is the ruler; its scenarios, durations and the dropped-frame rule are frozen, since changing them invalidates every earlier number. Compare a change against a run of the same command at its parent commit, on the same sandbox.
+- Don't build or run anything else while it measures; other CPU load shows up as dropped frames. A run that warns about real input or lost focus was disturbed; run it again.
+- `perf::frame_drawn` in `QuadrantApp::render` marks a tick as drawn. That relies on no view being `cached()`; a cached root view would hide frames from the harness.
+- On Windows, GPUI draws inside `WM_PAINT`, which its vsync thread requests every refresh through `DwmFlush` even when nothing changed. An unfocused window's animations are capped at 30 fps (`inactive_frame_interval`); perf mode turns that off.
