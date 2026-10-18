@@ -15,7 +15,7 @@ use crate::{
     app::QuadrantApp,
     backend::Backend,
     i18n::{t, t_with},
-    pages::{ContentType, CurrentModpackPage, ModpacksPage, SearchPage},
+    pages::{ContentType, CurrentModpackPage, ModpacksPage, SearchPage, SettingsPage},
     route::Route,
     snackbar::{self, SnackbarKind},
 };
@@ -69,7 +69,17 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     });
     capture(window, &snackbars.join("error.png"), cx).await?;
 
-    capture_mod_pages(window, dir, cx).await
+    capture_mod_pages(window, dir, cx).await?;
+
+    show(window, cx, Route::Settings)?;
+    capture(window, &dir.join("settings.png"), cx).await?;
+    with_page(
+        window,
+        cx,
+        Route::Settings,
+        |page: &mut SettingsPage, window, cx| page.preview_experimental(window, cx),
+    )?;
+    capture(window, &dir.join("settings-experimental.png"), cx).await
 }
 
 fn close_dialogs(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
@@ -84,6 +94,14 @@ fn app(root: &Root) -> Result<Entity<QuadrantApp>> {
         .downcast::<QuadrantApp>()
         .ok()
         .context("root is not the app")
+}
+
+/// Opens `route` in the window, as a click on its rail button does.
+fn show(window: WindowHandle<Root>, cx: &mut AsyncApp, route: Route) -> Result<()> {
+    window.update(cx, |root, _, cx| {
+        app(root)?.update(cx, |app, cx| app.navigate(route, cx));
+        anyhow::Ok(())
+    })?
 }
 
 async fn capture(window: WindowHandle<Root>, path: &Path, cx: &mut AsyncApp) -> Result<()> {

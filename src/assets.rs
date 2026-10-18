@@ -64,6 +64,13 @@ md_icons! {
     Person => "person",
     Update => "update",
     WbSunny => "wb-sunny",
+    // Content, settings and account pages
+    ContentCopy => "content-copy",
+    Remove => "remove",
+    OpenInBrowser => "open-in-browser",
+    Cloud => "cloud",
+    CloudDone => "cloud-done",
+    PersonAdd => "person-add",
 }
 
 /// The app's own icons, falling back to gpui-component's for its widgets.

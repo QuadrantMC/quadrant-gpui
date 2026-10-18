@@ -26,6 +26,16 @@ pub fn t_with(key: &str, values: &[(&str, &str)]) -> SharedString {
     text.into()
 }
 
+/// [`t_with`] for an i18next plural key: `key_one` when `count` is 1, else
+/// `key_other`, with `{{count}}` filled in besides `values`.
+pub fn t_count(key: &str, count: usize, values: &[(&str, &str)]) -> SharedString {
+    let suffix = if count == 1 { "one" } else { "other" };
+    let count = count.to_string();
+    let mut all = vec![("count", count.as_str())];
+    all.extend_from_slice(values);
+    t_with(&format!("{key}_{suffix}"), &all)
+}
+
 /// The English text for a failed host call, mirroring `describeError` in the
 /// desktop app: classified failures arrive as i18n keys, anything else is shown
 /// as it came.
@@ -75,5 +85,17 @@ mod tests {
     fn fills_placeholders() {
         assert_eq!(t_with("modCount", &[("amount", "3")]), "3 Mod(s)");
         assert_eq!(t("noSuchKey"), "noSuchKey");
+    }
+
+    #[test]
+    fn picks_the_plural_form() {
+        assert_eq!(
+            t_count("installedContentSelected", 1, &[]),
+            "1 pack selected"
+        );
+        assert_eq!(
+            t_count("installedContentCopied", 3, &[("name", "Prism")]),
+            "Copied 3 packs to Prism"
+        );
     }
 }

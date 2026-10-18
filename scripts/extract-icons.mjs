@@ -48,6 +48,13 @@ const icons = {
   person: "MdPerson",
   update: "MdUpdate",
   "wb-sunny": "MdWbSunny",
+  // Content, settings and account pages
+  "content-copy": "MdContentCopy",
+  remove: "MdRemove",
+  "open-in-browser": "MdOpenInBrowser",
+  cloud: "MdCloud",
+  "cloud-done": "MdCloudDone",
+  "person-add": "MdPersonAdd",
 };
 
 const source = readFileSync(join(quadrant, "node_modules", "react-icons", "md", "index.mjs"), "utf8");

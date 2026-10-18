@@ -4,6 +4,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
     backend::Backend,
+    i18n::t_with,
     snackbar::{self, SnackbarKind},
 };
 
@@ -25,9 +26,51 @@ pub fn forward(cx: &mut App) {
     .detach();
 }
 
+/// Events a view reacts to through [`listen`] instead of a snackbar.
+const HANDLED_BY_VIEWS: [&str; 4] = [
+    "recheckAccountToken",
+    "refreshNotifications",
+    "refreshSyncedModpacks",
+    "configChanged",
+];
+
 /// Progress events arrive per chunk; a snackbar each would flicker past unread.
 fn snackbar_text(event: &HostEventEnvelope) -> Option<SharedString> {
-    (!event.event.ends_with("Progress")).then(|| event.event.clone().into())
+    let name = event.event.as_str();
+    if name.ends_with("Progress") || HANDLED_BY_VIEWS.contains(&name) {
+        return None;
+    }
+    if name == "quadrantShareSubmission" {
+        let uses_left = event.payload["uses_left"].to_string();
+        return Some(t_with("copiedToClipboard", &[("amount", &uses_left)]));
+    }
+    Some(name.to_string().into())
+}
+
+/// Calls `f` on the view for each host event named in `names`, for as long as
+/// the view lives.
+pub fn listen<T: 'static>(
+    names: &'static [&'static str],
+    cx: &mut Context<T>,
+    f: impl Fn(&mut T, &HostEventEnvelope, &mut Context<T>) + 'static,
+) {
+    let mut events = Backend::global(cx).subscribe_events();
+    cx.spawn(async move |this, cx| {
+        loop {
+            let event = match events.recv().await {
+                Ok(event) => event,
+                Err(RecvError::Lagged(_)) => continue,
+                Err(RecvError::Closed) => break,
+            };
+            if !names.contains(&event.event.as_str()) {
+                continue;
+            }
+            if this.update(cx, |this, cx| f(this, &event, cx)).is_err() {
+                break;
+            }
+        }
+    })
+    .detach();
 }
 
 /// Which half of a mod install a progress event reports.
@@ -138,9 +181,22 @@ mod tests {
     #[test]
     fn progress_events_stay_quiet() {
         assert_eq!(snackbar_text(&event("modDownloadProgress")), None);
+        assert_eq!(snackbar_text(&event("refreshSyncedModpacks")), None);
         assert_eq!(
-            snackbar_text(&event("quadrantShareSubmission")).as_deref(),
-            Some("quadrantShareSubmission")
+            snackbar_text(&event("somethingNew")).as_deref(),
+            Some("somethingNew")
+        );
+    }
+
+    #[test]
+    fn a_share_says_how_many_uses_are_left() {
+        let shared = HostEventEnvelope {
+            event: "quadrantShareSubmission".into(),
+            payload: serde_json::json!({ "code": 1234567, "uses_left": 9 }),
+        };
+        assert_eq!(
+            snackbar_text(&shared).as_deref(),
+            Some("Copied to clipboard, 9 uses left")
         );
     }
 }

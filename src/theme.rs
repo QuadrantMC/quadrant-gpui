@@ -614,6 +614,110 @@ pub fn panel() -> gpui::Div {
     div().rounded(px(28.)).bg(rgb(SURFACE))
 }
 
+// Content, settings and account pages
+
+/// emerald-800: a switched-on track.
+const SWITCH_ON: u32 = 0x065f46;
+/// emerald-700: a hovered switched-on track.
+const SWITCH_ON_HOVER: u32 = 0x047857;
+/// sky-500 at 20% and sky-300: the Cloud badge.
+const CLOUD_BADGE: (u32, u32) = (0x0ea5e933, 0x7dd3fc);
+/// emerald-500 at 15% and emerald-400: the Synced badge.
+const SYNCED_BADGE: (u32, u32) = (0x10b98126, 0x34d399);
+/// red-950 at 60%, red-400 at 40% and red-100: a failure the page keeps showing.
+const WARNING: (u32, u32, u32) = (0x450a0a99, 0xf8717166, 0xfee2e2);
+
+/// The desktop app's Headless UI switch: an `h-8 w-16` slate-700 track that
+/// turns emerald-800 when on, with a `size-8` slate-300 thumb.
+pub fn setting_switch(id: impl Into<ElementId>, on: bool) -> gpui::Stateful<gpui::Div> {
+    let (track, hover) = if on {
+        (SWITCH_ON, SWITCH_ON_HOVER)
+    } else {
+        (CONTROL, CONTROL_HOVER)
+    };
+    div()
+        .id(id)
+        .flex_shrink_0()
+        .h_8()
+        .w_16()
+        .rounded_full()
+        .bg(rgb(track))
+        .hover(|style| style.bg(rgb(hover)))
+        .cursor_pointer()
+        .child(
+            div()
+                .size_8()
+                .rounded_full()
+                .bg(rgb(TEXT_SOFT))
+                .when(on, |thumb| thumb.ml_8()),
+        )
+}
+
+/// A `w-5 h-5` checkbox with the desktop app's emerald-600 accent.
+pub fn checkbox(id: impl Into<ElementId>, checked: bool) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex_shrink_0()
+        .size_5()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(3.))
+        .cursor_pointer()
+        .map(|this| {
+            if checked {
+                this.bg(rgb(POSITIVE))
+                    .child(Icon::new(MdIcon::Check).size_4().text_color(rgb(TEXT)))
+            } else {
+                this.bg(rgb(TEXT)).border_1().border_color(rgb(TEXT_MUTED))
+            }
+        })
+}
+
+/// The Cloud badge of a modpack that only exists in Quadrant Sync.
+pub fn cloud_badge(label: impl Into<SharedString>) -> impl IntoElement {
+    tinted_badge(label, MdIcon::Cloud, CLOUD_BADGE)
+}
+
+/// The Synced badge of a modpack with a Quadrant Sync record.
+pub fn synced_badge(label: impl Into<SharedString>) -> impl IntoElement {
+    tinted_badge(label, MdIcon::CloudDone, SYNCED_BADGE)
+}
+
+fn tinted_badge(
+    label: impl Into<SharedString>,
+    icon: MdIcon,
+    (background, foreground): (u32, u32),
+) -> impl IntoElement {
+    gpui_component::h_flex()
+        .gap_1()
+        .items_center()
+        .px_2()
+        .py_0p5()
+        .rounded_full()
+        .bg(rgba(background))
+        .text_color(rgb(foreground))
+        .text_size(px(11.))
+        .font_weight(FontWeight::EXTRA_BOLD)
+        .child(Icon::new(icon).size_3())
+        .child(label.into())
+}
+
+/// A failure the page keeps on screen, like the Account page's sign-in error.
+pub fn warning_box(text: impl Into<SharedString>) -> impl IntoElement {
+    let (background, border, foreground) = WARNING;
+    div()
+        .w_full()
+        .p_4()
+        .rounded(radius_card())
+        .border_1()
+        .border_color(rgba(border))
+        .bg(rgba(background))
+        .text_color(rgb(foreground))
+        .font_weight(FontWeight::BOLD)
+        .child(text.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

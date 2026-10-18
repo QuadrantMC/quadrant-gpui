@@ -9,12 +9,14 @@ mod mod_install;
 mod mod_ui;
 mod modpacks;
 mod search;
+mod settings;
 
 pub use current_modpack::CurrentModpackPage;
 pub use modpacks::ModpacksPage;
 pub use search::SearchPage;
 #[cfg(feature = "screenshot")]
 pub use search::logic::ContentType;
+pub use settings::SettingsPage;
 
 use crate::{route::Route, theme};
 
@@ -25,9 +27,8 @@ pub fn build(route: Route, window: &mut Window, cx: &mut App) -> AnyView {
         Route::Modpacks => cx.new(|cx| ModpacksPage::new(window, cx)).into(),
         Route::Search => cx.new(|cx| SearchPage::new(window, cx)).into(),
         Route::CurrentModpack => cx.new(CurrentModpackPage::new).into(),
-        Route::InstalledContent | Route::Account | Route::Settings => {
-            cx.new(|_| Placeholder { route }).into()
-        }
+        Route::Settings => cx.new(SettingsPage::new).into(),
+        Route::InstalledContent | Route::Account => cx.new(|_| Placeholder { route }).into(),
     }
 }
 
