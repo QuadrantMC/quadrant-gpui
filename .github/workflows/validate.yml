@@ -38,7 +38,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev pkg-config
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev pkg-config gnome-keyring dbus
 
       - uses: Swatinem/rust-cache@v2
 
@@ -62,5 +62,10 @@ jobs:
       - name: Test
         shell: bash
         run: |
-          cargo test --locked
-          cargo test --locked --features updater
+          tests='cargo test --locked && cargo test --locked --features updater'
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # The session tests use the OS keyring; Linux runners have no Secret Service.
+            dbus-run-session -- sh -c "printf '' | gnome-keyring-daemon --unlock --components=secrets >/dev/null && $tests"
+          else
+            sh -c "$tests"
+          fi
