@@ -36,7 +36,10 @@ pub struct RunStats {
     pub cpu_max: f64,
     /// Presents that came more than 1.5 refresh periods after the previous one.
     pub dropped: f64,
-    /// Refreshes those late presents skipped in total.
+    /// Refreshes that showed no new frame. Frames that each take a little
+    /// longer than a refresh are presented as soon as the last one finishes,
+    /// off the refresh grid: no single interval reaches 1.5 periods, but the
+    /// display still repeats a frame every few refreshes.
     pub missed_vsyncs: f64,
     pub interval_p50: f64,
     pub interval_max: f64,
@@ -58,11 +61,11 @@ pub fn summarize(ticks: &[Tick], period: Duration) -> RunStats {
         .map(|pair| ms(pair[1].end - pair[0].end))
         .collect();
     let period = ms(period);
-    let late: Vec<f64> = intervals
+    let dropped = intervals
         .iter()
-        .copied()
-        .filter(|interval| *interval > LATE * period)
-        .collect();
+        .filter(|interval| **interval > LATE * period)
+        .count();
+    let refreshes = (intervals.iter().sum::<f64>() / period).round();
     RunStats {
         frames: drawn.len() as f64,
         ticks: ticks.len() as f64,
@@ -70,11 +73,8 @@ pub fn summarize(ticks: &[Tick], period: Duration) -> RunStats {
         cpu_p95: percentile(&cpu, 95.),
         cpu_p99: percentile(&cpu, 99.),
         cpu_max: percentile(&cpu, 100.),
-        dropped: late.len() as f64,
-        missed_vsyncs: late
-            .iter()
-            .map(|interval| (interval / period).round() - 1.)
-            .sum(),
+        dropped: dropped as f64,
+        missed_vsyncs: (refreshes - intervals.len() as f64).max(0.),
         interval_p50: percentile(&intervals, 50.),
         interval_max: percentile(&intervals, 100.),
     }
@@ -137,13 +137,14 @@ impl RunStats {
     /// The one-line summary, after the scenario's name.
     pub fn line(&self, budget_ms: f64) -> String {
         format!(
-            "frames {:>5}  cpu p50 {:>6.2}  p95 {:>6.2}  p99 {:>6.2}  max {:>7.2} ms  dropped {:>4}  budget {:.2} ms",
+            "frames {:>5}  cpu p50 {:>6.2}  p95 {:>6.2}  p99 {:>6.2}  max {:>7.2} ms  dropped {:>4}  missed {:>4}  budget {:.2} ms",
             self.frames,
             self.cpu_p50,
             self.cpu_p95,
             self.cpu_p99,
             self.cpu_max,
             self.dropped,
+            self.missed_vsyncs,
             budget_ms
         )
     }
@@ -191,13 +192,36 @@ mod tests {
 
     #[test]
     fn a_long_frame_drops_the_refreshes_it_spans() {
-        // The 12 ms frame presents 18 ms after the one before: two refreshes late.
+        // The 12 ms frame presents 18 ms after the one before, so the refresh
+        // at 14 ms repeats the first frame; the next frame catches up.
         let run = summarize(
-            &ticks(&[(0., 1., true), (7., 12., true), (21., 1., true)]),
+            &ticks(&[
+                (0., 1., true),
+                (7., 12., true),
+                (21., 1., true),
+                (28., 1., true),
+            ]),
             PERIOD,
         );
         assert_eq!(run.dropped, 1.);
-        assert_eq!(run.missed_vsyncs, 2.);
+        assert_eq!(run.missed_vsyncs, 1.);
+    }
+
+    #[test]
+    fn frames_a_little_over_budget_miss_refreshes_without_dropping() {
+        // 9 ms frames on a 7 ms display: four presents span 27 ms, about four
+        // refreshes for three new frames.
+        let run = summarize(
+            &ticks(&[
+                (0., 9., true),
+                (9., 9., true),
+                (18., 9., true),
+                (27., 9., true),
+            ]),
+            PERIOD,
+        );
+        assert_eq!(run.dropped, 0.);
+        assert_eq!(run.missed_vsyncs, 1.);
     }
 
     #[test]
