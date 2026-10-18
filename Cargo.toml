@@ -63,3 +63,33 @@ embed-resource = "3"
 # quadrant-core = { path = "../quadrant/src-tauri/crates/quadrant-core" }
 # quadrant-host = { path = "../quadrant/src-tauri/crates/quadrant-host" }
 
+# cargo-packager 0.11 (`cargo install cargo-packager --locked`). Build the
+# binary first (`cargo build --release --features updater`), then run
+# `cargo packager --release -f <formats>`. See README, "Packaging".
+[package.metadata.packager]
+product-name = "Quadrant-Native"
+identifier = "dev.mrquantumoff.quadrant-native"
+publisher = "MrQuantumOFF (Demir Yerli)"
+copyright = "Copyright © 2026 MrQuantumOFF (Demir Yerli)"
+category = "Utility"
+long-description = "This is a powerful tool to manage your Minecraft: Java Edition mods. With this app you can easily install mods, resourcepacks, shaders. You can also share you modpacks with your friends, and you can back up your modpacks to the cloud!"
+license-file = "LICENSE"
+icons = [
+  "packaging/icons/32x32.png",
+  "packaging/icons/128x128.png",
+  "packaging/icons/256x256.png",
+  "packaging/icons/512x512.png",
+  "packaging/icons/icon.icns",
+  "packaging/icons/icon.ico",
+]
+binaries = [{ path = "quadrant-native", main = true }]
+
+[package.metadata.packager.nsis]
+installer-mode = "currentUser"
+installer-icon = "packaging/icons/icon.ico"
+
+[package.metadata.packager.macos]
+minimum-system-version = "11.0"
+
+[package.metadata.packager.deb]
+section = "utils"
