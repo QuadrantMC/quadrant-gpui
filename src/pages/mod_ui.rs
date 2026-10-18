@@ -1,11 +1,14 @@
 //! What the Search, mod install and current modpack pages share: the mod
 //! card (the desktop app's `shared/Mod.tsx`) and the select option type.
 
-use std::rc::Rc;
+use std::{
+    hash::{DefaultHasher, Hash as _, Hasher as _},
+    rc::Rc,
+};
 
 use gpui::{
-    AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
     prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{Icon, h_flex, select::SelectItem, v_flex};
@@ -50,7 +53,7 @@ impl<V: Clone + PartialEq> SelectItem for Choice<V> {
 }
 
 /// The main action a card offers.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Primary {
     /// Already in the target modpack; opens the install page to reinstall.
     Installed,
@@ -62,7 +65,7 @@ pub enum Primary {
 }
 
 /// The buttons a card shows, after `Mod.tsx`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct CardActions {
     pub delete: bool,
     pub primary: Option<Primary>,
@@ -127,6 +130,19 @@ pub fn source_label(source: &ModSource) -> &'static str {
 
 pub type OnCardPress<P> = Rc<dyn Fn(&mut P, CardPress, &Mod, &mut Window, &mut Context<P>)>;
 
+/// What decides a card's height besides its width: the rows that can wrap
+/// (downloads, provider and "Installed"; the buttons and their labels).
+/// The name keeps to one line and the description to two.
+pub fn card_key(item: &Mod, status: CardStatus) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    item.id.hash(&mut hasher);
+    item.download_count.hash(&mut hasher);
+    source_label(&item.source).hash(&mut hasher);
+    card_actions(item, status.installed, status.finished).hash(&mut hasher);
+    (status.installed, status.progress).hash(&mut hasher);
+    hasher.finish()
+}
+
 /// A mod card: icon, name, downloads, provider, description, and its
 /// actions on the right of the bottom row.
 pub fn mod_card<P: 'static>(
@@ -135,7 +151,7 @@ pub fn mod_card<P: 'static>(
     status: CardStatus,
     on_press: OnCardPress<P>,
     cx: &mut Context<P>,
-) -> AnyElement {
+) -> Stateful<Div> {
     let actions = card_actions(item, status.installed, status.finished);
     let press = |what: CardPress| {
         let on_press = on_press.clone();
@@ -292,7 +308,6 @@ pub fn mod_card<P: 'static>(
                 .justify_end()
                 .children(buttons),
         )
-        .into_any_element()
 }
 
 /// `pill` after a separating dot, the two wrapping as one.

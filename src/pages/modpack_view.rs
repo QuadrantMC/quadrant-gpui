@@ -9,8 +9,8 @@ use std::{collections::HashMap, rc::Rc};
 
 use chrono::{Local, TimeZone as _};
 use gpui::{
-    AnyElement, Context, Entity, EventEmitter, FontWeight, IntoElement, ParentElement as _, Pixels,
-    Render, SharedString, Styled as _, Subscription, Task, Window, div, list,
+    AnyElement, Context, Div, Entity, EventEmitter, FontWeight, IntoElement, ParentElement as _,
+    Pixels, Render, SharedString, Stateful, Styled as _, Subscription, Task, Window, div, list,
     prelude::FluentBuilder as _, px, rems, rgb,
 };
 use gpui_component::{
@@ -30,8 +30,8 @@ use crate::{
     loadable::Loadable,
     mod_catalog::{ModCatalog, ModKey},
     pages::{
-        mod_grid::{self, GridList, Item, Rows, Shape},
-        mod_ui::{CardPress, CardStatus, OnCardPress, Primary, mod_card},
+        mod_grid::{self, GridList, Item, RowHeights, Rows, Shape},
+        mod_ui::{CardPress, CardStatus, OnCardPress, Primary, card_key, mod_card},
     },
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
@@ -323,6 +323,8 @@ pub struct ModpackView {
     /// stale answer.
     checking: Task<()>,
     list: GridList,
+    /// The grid's row heights, so an unchanged row lays out once.
+    row_heights: RowHeights,
     /// The cards the grid shows this frame, as indices into the mode's
     /// cards.
     shown: Vec<usize>,
@@ -360,6 +362,7 @@ impl ModpackView {
             finished: Vec::new(),
             checking: Task::ready(()),
             list: GridList::new(ROW_HINT),
+            row_heights: RowHeights::default(),
             shown: Vec::new(),
             catalog,
             _catalog_changed: catalog_changed,
@@ -526,7 +529,8 @@ impl ModpackView {
         }
     }
 
-    fn card(&self, index: usize, item: &Mod, cx: &mut Context<Self>) -> AnyElement {
+    /// Card `index`, `item` as its provider knows it, and its height's key.
+    fn card(&self, index: usize, item: &Mod, cx: &mut Context<Self>) -> (Stateful<Div>, u64) {
         let on_press: OnCardPress<Self> =
             Rc::new(|this, press, item, _, cx| this.press(press, item, cx));
         let item = with_record(item, self.catalog.read(cx).get(&item.source, &item.id));
@@ -536,7 +540,10 @@ impl ModpackView {
                 .then(|| self.progress.get(&item.id).copied().unwrap_or(0)),
             ..CardStatus::default()
         };
-        mod_card(index, &item, status, on_press, cx)
+        (
+            mod_card(index, &item, status, on_press, cx),
+            card_key(&item, status),
+        )
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -611,7 +618,9 @@ impl ModpackView {
                                 .proposals
                                 .iter()
                                 .enumerate()
-                                .map(|(index, item)| self.card(offset + index, item, cx))
+                                .map(|(index, item)| {
+                                    self.card(offset + index, item, cx).0.into_any_element()
+                                })
                                 .collect();
                             offset += unknown.proposals.len();
                             v_flex()
@@ -652,10 +661,24 @@ impl ModpackView {
                     rems(1.)
                 };
                 let source = self.grid_cards().unwrap_or_default();
-                let elements: Vec<AnyElement> = self.shown[cards.clone()]
+                let built: Vec<(Stateful<Div>, u64)> = self.shown[cards.clone()]
                     .iter()
                     .zip(cards)
                     .map(|(&card, index)| self.card(index, &source[card], cx))
+                    .collect();
+                let key = self.row_heights.key(
+                    shape.rows.columns,
+                    built.iter().map(|(_, key)| *key),
+                    u64::from(self.mode == Mode::Updates),
+                );
+                let elements: Vec<AnyElement> = built
+                    .into_iter()
+                    .enumerate()
+                    .map(|(column, (card, _))| {
+                        self.row_heights
+                            .apply(key, column == 0, card)
+                            .into_any_element()
+                    })
                     .collect();
                 let first = row == 0;
                 let last = row + 1 == shape.rows.len();
@@ -706,6 +729,7 @@ fn waiting(content: AnyElement) -> AnyElement {
 impl Render for ModpackView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let width = window.viewport_size().width;
+        self.row_heights.next_frame(width);
         let grid = self.grid_cards().map(|cards| {
             let columns = match self.mode {
                 Mode::Updates => mod_grid::update_columns(width),

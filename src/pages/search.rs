@@ -39,9 +39,9 @@ use crate::{
     motion,
     pages::{
         install_location::LocationPicker,
-        mod_grid::{self, WidthProbe},
+        mod_grid::{self, RowHeights, WidthProbe},
         mod_install::{InstallRequest, InstallViewEvent, ModInstallView, remember},
-        mod_ui::{CardPress, CardStatus, Choice, OnCardPress, Primary, mod_card},
+        mod_ui::{CardPress, CardStatus, Choice, OnCardPress, Primary, card_key, mod_card},
     },
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
@@ -117,6 +117,8 @@ pub struct SearchPage {
     results_scroll: ScrollHandle,
     /// How wide the results panel was last frame, for its column count.
     results_width: WidthProbe,
+    /// The result grid's row heights, so an unchanged grid lays out once.
+    row_heights: RowHeights,
     filters_scroll: ScrollHandle,
     /// The newest search; replacing it drops a stale one's answer.
     searching: Task<()>,
@@ -205,6 +207,7 @@ impl SearchPage {
             install_to: cx.new(|cx| LocationPicker::new(window, cx)),
             results_scroll: ScrollHandle::new(),
             results_width: WidthProbe::default(),
+            row_heights: RowHeights::default(),
             filters_scroll: ScrollHandle::new(),
             searching: Task::ready(()),
             loading_categories: Task::ready(()),
@@ -1323,22 +1326,49 @@ impl SearchPage {
         let target = self.target_modpack();
         let on_press: OnCardPress<Self> =
             Rc::new(|this, press, item, window, cx| this.press(press, item, window, cx));
-        let mut cells: Vec<AnyElement> = results
+        let columns = result_columns(self.results_width.width());
+        let shown: Vec<(&Mod, CardStatus)> = results
             .shown
             .iter()
             .skip(page * PAGE_SIZE)
             .take(PAGE_SIZE)
-            .enumerate()
-            .map(|(index, item)| {
+            .map(|item| {
                 let status = CardStatus {
                     installed: installed_in(item, target).is_some(),
                     finished: self.finished.contains(&item.id),
                     progress: self.installs.get(&item.id).map(|done| done.unwrap_or(0)),
                 };
-                mod_card(page * PAGE_SIZE + index, item, status, on_press.clone(), cx)
+                (item, status)
             })
             .collect();
-        if page + 1 >= pages && results.more != More::Exhausted {
+        let further = page + 1 >= pages && results.more != More::Exhausted;
+        let row_keys: Vec<u64> = shown
+            .chunks(columns)
+            .enumerate()
+            .map(|(row, cards)| {
+                let last = (row + 1) * columns >= shown.len();
+                let keys = cards.iter().map(|(item, status)| card_key(item, *status));
+                self.row_heights
+                    .key(columns, keys, u64::from(last && further))
+            })
+            .collect();
+        let mut cells: Vec<AnyElement> = shown
+            .iter()
+            .enumerate()
+            .map(|(index, (item, status))| {
+                let card = mod_card(
+                    page * PAGE_SIZE + index,
+                    item,
+                    *status,
+                    on_press.clone(),
+                    cx,
+                );
+                self.row_heights
+                    .apply(row_keys[index / columns], index % columns == 0, card)
+                    .into_any_element()
+            })
+            .collect();
+        if further {
             let loading = results.more == More::Loading;
             cells.push(
                 div()
@@ -1650,7 +1680,8 @@ fn empty_state(
 }
 
 impl Render for SearchPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.row_heights.next_frame(window.viewport_size().width);
         let content = self.render_content(cx);
         if self.transitions == 0 {
             return content;

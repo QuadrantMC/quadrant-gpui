@@ -3,11 +3,17 @@
 //! Tailwind classes in the desktop app, and a virtualized list whose items
 //! are rows of cards.
 
-use std::{cell::Cell, ops::Range, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    hash::{DefaultHasher, Hash as _, Hasher as _},
+    ops::Range,
+    rc::Rc,
+};
 
 use gpui::{
-    AnyElement, EntityId, IntoElement, ListAlignment, ListOffset, ListState, ParentElement as _,
-    Pixels, Styled as _, Window, canvas, div, px,
+    AnyElement, Div, EntityId, IntoElement, ListAlignment, ListOffset, ListState,
+    ParentElement as _, Pixels, Stateful, Styled as _, Window, canvas, div, px,
 };
 
 use crate::theme;
@@ -223,6 +229,79 @@ impl WidthProbe {
     }
 }
 
+/// The heights rows of cards had when last laid out from their content, by
+/// a key naming everything a row's height depends on. Sizing a grid row from
+/// its cards' content lays each card out several times over; a row whose
+/// height is known hands it to its cards, which then lay out once, to the
+/// same result. Rows not drawn for two frames are forgotten.
+#[derive(Clone, Default)]
+pub struct RowHeights(Rc<RefCell<Heights>>);
+
+#[derive(Default)]
+struct Heights {
+    /// The window width this frame, part of every key.
+    width: Pixels,
+    current: HashMap<u64, Pixels>,
+    previous: HashMap<u64, Pixels>,
+}
+
+impl RowHeights {
+    /// Starts a frame drawn at `window_width`.
+    pub fn next_frame(&self, window_width: Pixels) {
+        let heights = &mut *self.0.borrow_mut();
+        heights.width = window_width;
+        heights.previous = std::mem::take(&mut heights.current);
+    }
+
+    /// The key of a row of `columns` columns holding cards with these
+    /// `card_keys` (see `mod_ui::card_key`), plus anything else in it.
+    pub fn key(&self, columns: usize, card_keys: impl IntoIterator<Item = u64>, extra: u64) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        f32::from(self.0.borrow().width).to_bits().hash(&mut hasher);
+        (columns, extra).hash(&mut hasher);
+        for key in card_keys {
+            key.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Gives `card`, in the row under `key`, the row's height once it is
+    /// known; until then lays it out from its content and, for the row's
+    /// `first` card, measures the row.
+    pub fn apply(&self, key: u64, first: bool, card: Stateful<Div>) -> Stateful<Div> {
+        match self.known(key) {
+            Some(height) => card.h(height),
+            None if first => card.child(self.measure(key)),
+            None => card,
+        }
+    }
+
+    /// The height of the row under `key`, kept for the next frame too.
+    fn known(&self, key: u64) -> Option<Pixels> {
+        let heights = &mut *self.0.borrow_mut();
+        let known = heights
+            .current
+            .get(&key)
+            .or_else(|| heights.previous.get(&key))
+            .copied()?;
+        heights.current.insert(key, known);
+        Some(known)
+    }
+
+    fn measure(&self, key: u64) -> AnyElement {
+        let heights = self.0.clone();
+        canvas(
+            move |bounds, _, _| {
+                heights.borrow_mut().current.insert(key, bounds.size.height);
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full()
+        .into_any_element()
+    }
+}
+
 /// One row of a grid: `cards` side by side in `columns` equal columns.
 pub fn row(
     columns: usize,
@@ -268,6 +347,27 @@ mod tests {
         assert_eq!(rows.cards(0), 0..3);
         assert_eq!(rows.cards(2), 6..7);
         assert_eq!(Rows::new(0, 3).len(), 0);
+    }
+
+    #[test]
+    fn row_heights_follow_the_window_and_forget_rows_left_undrawn() {
+        let heights = RowHeights::default();
+        heights.next_frame(px(1000.));
+        let key = heights.key(3, [1, 2, 3], 0);
+        assert_ne!(key, heights.key(3, [1, 2, 4], 0));
+        assert_ne!(key, heights.key(4, [1, 2, 3], 0));
+        assert_eq!(heights.known(key), None);
+        heights.0.borrow_mut().current.insert(key, px(190.));
+
+        heights.next_frame(px(1000.));
+        assert_eq!(heights.key(3, [1, 2, 3], 0), key);
+        assert_eq!(heights.known(key), Some(px(190.)));
+        heights.next_frame(px(1200.));
+        assert_ne!(heights.key(3, [1, 2, 3], 0), key, "another width");
+
+        heights.next_frame(px(1000.));
+        heights.next_frame(px(1000.));
+        assert_eq!(heights.known(key), None);
     }
 
     #[test]

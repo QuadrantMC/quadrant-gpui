@@ -721,7 +721,7 @@ impl ModInstallView {
                     installed: installed_in(dep, selected.as_ref()).is_some(),
                     ..CardStatus::default()
                 };
-                mod_card(index, dep, status, on_press.clone(), cx)
+                mod_card(index, dep, status, on_press.clone(), cx).into_any_element()
             })
             .collect();
         Some(
