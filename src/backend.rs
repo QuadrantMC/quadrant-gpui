@@ -1,8 +1,8 @@
 use std::future::Future;
 
 use gpui::{App, Global, Task};
-use quadrant_host::QuadrantHost;
-use tokio::runtime::Runtime;
+use quadrant_host::{HostEventEnvelope, QuadrantHost};
+use tokio::{runtime::Runtime, sync::broadcast};
 
 /// The Quadrant host and the tokio runtime it runs on, shared by every view.
 pub struct Backend {
@@ -36,5 +36,11 @@ impl Backend {
     {
         let job = self.runtime.spawn(f(self.host.clone()));
         cx.background_executor().spawn(async move { job.await? })
+    }
+
+    /// Host events, e.g. download progress. `tokio::sync` channels need no
+    /// tokio runtime to receive on, so gpui tasks can await this directly.
+    pub fn subscribe_events(&self) -> broadcast::Receiver<HostEventEnvelope> {
+        self.host.subscribe_events()
     }
 }

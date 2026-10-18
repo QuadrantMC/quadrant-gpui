@@ -1,42 +1,54 @@
+mod app;
+mod assets;
 mod backend;
+mod events;
 mod i18n;
 mod loadable;
+mod pages;
+mod route;
+#[cfg(feature = "screenshot")]
+mod screenshot;
+mod theme;
 
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use gpui::{
-    App, AppContext, Bounds, Context, IntoElement, ParentElement, Render, Styled, TitlebarOptions,
-    Window, WindowBounds, WindowOptions, div, px, size,
+    App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowDecorations, WindowHandle,
+    WindowOptions, point, px, size,
 };
-use gpui_component::{Root, Theme, ThemeMode};
+use gpui_component::Root;
 use quadrant_host::{QuadrantHost, QuadrantHostOptions};
 
-use crate::{backend::Backend, loadable::Loadable};
+use crate::{app::QuadrantApp, backend::Backend};
 
 /// The desktop app's Tauri identifier, whose data folder this app shares.
 const APP_IDENTIFIER: &str = "dev.mrquantumoff.mcmodpackmanager";
 
 #[derive(Debug, Default, PartialEq)]
-struct Paths {
+struct Args {
     data_dir: Option<PathBuf>,
     mc_folder: Option<PathBuf>,
+    /// Folder to render the window into instead of running interactively.
+    screenshot_dir: Option<PathBuf>,
 }
 
 /// Flags win over the environment, which wins over the defaults.
-fn parse_paths(
+fn parse_args(
     args: impl IntoIterator<Item = OsString>,
     env: impl Fn(&str) -> Option<OsString>,
-) -> Result<Paths> {
-    let mut paths = Paths {
+) -> Result<Args> {
+    let mut parsed = Args {
         data_dir: env("QUADRANT_GPUI_DATA_DIR").map(PathBuf::from),
         mc_folder: env("QUADRANT_GPUI_MC_FOLDER").map(PathBuf::from),
+        screenshot_dir: None,
     };
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let slot = match arg.to_str() {
-            Some("--data-dir") => &mut paths.data_dir,
-            Some("--mc-folder") => &mut paths.mc_folder,
+            Some("--data-dir") => &mut parsed.data_dir,
+            Some("--mc-folder") => &mut parsed.mc_folder,
+            Some("--screenshot") if cfg!(feature = "screenshot") => &mut parsed.screenshot_dir,
             _ => bail!("unknown argument {}", arg.to_string_lossy()),
         };
         let value = args
@@ -44,11 +56,11 @@ fn parse_paths(
             .ok_or_else(|| anyhow!("{} needs a path", arg.to_string_lossy()))?;
         *slot = Some(PathBuf::from(value));
     }
-    Ok(paths)
+    Ok(parsed)
 }
 
-fn build_host(paths: Paths) -> Result<QuadrantHost> {
-    let data_dir = match paths.data_dir {
+fn build_host(data_dir: Option<PathBuf>, mc_folder: Option<PathBuf>) -> Result<QuadrantHost> {
+    let data_dir = match data_dir {
         Some(data_dir) => data_dir,
         None => dirs::data_dir()
             .ok_or_else(|| anyhow!("no data folder on this system; pass --data-dir"))?
@@ -60,98 +72,75 @@ fn build_host(paths: Paths) -> Result<QuadrantHost> {
         option_env!("QUADRANT_OAUTH2_CLIENT_SECRET").unwrap_or_default(),
         option_env!("QUADRANT_API_KEY").unwrap_or_default(),
     );
-    options.mc_folder = paths.mc_folder;
+    // The host persists this as the `mcFolder` setting in the data folder.
+    options.mc_folder = mc_folder;
     let host = QuadrantHost::new(options)?;
     host.init_config()?;
     Ok(host)
 }
 
-fn start() -> Result<Backend> {
-    let paths = parse_paths(std::env::args_os().skip(1), |key| std::env::var_os(key))?;
+fn start(args: &Args) -> Result<Backend> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to start the async runtime")?;
-    Ok(Backend::new(build_host(paths)?, runtime))
+    let host = build_host(args.data_dir.clone(), args.mc_folder.clone())?;
+    Ok(Backend::new(host, runtime))
 }
 
-struct Shell {
-    modpacks: Loadable<usize>,
-}
-
-impl Shell {
-    fn new(cx: &mut Context<Self>) -> Self {
-        let mut this = Self {
-            modpacks: Loadable::Idle,
-        };
-        this.load(cx);
-        this
-    }
-
-    fn load(&mut self, cx: &mut Context<Self>) {
-        self.modpacks = Loadable::Loading;
-        let task = Backend::global(cx).run(cx, |host| async move {
-            Ok(host.get_modpacks(true).await?.len())
-        });
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |this, cx| {
-                this.modpacks = Loadable::from_result(result);
-                cx.notify();
-            })
-        })
-        .detach();
-    }
-}
-
-impl Render for Shell {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let text = match &self.modpacks {
-            Loadable::Idle | Loadable::Loading => "Loading modpacks…".into(),
-            Loadable::Ready(count) => format!("{count} modpack(s)").into(),
-            Loadable::Failed(error) => error.clone(),
-        };
-        div().size_full().p_4().child(text)
-    }
-}
-
-fn open_main_window(cx: &mut App) -> Result<()> {
-    let bounds = Bounds::centered(None, size(px(1100.), px(720.)), cx);
+fn open_main_window(cx: &mut App) -> Result<WindowHandle<Root>> {
+    let bounds = Bounds::centered(None, size(px(1150.), px(720.)), cx);
     let options = WindowOptions {
+        // The title bar is drawn by the app; the title still names the window
+        // for the taskbar and window switchers.
         titlebar: Some(TitlebarOptions {
             title: Some("Quadrant".into()),
-            ..Default::default()
+            appears_transparent: true,
+            traffic_light_position: Some(point(px(12.), px(12.))),
         }),
+        window_decorations: Some(WindowDecorations::Client),
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_min_size: Some(size(px(800.), px(500.))),
         ..Default::default()
     };
-    cx.open_window(options, |window, cx| {
-        let view = cx.new(Shell::new);
+    let handle = cx.open_window(options, |window, cx| {
+        let view = cx.new(|cx| QuadrantApp::new(window, cx));
         cx.new(|cx| Root::new(view, window, cx))
     })?;
-    Ok(())
+    Ok(handle)
 }
 
 fn main() -> ExitCode {
-    let backend = match start() {
-        Ok(backend) => backend,
+    let started = parse_args(std::env::args_os().skip(1), |key| std::env::var_os(key))
+        .and_then(|args| Ok((start(&args)?, args)));
+    let (backend, args) = match started {
+        Ok(started) => started,
         Err(error) => {
             eprintln!("Error: {error:#}");
             return ExitCode::FAILURE;
         }
     };
     gpui_platform::application()
-        .with_assets(gpui_kit_assets::Assets)
+        .with_assets(assets::Assets)
         .run(move |cx| {
             gpui_component::init(cx);
-            Theme::change(ThemeMode::Dark, None, cx);
+            theme::install(cx);
             cx.set_global(backend);
-            if let Err(error) = open_main_window(cx) {
-                eprintln!("Error: failed to open the window: {error:#}");
-                cx.quit();
-                return;
-            }
+            let window = match open_main_window(cx) {
+                Ok(window) => window,
+                Err(error) => {
+                    eprintln!("Error: failed to open the window: {error:#}");
+                    cx.quit();
+                    return;
+                }
+            };
             cx.activate(true);
+            #[cfg(feature = "screenshot")]
+            if let Some(dir) = args.screenshot_dir {
+                screenshot::run(window, dir, cx);
+            }
+            #[cfg(not(feature = "screenshot"))]
+            let _ = (window, args);
         });
     ExitCode::SUCCESS
 }
@@ -167,13 +156,14 @@ mod tests {
     #[test]
     fn flags_override_the_environment() {
         let env = |key: &str| (key == "QUADRANT_GPUI_DATA_DIR").then(|| OsString::from("env-data"));
-        let paths =
-            parse_paths(args(&["--data-dir", "flag-data", "--mc-folder", "mc"]), env).unwrap();
+        let parsed =
+            parse_args(args(&["--data-dir", "flag-data", "--mc-folder", "mc"]), env).unwrap();
         assert_eq!(
-            paths,
-            Paths {
+            parsed,
+            Args {
                 data_dir: Some("flag-data".into()),
                 mc_folder: Some("mc".into()),
+                screenshot_dir: None,
             }
         );
     }
@@ -181,14 +171,14 @@ mod tests {
     #[test]
     fn environment_fills_missing_flags() {
         let env = |key: &str| (key == "QUADRANT_GPUI_MC_FOLDER").then(|| OsString::from("env-mc"));
-        let paths = parse_paths(args(&[]), env).unwrap();
-        assert_eq!(paths.mc_folder, Some("env-mc".into()));
-        assert_eq!(paths.data_dir, None);
+        let parsed = parse_args(args(&[]), env).unwrap();
+        assert_eq!(parsed.mc_folder, Some("env-mc".into()));
+        assert_eq!(parsed.data_dir, None);
     }
 
     #[test]
     fn rejects_unknown_and_valueless_flags() {
-        assert!(parse_paths(args(&["--verbose"]), |_| None).is_err());
-        assert!(parse_paths(args(&["--data-dir"]), |_| None).is_err());
+        assert!(parse_args(args(&["--verbose"]), |_| None).is_err());
+        assert!(parse_args(args(&["--data-dir"]), |_| None).is_err());
     }
 }

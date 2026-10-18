@@ -11,6 +11,21 @@ fn lookup(key: &str) -> Option<&'static str> {
     ENGLISH.get(key).and_then(Value::as_str)
 }
 
+/// The English text for `key`, or the key itself when the desktop app has no
+/// such string, so a typo shows up on screen instead of as a blank.
+pub fn t(key: &str) -> SharedString {
+    lookup(key).unwrap_or(key).to_string().into()
+}
+
+/// [`t`] with i18next-style `{{name}}` placeholders filled in.
+pub fn t_with(key: &str, values: &[(&str, &str)]) -> SharedString {
+    let mut text = lookup(key).unwrap_or(key).to_string();
+    for (name, value) in values {
+        text = text.replace(&format!("{{{{{name}}}}}"), value);
+    }
+    text.into()
+}
+
 /// The English text for a failed host call, mirroring `describeError` in the
 /// desktop app: classified failures arrive as i18n keys, anything else is shown
 /// as it came.
@@ -54,5 +69,11 @@ mod tests {
             "failed to parse config.json"
         );
         assert_eq!(describe_raw(""), "Something went wrong. Please try again.");
+    }
+
+    #[test]
+    fn fills_placeholders() {
+        assert_eq!(t_with("modCount", &[("amount", "3")]), "3 Mod(s)");
+        assert_eq!(t("noSuchKey"), "noSuchKey");
     }
 }

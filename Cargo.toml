@@ -9,6 +9,8 @@ publish = false
 [features]
 default = []
 curseforge = ["quadrant-host/curseforge"]
+# Adds `--screenshot <dir>`, which renders the window to PNGs for visual checks.
+screenshot = ["gpui/test-support", "gpui_platform/test-support"]
 
 [dependencies]
 anyhow = "1"
@@ -17,6 +19,7 @@ gpui = { package = "gpui-pre", version = "=0.3.9" }
 gpui-component = "0.7.3"
 gpui-kit-assets = "0.7.3"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit", "wayland", "x11"] }
+log = "0.4"
 quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "5957faf11733163e5272cc756cc227905a6080ae" }
 quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "5957faf11733163e5272cc756cc227905a6080ae" }
 serde_json = "1"
