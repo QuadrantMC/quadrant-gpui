@@ -276,6 +276,13 @@ impl Op {
     }
 }
 
+/// `account`, if it may use Quadrant Sync: signed in, with a sync limit.
+fn sync_account(account: Option<&AccountInfo>) -> Option<AccountInfo> {
+    account
+        .filter(|account| account.quadrant_sync_limit != 0)
+        .cloned()
+}
+
 /// The applied pack first, then the most recently synced, then by name.
 pub fn sort_modpacks(mut modpacks: Vec<LocalModpack>) -> Vec<LocalModpack> {
     modpacks.sort_by(|a, b| {
@@ -435,17 +442,15 @@ impl ModpacksPage {
         page
     }
 
-    /// The signed-in account, when it has Quadrant Sync.
-    fn account(&self, cx: &App) -> Option<AccountInfo> {
-        self.session.read(cx).signed_in().cloned()
+    /// The signed-in account, when it has Quadrant Sync. Without one, every
+    /// Sync control is hidden rather than disabled.
+    fn sync_account(&self, cx: &App) -> Option<AccountInfo> {
+        sync_account(self.session.read(cx).signed_in())
     }
 
     /// Reads the account's Quadrant Sync packs, or forgets them once signed out.
     fn load_synced(&mut self, cx: &mut Context<Self>) {
-        let syncs = self
-            .account(cx)
-            .is_some_and(|account| account.quadrant_sync_limit != 0);
-        if !syncs {
+        if self.sync_account(cx).is_none() {
             self.synced = Loadable::Idle;
             self.synced_listing = Task::ready(());
             self.open_panels.clear();
@@ -880,7 +885,6 @@ impl ModpacksPage {
         let running_here =
             self.running.as_ref().and_then(Op::target) == Some(modpack.name.as_str());
         let busy = self.running.is_some();
-        let signed_in = account.is_some();
         let share = {
             let name = name.clone();
             theme::pill_button(
@@ -894,7 +898,7 @@ impl ModpacksPage {
             .disabled(busy)
             .on_click(cx.listener(move |this, _, _, cx| this.run(Op::Share(name.to_string()), cx)))
         };
-        let sync = {
+        let sync = account.is_some().then(|| {
             let modpack = modpack.clone();
             theme::pill_button(
                 ("sync", index),
@@ -904,8 +908,7 @@ impl ModpacksPage {
                 cx,
             )
             .loading(running_here && matches!(self.running, Some(Op::Sync { .. })))
-            .disabled(busy || !signed_in)
-            .when(!signed_in, |this| this.tooltip(t("errorSignedOut")))
+            .disabled(busy)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.run(
                     Op::Sync {
@@ -915,7 +918,7 @@ impl ModpacksPage {
                     cx,
                 )
             }))
-        };
+        });
         let mut line = metadata_line(modpack);
         if let Some(synced) = synced {
             line.push_str(" | ");
@@ -1034,7 +1037,7 @@ impl ModpacksPage {
                     .gap_4()
                     .child(apply)
                     .child(share)
-                    .child(sync)
+                    .children(sync)
                     .child(update)
                     .child(export)
                     .child(delete)
@@ -1065,7 +1068,7 @@ impl ModpacksPage {
                     .into_any_element(),
             ),
             Loadable::Ready(modpacks) => {
-                let account = self.account(cx);
+                let account = self.sync_account(cx);
                 let synced = match &self.synced {
                     Loadable::Ready(synced) => synced.as_slice(),
                     Loadable::Idle | Loadable::Loading | Loadable::Failed(_) => &[],
@@ -1192,6 +1195,22 @@ mod tests {
             last_synced,
             modpack_id: None,
         }
+    }
+
+    #[test]
+    fn sync_needs_an_account_with_a_sync_limit() {
+        let account = |limit| AccountInfo {
+            id: "id".into(),
+            name: "Alex".into(),
+            email: "alex@example.com".into(),
+            quadrant_sync_limit: limit,
+            quadrant_share_limit: 50,
+            login: "alex".into(),
+            notifications: Vec::new(),
+        };
+        assert!(sync_account(None).is_none());
+        assert!(sync_account(Some(&account(0))).is_none());
+        assert!(sync_account(Some(&account(10))).is_some());
     }
 
     #[test]
