@@ -16,9 +16,9 @@ use crate::{
 };
 
 /// How long a snackbar stays up, as `useReportSuccess` and `useReportError` set it.
-const TIMEOUT: Duration = Duration::from_millis(5000);
+pub const TIMEOUT: Duration = Duration::from_millis(5000);
 /// The entrance: opacity 0 to 1 while rising 24px into place.
-const ENTER: Duration = Duration::from_millis(300);
+pub const ENTER: Duration = Duration::from_millis(300);
 const ENTER_RISE: f32 = 24.;
 
 /// What a snackbar reports, which picks its colour and icon.

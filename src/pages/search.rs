@@ -593,12 +593,31 @@ impl SearchPage {
         cx.notify();
     }
 
-    #[cfg(feature = "screenshot")]
+    #[cfg(any(feature = "screenshot", feature = "perf"))]
     pub fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.query.update(cx, |input, cx| {
             input.set_value(query.to_string(), window, cx)
         });
         self.search(false, cx);
+    }
+
+    /// Whether the page has booted and its search has answered.
+    #[cfg(feature = "perf")]
+    pub fn results_settled(&self) -> bool {
+        self.booted && !matches!(self.results, Loadable::Loading)
+    }
+
+    /// The icons of the results the page shows.
+    #[cfg(feature = "perf")]
+    pub fn icon_urls(&self) -> Vec<SharedString> {
+        match &self.results {
+            Loadable::Ready(results) => results
+                .shown
+                .iter()
+                .map(|item| item.mod_icon_url.clone().into())
+                .collect(),
+            Loadable::Idle | Loadable::Loading | Loadable::Failed(_) => Vec::new(),
+        }
     }
 
     #[cfg(feature = "screenshot")]

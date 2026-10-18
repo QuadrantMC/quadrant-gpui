@@ -6,6 +6,8 @@ mod i18n;
 mod loadable;
 mod oauth;
 mod pages;
+#[cfg(feature = "perf")]
+mod perf;
 mod route;
 #[cfg(feature = "screenshot")]
 mod screenshot;
@@ -36,8 +38,20 @@ const APP_IDENTIFIER: &str = "dev.mrquantumoff.mcmodpackmanager";
 struct Args {
     data_dir: Option<PathBuf>,
     mc_folder: Option<PathBuf>,
-    /// Folder to render the window into instead of running interactively.
-    screenshot_dir: Option<PathBuf>,
+    mode: Mode,
+}
+
+/// Who drives the window.
+#[derive(Debug, Default, PartialEq)]
+enum Mode {
+    /// The user.
+    #[default]
+    Interactive,
+    /// Screenshot mode, rendering into this folder (feature `screenshot`).
+    Screenshot(PathBuf),
+    /// Perf mode (feature `perf`).
+    #[cfg(feature = "perf")]
+    Perf(perf::Plan),
 }
 
 /// Flags win over the environment, which wins over the defaults.
@@ -45,23 +59,49 @@ fn parse_args(
     args: impl IntoIterator<Item = OsString>,
     env: impl Fn(&str) -> Option<OsString>,
 ) -> Result<Args> {
-    let mut parsed = Args {
-        data_dir: env("QUADRANT_GPUI_DATA_DIR").map(PathBuf::from),
-        mc_folder: env("QUADRANT_GPUI_MC_FOLDER").map(PathBuf::from),
-        screenshot_dir: None,
-    };
+    let mut data_dir = env("QUADRANT_GPUI_DATA_DIR");
+    let mut mc_folder = env("QUADRANT_GPUI_MC_FOLDER");
+    let mut screenshot = None;
+    let [mut perf, mut perf_out, mut perf_runs] = [None, None, None];
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let slot = match arg.to_str() {
-            Some("--data-dir") => &mut parsed.data_dir,
-            Some("--mc-folder") => &mut parsed.mc_folder,
-            Some("--screenshot") if cfg!(feature = "screenshot") => &mut parsed.screenshot_dir,
+            Some("--data-dir") => &mut data_dir,
+            Some("--mc-folder") => &mut mc_folder,
+            Some("--screenshot") if cfg!(feature = "screenshot") => &mut screenshot,
+            Some("--perf") if cfg!(feature = "perf") => &mut perf,
+            Some("--perf-out") if cfg!(feature = "perf") => &mut perf_out,
+            Some("--perf-runs") if cfg!(feature = "perf") => &mut perf_runs,
             _ => bail!("unknown argument {}", arg.to_string_lossy()),
         };
         let value = args
             .next()
-            .ok_or_else(|| anyhow!("{} needs a path", arg.to_string_lossy()))?;
-        *slot = Some(PathBuf::from(value));
+            .ok_or_else(|| anyhow!("{} needs a value", arg.to_string_lossy()))?;
+        *slot = Some(value);
+    }
+    let parsed = Args {
+        data_dir: data_dir.map(PathBuf::from),
+        mc_folder: mc_folder.map(PathBuf::from),
+        mode: match (screenshot, perf) {
+            (None, None) => Mode::Interactive,
+            (Some(dir), None) => Mode::Screenshot(dir.into()),
+            #[cfg(feature = "perf")]
+            (None, Some(scenario)) => Mode::Perf(perf::Plan::parse(
+                &scenario.to_string_lossy(),
+                perf_out.map(PathBuf::from),
+                perf_runs.as_deref().and_then(|runs| runs.to_str()),
+            )?),
+            _ => bail!("--screenshot and --perf can't run together"),
+        },
+    };
+    #[cfg(not(feature = "perf"))]
+    let _ = (perf_out, perf_runs);
+    // Perf mode measures on fixtures and must never touch real data.
+    #[cfg(feature = "perf")]
+    if matches!(parsed.mode, Mode::Perf(_))
+        && (parsed.data_dir.is_none() || parsed.mc_folder.is_none())
+    {
+        bail!("--perf needs --data-dir and --mc-folder, pointing at a sandbox");
     }
     // The host saves the Minecraft folder as the data folder's `mcFolder`
     // setting, so without a data folder of its own it would rewrite the
@@ -82,10 +122,10 @@ fn keyring_service(custom_data_dir: Option<&Path>) -> Option<String> {
 }
 
 /// The Quadrant ID client and API key baked in at build time, or none at all
-/// while screenshot mode drives the window: a picture must never sign in,
+/// while screenshot or perf mode drives the window: it must never sign in,
 /// sync or share for real.
-fn credentials(screenshot: bool) -> [&'static str; 3] {
-    if screenshot {
+fn credentials(mode: &Mode) -> [&'static str; 3] {
+    if *mode != Mode::Interactive {
         return ["", "", ""];
     }
     [
@@ -126,16 +166,18 @@ fn start(args: &Args) -> Result<Backend> {
     let host = build_host(
         args.data_dir.clone(),
         args.mc_folder.clone(),
-        credentials(args.screenshot_dir.is_some()),
+        credentials(&args.mode),
     )?;
     Ok(Backend::new(host, runtime))
 }
 
-/// A `hidden` window never shows or takes focus, so the user's clicks can't
-/// reach it while screenshot mode drives it.
-fn open_main_window(hidden: bool, cx: &mut App) -> Result<WindowHandle<Root>> {
+/// Screenshot mode's window never shows or takes focus, so the user's clicks
+/// can't reach it.
+fn open_main_window(mode: &Mode, cx: &mut App) -> Result<WindowHandle<Root>> {
+    let hidden = matches!(mode, Mode::Screenshot(_));
     let bounds = Bounds::centered(None, size(px(1150.), px(720.)), cx);
-    let options = WindowOptions {
+    #[cfg_attr(not(feature = "perf"), expect(unused_mut))]
+    let mut options = WindowOptions {
         // The title bar is drawn by the app; the title still names the window
         // for the taskbar and window switchers.
         titlebar: Some(TitlebarOptions {
@@ -150,6 +192,15 @@ fn open_main_window(hidden: bool, cx: &mut App) -> Result<WindowHandle<Root>> {
         focus: !hidden,
         ..Default::default()
     };
+    // Perf mode's window is maximized, to time the real swap chain at the
+    // display's own resolution. gpui caps an unfocused window's animations
+    // at 30 fps; the window the user works in has focus, and a run started
+    // from a terminal can't count on getting it.
+    #[cfg(feature = "perf")]
+    if let Mode::Perf(_) = mode {
+        options.window_bounds = Some(WindowBounds::Maximized(bounds));
+        options.inactive_frame_interval = None;
+    }
     let handle = cx.open_window(options, |window, cx| {
         let view = cx.new(QuadrantApp::new);
         cx.new(|cx| Root::new(view, window, cx))
@@ -176,7 +227,7 @@ fn main() -> ExitCode {
             cx.set_global(backend);
             snackbar::install(cx);
             events::forward(cx);
-            let window = match open_main_window(args.screenshot_dir.is_some(), cx) {
+            let window = match open_main_window(&args.mode, cx) {
                 Ok(window) => window,
                 Err(error) => {
                     eprintln!("Error: failed to open the window: {error:#}");
@@ -185,12 +236,17 @@ fn main() -> ExitCode {
                 }
             };
             cx.activate(true);
-            #[cfg(feature = "screenshot")]
-            if let Some(dir) = args.screenshot_dir {
-                screenshot::run(window, dir, cx);
+            #[cfg(not(any(feature = "screenshot", feature = "perf")))]
+            let _ = window;
+            match args.mode {
+                Mode::Interactive => {}
+                #[cfg(feature = "screenshot")]
+                Mode::Screenshot(dir) => screenshot::run(window, dir, cx),
+                #[cfg(not(feature = "screenshot"))]
+                Mode::Screenshot(_) => {}
+                #[cfg(feature = "perf")]
+                Mode::Perf(plan) => perf::run(window, plan, cx),
             }
-            #[cfg(not(feature = "screenshot"))]
-            let _ = (window, args);
         });
     ExitCode::SUCCESS
 }
@@ -213,7 +269,7 @@ mod tests {
             Args {
                 data_dir: Some("flag-data".into()),
                 mc_folder: Some("mc".into()),
-                screenshot_dir: None,
+                mode: Mode::Interactive,
             }
         );
     }
@@ -247,7 +303,42 @@ mod tests {
 
     #[test]
     fn screenshots_run_without_credentials() {
-        assert_eq!(credentials(true), ["", "", ""]);
+        assert_eq!(credentials(&Mode::Screenshot("shots".into())), ["", "", ""]);
+    }
+
+    #[cfg(feature = "perf")]
+    #[test]
+    fn perf_runs_need_a_sandbox_and_no_credentials() {
+        let perf = |extra: &[&str]| {
+            let mut list = vec!["--perf", "idle", "--perf-out", "out"];
+            list.extend(extra);
+            parse_args(args(&list), |_| None)
+        };
+        assert!(perf(&[]).is_err());
+        assert!(perf(&["--data-dir", "data"]).is_err());
+        let parsed = perf(&["--data-dir", "data", "--mc-folder", "mc"]).unwrap();
+        assert_eq!(credentials(&parsed.mode), ["", "", ""]);
+        assert!(perf(&["--data-dir", "d", "--mc-folder", "m", "--perf-runs", "0"]).is_err());
+        assert!(perf(&["--data-dir", "d", "--mc-folder", "m", "--perf", "nope"]).is_err());
+        let all = parse_args(
+            args(&[
+                "--perf",
+                "all",
+                "--perf-out",
+                "o",
+                "--data-dir",
+                "d",
+                "--mc-folder",
+                "m",
+            ]),
+            |_| None,
+        )
+        .unwrap();
+        let Mode::Perf(plan) = all.mode else {
+            panic!("not perf mode");
+        };
+        assert_eq!(plan.scenarios, perf::Scenario::ALL);
+        assert_eq!(plan.runs, 5);
     }
 
     #[test]

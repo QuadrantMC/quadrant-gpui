@@ -60,6 +60,12 @@ impl QuadrantApp {
             .clone()
     }
 
+    /// Drops every built page, so each is built afresh on its next visit.
+    #[cfg(feature = "perf")]
+    pub fn forget_pages(&mut self) {
+        self.pages.clear();
+    }
+
     fn render_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.history.current();
         h_flex()
@@ -132,6 +138,8 @@ impl QuadrantApp {
 
 impl Render for QuadrantApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(feature = "perf")]
+        crate::perf::frame_drawn();
         let page = self.page(self.history.current(), window, cx);
         h_flex()
             .id("quadrant")
