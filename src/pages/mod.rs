@@ -2,6 +2,7 @@ use gpui::{AnyView, App, AppContext as _, SharedString, Window};
 
 mod account;
 mod current_modpack;
+mod install_location;
 mod installed_content;
 mod mod_grid;
 mod mod_install;

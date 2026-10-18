@@ -28,6 +28,7 @@ use crate::{
     i18n::{describe, t, t_with},
     loadable::Loadable,
     pages::{
+        install_location::{self, LocationPicker, initial_location, is_pack},
         mod_grid,
         mod_ui::{CardPress, CardStatus, Choice, OnCardPress, mod_card, source_label},
         search::logic::{Provider, compact_count, installed_in, loader_options},
@@ -45,15 +46,19 @@ pub struct InstallRequest {
     pub mod_type: ModType,
     pub version: String,
     pub loader: ModLoader,
-    /// The modpack a mod goes into; packs without one follow the automatic
-    /// placement.
+    /// The modpack a mod goes into. A pack follows it to wherever it is
+    /// applied, or without one goes to the Minecraft folder.
     pub modpack: Option<String>,
+    /// A content location a pack goes to instead, from the "Install to"
+    /// picker. Never set for a mod.
+    pub content_location: Option<String>,
 }
 
 impl InstallRequest {
     /// A one-click install from a search result into `target`, as the
-    /// desktop app's card does when the result is auto-installable.
-    pub fn into_target(item: &Mod, target: &LocalModpack) -> Self {
+    /// desktop app's card does when the result is auto-installable. A pack
+    /// goes to `location` when the user picked one.
+    pub fn into_target(item: &Mod, target: &LocalModpack, location: Option<String>) -> Self {
         Self {
             id: item.id.clone(),
             source: item.source.clone(),
@@ -61,6 +66,7 @@ impl InstallRequest {
             version: target.version.clone(),
             loader: target.mod_loader,
             modpack: Some(target.name.clone()),
+            content_location: location.filter(|_| is_pack(item.mod_type)),
         }
     }
 
@@ -73,7 +79,7 @@ impl InstallRequest {
             self.modpack,
             self.mod_type,
             None,
-            None,
+            self.content_location,
         )
         .await
     }
@@ -195,6 +201,9 @@ pub struct ModInstallView {
     version: Entity<PickVersion>,
     loader: Entity<PickLoader>,
     modpack: Entity<PickVersion>,
+    /// The location the opener picked, while it is still listed.
+    opener_location: Option<String>,
+    install_to: Entity<LocationPicker>,
     running: Option<InstallRequest>,
     download_progress: i32,
     install_progress: i32,
@@ -210,6 +219,7 @@ impl ModInstallView {
     pub fn new(
         item: Mod,
         explicit_target: Option<String>,
+        opener_location: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -219,6 +229,7 @@ impl ModInstallView {
         let loader: Entity<PickLoader> =
             cx.new(|cx| SelectState::new(SearchableVec::new(Vec::new()), None, window, cx));
         let modpack: Entity<PickVersion> = cx.new(|cx| SelectState::new(empty(), None, window, cx));
+        let install_to = cx.new(|cx| LocationPicker::new(window, cx));
         let subscriptions = vec![
             cx.subscribe(&version, |_, _, event: &SelectEvent<_>, cx| {
                 let SelectEvent::Confirm(Some(version)) = event else {
@@ -254,6 +265,8 @@ impl ModInstallView {
             version,
             loader,
             modpack,
+            opener_location,
+            install_to,
             running: None,
             download_progress: 0,
             install_progress: 0,
@@ -278,7 +291,8 @@ impl ModInstallView {
     }
 
     fn load_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let task = Backend::global(cx).run(cx, |host| async move {
+        let mod_type = self.item.mod_type;
+        let task = Backend::global(cx).run(cx, move |host| async move {
             let versions = host
                 .get_versions()
                 .await?
@@ -286,15 +300,18 @@ impl ModInstallView {
                 .map(|version| version.version)
                 .collect::<Vec<_>>();
             let modpacks = host.get_modpacks(false).await?;
-            Ok((versions, modpacks, Saved::load(&host)))
+            let locations = install_location::list_for(&host, mod_type).await;
+            Ok((versions, modpacks, Saved::load(&host), locations))
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.setup = Loadable::from_result(result.map(|(versions, modpacks, saved)| {
-                    this.fill_pickers(&versions, &modpacks, &saved, window, cx);
-                    Setup { modpacks }
-                }));
+                this.setup =
+                    Loadable::from_result(result.map(|(versions, modpacks, saved, locations)| {
+                        this.fill_pickers(&versions, &modpacks, &saved, window, cx);
+                        this.fill_locations(locations, &modpacks, window, cx);
+                        Setup { modpacks }
+                    }));
                 cx.notify();
             });
         })
@@ -364,6 +381,31 @@ impl ModInstallView {
             if let Some(name) = &targets.modpack {
                 select.set_selected_value(name, window, cx);
             }
+        });
+    }
+
+    /// Offers the content locations a pack can go to. Following the target
+    /// modpack is a choice only when the opener named one that exists.
+    fn fill_locations(
+        &self,
+        locations: Vec<quadrant_core::content::ContentLocation>,
+        modpacks: &[LocalModpack],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = self
+            .explicit_target
+            .as_deref()
+            .filter(|name| modpacks.iter().any(|modpack| &modpack.name == name));
+        let selected = initial_location(
+            &locations,
+            target.is_some(),
+            self.opener_location.as_deref(),
+        );
+        let automatic =
+            target.map(|name| t_with("installedContentInstallAutomatic", &[("modpack", name)]));
+        self.install_to.update(cx, |picker, cx| {
+            picker.set_locations(locations, automatic, selected, window, cx)
         });
     }
 
@@ -470,7 +512,14 @@ impl ModInstallView {
                 .selected_value()
                 .copied()
                 .unwrap_or(ModLoader::Unknown),
-            modpack: modpack.filter(|_| self.item.mod_type == ModType::Mod),
+            // A pack's is the opener's target, which it follows when no
+            // location is picked.
+            modpack,
+            content_location: self
+                .install_to
+                .read(cx)
+                .selected(cx)
+                .filter(|_| is_pack(self.item.mod_type)),
         })
     }
 
@@ -760,6 +809,12 @@ impl ModInstallView {
                     ))
                     .child(field("chooseModpack", picker(Select::new(&self.modpack))))
                 })
+                .children(
+                    self.install_to
+                        .read(cx)
+                        .select()
+                        .map(|select| field("installedContentInstallTo", picker(select))),
+                )
                 .into_any_element(),
         };
         let install_tone = if can_install {
@@ -892,7 +947,7 @@ impl Render for ModInstallView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pages::search::logic::tests::modpack;
+    use crate::pages::search::logic::tests::{modpack, result};
 
     fn versions() -> Vec<String> {
         ["1.21.1", "1.20.1"].map(String::from).to_vec()
@@ -979,5 +1034,20 @@ mod tests {
             initial_targets(ModType::Mod, &[], &[], None, &Saved::default()).version,
             ""
         );
+    }
+
+    #[test]
+    fn only_a_pack_goes_to_a_picked_location() {
+        let target = modpack("Alpha", "1.21.1", ModLoader::Fabric);
+        let mut item = result("Bliss", ModSource::Modrinth, 0, "");
+        let location = || Some("prism:survival".to_string());
+        assert_eq!(
+            InstallRequest::into_target(&item, &target, location()).content_location,
+            None
+        );
+        item.mod_type = ModType::ShaderPack;
+        let request = InstallRequest::into_target(&item, &target, location());
+        assert_eq!(request.content_location, location());
+        assert_eq!(request.modpack.as_deref(), Some("Alpha"));
     }
 }

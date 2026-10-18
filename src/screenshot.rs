@@ -105,6 +105,7 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
 
     capture_mod_pages(window, dir, cx).await?;
     capture_widths(window, dir, cx).await?;
+    capture_install_to(window, dir, cx).await?;
 
     show(window, cx, Route::Settings)?;
     capture(window, &dir.join("settings.png"), cx).await?;
@@ -285,6 +286,31 @@ async fn capture_prism(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp
         Route::Modpacks,
         |page: &mut ModpacksPage, _, cx| page.preview_prism_menu(None, cx),
     )
+}
+
+/// The "Install to" picker for resource packs, on Search and on a pack's
+/// install page, against the live Modrinth API. Nothing is installed.
+async fn capture_install_to(
+    window: WindowHandle<Root>,
+    dir: &Path,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let shots = dir.join("prism");
+    with_page::<SearchPage>(window, cx, Route::Search, |page, window, cx| {
+        page.close_details(cx);
+        page.set_content(ContentType::ResourcePacks, window, cx);
+        page.set_query("fresh animations", window, cx);
+    })?;
+    cx.background_executor().timer(NETWORK_SETTLE).await;
+    capture(window, &shots.join("search-install-to.png"), cx).await?;
+    with_page::<SearchPage>(window, cx, Route::Search, |page, window, cx| {
+        page.open_first_result(window, cx)
+    })?;
+    cx.background_executor().timer(NETWORK_SETTLE).await;
+    capture(window, &shots.join("mod-install-install-to.png"), cx).await?;
+    with_page::<SearchPage>(window, cx, Route::Search, |page, _, cx| {
+        page.close_details(cx)
+    })
 }
 
 /// The title bar's update button while downloading and once ready, over the

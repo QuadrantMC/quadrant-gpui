@@ -38,6 +38,7 @@ use crate::{
     loadable::Loadable,
     motion,
     pages::{
+        install_location::LocationPicker,
         mod_grid::{self, WidthProbe},
         mod_install::{InstallRequest, InstallViewEvent, ModInstallView, remember},
         mod_ui::{CardPress, CardStatus, Choice, OnCardPress, Primary, mod_card},
@@ -110,6 +111,9 @@ pub struct SearchPage {
     target_picker: Picker<Option<String>>,
     version_picker: Picker<Option<String>>,
     sort_picker: Picker<Sort>,
+    /// Where a quick-installed pack goes. Not saved: it follows the
+    /// content type.
+    install_to: Entity<LocationPicker>,
     results_scroll: ScrollHandle,
     /// How wide the results panel was last frame, for its column count.
     results_width: WidthProbe,
@@ -196,6 +200,7 @@ impl SearchPage {
             target_picker,
             version_picker,
             sort_picker,
+            install_to: cx.new(|cx| LocationPicker::new(window, cx)),
             results_scroll: ScrollHandle::new(),
             results_width: WidthProbe::default(),
             filters_scroll: ScrollHandle::new(),
@@ -272,6 +277,7 @@ impl SearchPage {
             query.set_placeholder(placeholder(self.filters.content), window, cx)
         });
         self.booted = true;
+        self.load_locations(window, cx);
         self.sync_pickers(window, cx);
         self.load_categories(cx);
         self.search(false, cx);
@@ -348,6 +354,7 @@ impl SearchPage {
             self.query.update(cx, |query, cx| {
                 query.set_placeholder(placeholder(self.filters.content), window, cx)
             });
+            self.load_locations(window, cx);
         }
         if self.filters.content != before.content
             || self.filters.curseforge != before.curseforge
@@ -358,6 +365,13 @@ impl SearchPage {
         self.sync_pickers(window, cx);
         self.save(cx);
         self.search(false, cx);
+    }
+
+    fn load_locations(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let mod_type = self.filters.content.mod_type();
+        self.install_to.update(cx, |picker, cx| {
+            picker.load_for_search(mod_type, window, cx)
+        });
     }
 
     fn pick_target(&mut self, name: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
@@ -530,7 +544,8 @@ impl SearchPage {
         match press {
             CardPress::Primary(Primary::Download) if item.autoinstallable => {
                 if let Some(target) = self.target_modpack() {
-                    let request = InstallRequest::into_target(item, target);
+                    let location = self.install_to.read(cx).selected(cx);
+                    let request = InstallRequest::into_target(item, target, location);
                     self.install(request, window, cx);
                 } else {
                     self.open_details(item.clone(), window, cx);
@@ -573,7 +588,8 @@ impl SearchPage {
 
     fn open_details(&mut self, item: Mod, window: &mut Window, cx: &mut Context<Self>) {
         let target = self.filters.target.clone();
-        let view = cx.new(|cx| ModInstallView::new(item, target, window, cx));
+        let location = self.install_to.read(cx).selected(cx);
+        let view = cx.new(|cx| ModInstallView::new(item, target, location, window, cx));
         let subscription = cx.subscribe_in(&view, window, |this, _, event, window, cx| {
             match event {
                 InstallViewEvent::Close => {
@@ -812,6 +828,7 @@ impl SearchPage {
                             .child(self.render_sources(cx))
                             .child(self.render_content_types(cx))
                             .child(self.render_target())
+                            .children(self.render_install_to(cx))
                             .child(self.render_version())
                             .children(self.render_loaders(cx))
                             .children(self.render_facets(cx))
@@ -915,6 +932,17 @@ impl SearchPage {
                     .text_center()
                     .child(target_hint),
             )
+    }
+
+    /// Which location a quick-installed pack goes to, when there is a choice.
+    fn render_install_to(&self, cx: &gpui::App) -> Option<impl IntoElement> {
+        let select = self.install_to.read(cx).select()?;
+        Some(
+            v_flex()
+                .mb_6()
+                .child(theme::filter_label(t("installedContentInstallTo")))
+                .child(picker(select).bg(rgb(theme::CONTROL))),
+        )
     }
 
     fn render_version(&self) -> impl IntoElement {
