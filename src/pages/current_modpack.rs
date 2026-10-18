@@ -14,7 +14,7 @@ use quadrant_core::models::LocalModpack;
 
 use crate::{
     backend::Backend,
-    loadable::Loadable,
+    loadable::{Loadable, Reload},
     pages::modpack_view::{ModpackView, ModpackViewEvent},
     theme,
 };
@@ -29,7 +29,7 @@ pub struct CurrentModpackPage {
     /// The applied modpack's view, kept while the same pack stays applied.
     view: Option<(Entity<ModpackView>, Subscription)>,
     /// The newest listing; replacing it drops a stale answer.
-    loading: Task<()>,
+    loading: Reload,
     _poll: Task<()>,
 }
 
@@ -46,7 +46,7 @@ impl CurrentModpackPage {
         let mut page = Self {
             modpack: Loadable::Loading,
             view: None,
-            loading: Task::ready(()),
+            loading: Reload::default(),
             _poll: poll,
         };
         page.refresh(cx);
@@ -59,7 +59,7 @@ impl CurrentModpackPage {
             let modpacks = host.get_modpacks(false).await?;
             Ok(modpacks.into_iter().find(|modpack| modpack.is_applied))
         });
-        self.loading = cx.spawn(async move |this, cx| {
+        self.loading.start(cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 let fresh = Loadable::from_result(result);
@@ -68,14 +68,16 @@ impl CurrentModpackPage {
                     this.show_applied(cx);
                     cx.notify();
                 }
+                if this.loading.landed() {
+                    this.refresh(cx);
+                }
             });
-        });
+        }));
     }
 
-    /// Re-reads the applied modpack as the page is shown again, unless a
-    /// read is on its way.
+    /// Re-reads the applied modpack as the page is shown again.
     pub fn revalidate(&mut self, cx: &mut Context<Self>) {
-        if self.loading.is_ready() {
+        if self.loading.ask() {
             self.refresh(cx);
         }
     }

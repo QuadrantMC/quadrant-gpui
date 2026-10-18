@@ -4,7 +4,7 @@
 //! Launcher instance; the picker shows only when there is more than one, which
 //! takes experimental features and a Prism Launcher install.
 
-use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, Window};
+use gpui::{App, AppContext as _, Context, Entity, SharedString, Window};
 use gpui_component::select::{SearchableVec, Select, SelectState};
 use quadrant_core::{
     content::{ContentLocation, ContentLocationKind},
@@ -15,6 +15,7 @@ use quadrant_host::QuadrantHost;
 use crate::{
     backend::Backend,
     i18n::{t, t_with},
+    loadable::Reload,
     pages::{installed_content::location_title, mod_ui::Choice},
 };
 
@@ -69,7 +70,7 @@ pub struct LocationPicker {
     /// The locations' names only; their packs are never listed here.
     locations: Vec<ContentLocation>,
     select: Entity<PickLocation>,
-    loading: Task<()>,
+    loading: Reload,
 }
 
 impl LocationPicker {
@@ -77,7 +78,7 @@ impl LocationPicker {
         Self {
             locations: Vec::new(),
             select: cx.new(|cx| SelectState::new(SearchableVec::new(Vec::new()), None, window, cx)),
-            loading: Task::ready(()),
+            loading: Reload::default(),
         }
     }
 
@@ -109,16 +110,16 @@ impl LocationPicker {
         cx: &mut Context<Self>,
     ) {
         self.set_locations(Vec::new(), None, None, window, cx);
-        self.loading = Task::ready(());
+        self.loading = Reload::default();
         if is_pack(mod_type) {
             self.list_for_search(None, window, cx);
         }
     }
 
     /// Lists Search's locations again, keeping the one picked while it is
-    /// still there, unless a listing is on its way.
+    /// still there.
     pub fn revalidate(&mut self, mod_type: ModType, window: &mut Window, cx: &mut Context<Self>) {
-        if is_pack(mod_type) && self.loading.is_ready() {
+        if is_pack(mod_type) && self.loading.ask() {
             let picked = self.selected(cx);
             self.list_for_search(picked, window, cx);
         }
@@ -132,17 +133,23 @@ impl LocationPicker {
     ) {
         let task =
             Backend::global(cx).run(cx, |host| async move { host.get_installed_content(false) });
-        self.loading = cx.spawn_in(window, async move |this, cx| {
-            let locations = task.await.unwrap_or_else(|error| {
-                log::warn!("Listing content locations failed: {error:#}");
-                Vec::new()
-            });
-            let picked = picked.filter(|id| locations.iter().any(|location| &location.id == id));
-            let _ = this.update_in(cx, |this, window, cx| {
-                let automatic = Some(t("installedContentInstallAuto"));
-                this.set_locations(locations, automatic, picked, window, cx)
-            });
-        });
+        self.loading
+            .start(cx.spawn_in(window, async move |this, cx| {
+                let locations = task.await.unwrap_or_else(|error| {
+                    log::warn!("Listing content locations failed: {error:#}");
+                    Vec::new()
+                });
+                let picked =
+                    picked.filter(|id| locations.iter().any(|location| &location.id == id));
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let automatic = Some(t("installedContentInstallAuto"));
+                    this.set_locations(locations, automatic, picked, window, cx);
+                    if this.loading.landed() {
+                        let picked = this.selected(cx);
+                        this.list_for_search(picked, window, cx);
+                    }
+                });
+            }));
     }
 
     /// The location the user picked, or `None` for the automatic placement.

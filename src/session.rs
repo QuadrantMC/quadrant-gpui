@@ -1,11 +1,16 @@
 //! The Quadrant ID account every page shares: whether someone is signed in,
 //! and the host's background workers that only make sense while they are.
 
-use gpui::{App, AppContext as _, Context, Entity, Global, Task};
+use gpui::{App, AppContext as _, Context, Entity, Global};
 use quadrant_core::account::id::AccountInfo;
 use quadrant_host::ErrorCode;
 
-use crate::{backend::Backend, events, i18n::describe, loadable::Loadable};
+use crate::{
+    backend::Backend,
+    events,
+    i18n::describe,
+    loadable::{Loadable, Reload},
+};
 
 /// `Ready(None)` is signed out; `Failed` is an account that couldn't be read,
 /// e.g. while offline.
@@ -18,7 +23,7 @@ pub struct Session {
     /// built with Quadrant ID; here they follow the sign-in.
     workers: bool,
     /// The newest account check; replacing it drops a stale one's answer.
-    checking: Task<()>,
+    checking: Reload,
 }
 
 struct GlobalSession(Entity<Session>);
@@ -42,7 +47,7 @@ impl Session {
         let mut session = Self {
             account: Loadable::Idle,
             workers: false,
-            checking: Task::ready(()),
+            checking: Reload::default(),
         };
         session.refresh(cx);
         session
@@ -66,10 +71,9 @@ impl Session {
         self.check(cx);
     }
 
-    /// Asks again while the account shown stays on screen, unless a check
-    /// is on its way.
+    /// Asks again while the account shown stays on screen.
     pub fn revalidate(&mut self, cx: &mut Context<Self>) {
-        if self.checking.is_ready() {
+        if self.checking.ask() {
             self.account.reload();
             self.check(cx);
         }
@@ -83,14 +87,17 @@ impl Session {
                 Err(error) => Err(error),
             }
         });
-        self.checking = cx.spawn(async move |this, cx| {
+        self.checking.start(cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.account = Loadable::from_result(result);
                 this.match_workers(cx);
+                if this.checking.landed() {
+                    this.check(cx);
+                }
                 cx.notify();
             });
-        });
+        }));
         cx.notify();
     }
 
@@ -124,7 +131,7 @@ impl Session {
     /// workers, for screenshots of the signed-in pages.
     #[cfg(feature = "screenshot")]
     pub fn preview_signed_in(&mut self, info: AccountInfo, cx: &mut Context<Self>) {
-        self.checking = Task::ready(());
+        self.checking = Reload::default();
         self.account = Loadable::Ready(Some(info));
         cx.notify();
     }

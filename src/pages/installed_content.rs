@@ -29,7 +29,7 @@ use crate::{
     assets::MdIcon,
     backend::Backend,
     i18n::{describe, t, t_count, t_with},
-    loadable::Loadable,
+    loadable::{Loadable, Reload},
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
 };
@@ -342,7 +342,7 @@ pub struct InstalledContentPage {
     /// the rest start open when they hold anything.
     toggled_locations: HashSet<String>,
     /// The newest listing request; replacing it drops a stale one's answer.
-    listing: Task<()>,
+    listing: Reload,
 }
 
 impl InstalledContentPage {
@@ -355,7 +355,7 @@ impl InstalledContentPage {
             disarm: Task::ready(()),
             open_sections: Vec::new(),
             toggled_locations: HashSet::new(),
-            listing: Task::ready(()),
+            listing: Reload::default(),
         };
         page.reload(cx);
         page
@@ -366,23 +366,26 @@ impl InstalledContentPage {
         self.locations.reload();
         let task =
             Backend::global(cx).run(cx, |host| async move { host.get_installed_content(true) });
-        self.listing = cx.spawn(async move |this, cx| {
+        self.listing.start(cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 if let Ok(locations) = &result {
                     prune_selection(&mut this.selection, locations);
                 }
                 this.locations = Loadable::from_result(result);
+                if this.listing.landed() {
+                    this.reload(cx);
+                }
                 cx.notify();
             });
-        });
+        }));
         cx.notify();
     }
 
-    /// Lists the content again as the page is shown again, unless a listing
-    /// is on its way or a running change will reload it when it ends.
+    /// Lists the content again as the page is shown again, unless a running
+    /// change will reload it when it ends.
     pub fn revalidate(&mut self, cx: &mut Context<Self>) {
-        if self.listing.is_ready() && self.running.is_none() {
+        if self.running.is_none() && self.listing.ask() {
             self.reload(cx);
         }
     }

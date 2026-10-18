@@ -35,7 +35,7 @@ use crate::{
     backend::Backend,
     events::{ModStage, watch_mod_progress},
     i18n::{describe, t, t_with},
-    loadable::Loadable,
+    loadable::{Loadable, Reload},
     motion,
     pages::{
         install_location::LocationPicker,
@@ -122,7 +122,7 @@ pub struct SearchPage {
     searching: Task<()>,
     loading_categories: Task<()>,
     /// The newest re-read of the target picker's modpacks.
-    listing_modpacks: Task<()>,
+    listing_modpacks: Reload,
     /// Until the saved filters load, changes don't search or save.
     booted: bool,
     _progress: Task<()>,
@@ -208,7 +208,7 @@ impl SearchPage {
             filters_scroll: ScrollHandle::new(),
             searching: Task::ready(()),
             loading_categories: Task::ready(()),
-            listing_modpacks: Task::ready(()),
+            listing_modpacks: Reload::default(),
             booted: false,
             _progress: progress,
             _subscriptions: subscriptions,
@@ -314,15 +314,19 @@ impl SearchPage {
 
     pub fn refresh_modpacks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let task = Backend::global(cx).run(cx, |host| async move { host.get_modpacks(true).await });
-        self.listing_modpacks = cx.spawn_in(window, async move |this, cx| {
-            let Ok(modpacks) = task.await else {
-                return;
-            };
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.set_modpacks(modpacks, window, cx);
-                cx.notify();
-            });
-        });
+        self.listing_modpacks
+            .start(cx.spawn_in(window, async move |this, cx| {
+                let result = task.await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    if let Ok(modpacks) = result {
+                        this.set_modpacks(modpacks, window, cx);
+                        cx.notify();
+                    }
+                    if this.listing_modpacks.landed() {
+                        this.refresh_modpacks(window, cx);
+                    }
+                });
+            }));
     }
 
     /// Re-reads the target picker's modpacks and the "Install to"
@@ -331,7 +335,7 @@ impl SearchPage {
         if !self.booted {
             return;
         }
-        if self.listing_modpacks.is_ready() {
+        if self.listing_modpacks.ask() {
             self.refresh_modpacks(window, cx);
         }
         let mod_type = self.filters.content.mod_type();

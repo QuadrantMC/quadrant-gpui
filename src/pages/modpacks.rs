@@ -33,7 +33,7 @@ use crate::{
     backend::Backend,
     events,
     i18n::{describe, t, t_with},
-    loadable::Loadable,
+    loadable::{Loadable, Reload},
     mod_catalog::ModCatalog,
     motion,
     pages::modpack_view::{ModpackView, ModpackViewEvent, catalog_keys},
@@ -434,11 +434,11 @@ pub struct ModpacksPage {
     running: Vec<Op>,
     search: Entity<InputState>,
     /// The newest listing request; replacing it drops a stale one's answer.
-    listing: Task<()>,
+    listing: Reload,
     session: Entity<Session>,
     /// The signed-in account's Quadrant Sync packs; `Idle` while signed out.
     synced: Loadable<Vec<SyncedModpack>>,
-    synced_listing: Task<()>,
+    synced_listing: Reload,
     /// Cards whose Quadrant Sync panel is unfolded, by cloud modpack id.
     open_panels: Vec<String>,
     /// How far the running download is, from the host's progress events.
@@ -493,10 +493,10 @@ impl ModpacksPage {
             versions: Loadable::Idle,
             running: Vec::new(),
             search,
-            listing: Task::ready(()),
+            listing: Reload::default(),
             session,
             synced: Loadable::Idle,
-            synced_listing: Task::ready(()),
+            synced_listing: Reload::default(),
             open_panels: Vec::new(),
             install_progress: None,
             sync_conflict: None,
@@ -523,7 +523,7 @@ impl ModpacksPage {
     fn load_synced(&mut self, cx: &mut Context<Self>) {
         if self.sync_account(cx).is_none() {
             self.synced = Loadable::Idle;
-            self.synced_listing = Task::ready(());
+            self.synced_listing = Reload::default();
             self.open_panels.clear();
             cx.notify();
             return;
@@ -532,13 +532,16 @@ impl ModpacksPage {
         let task = Backend::global(cx).run(cx, |host| async move {
             host.get_synced_modpacks(true, None).await
         });
-        self.synced_listing = cx.spawn(async move |this, cx| {
+        self.synced_listing.start(cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.synced = Loadable::from_result(result);
+                if this.synced_listing.landed() {
+                    this.load_synced(cx);
+                }
                 cx.notify();
             });
-        });
+        }));
         cx.notify();
     }
 
@@ -548,24 +551,27 @@ impl ModpacksPage {
         self.modpacks.reload();
         self.prism.update(cx, |prism, cx| prism.refresh(cx));
         let task = Backend::global(cx).run(cx, |host| async move { host.get_modpacks(true).await });
-        self.listing = cx.spawn(async move |this, cx| {
+        self.listing.start(cx.spawn(async move |this, cx| {
             let result = task.await.map(sort_modpacks);
             let _ = this.update(cx, |this, cx| {
                 this.modpacks = Loadable::from_result(result);
                 this.refresh_details(cx);
+                if this.listing.landed() {
+                    this.refresh(cx);
+                }
                 cx.notify();
             });
-        });
+        }));
         cx.notify();
     }
 
     /// Lists the modpacks, their Prism Launcher instances and the Sync packs
-    /// again as the page is shown again, unless a listing is on its way.
+    /// again as the page is shown again.
     pub fn revalidate(&mut self, cx: &mut Context<Self>) {
-        if self.listing.is_ready() {
+        if self.listing.ask() {
             self.refresh(cx);
         }
-        if self.synced_listing.is_ready() {
+        if self.synced_listing.ask() {
             self.load_synced(cx);
         }
     }
@@ -877,7 +883,7 @@ impl ModpacksPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.synced_listing = Task::ready(());
+        self.synced_listing = Reload::default();
         self.open_panels = synced
             .first()
             .map(|modpack| modpack.modpack_id.clone())
