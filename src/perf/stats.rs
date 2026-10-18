@@ -91,7 +91,8 @@ pub fn percentile(samples: &[f64], percent: f64) -> f64 {
     sorted[rank.clamp(1, sorted.len()) - 1]
 }
 
-fn median(values: impl Iterator<Item = f64>) -> f64 {
+/// The median, or 0 for no values.
+pub fn median(values: impl Iterator<Item = f64>) -> f64 {
     let mut sorted: Vec<f64> = values.collect();
     if sorted.is_empty() {
         return 0.;

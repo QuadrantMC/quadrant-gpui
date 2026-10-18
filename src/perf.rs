@@ -49,6 +49,10 @@ const RAIL_X: Pixels = px(30.);
 const SEARCH_QUERY: &str = "sodium";
 /// Longest wait for a search to answer.
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
+/// Cores' worth of CPU other processes may use during a run before it is
+/// flagged as disturbed. Frame times creep up with load from about here on
+/// this 16-core machine.
+const OTHER_LOAD_LIMIT: f64 = 2.;
 /// The frame budget never asks for less than this rate.
 const MIN_RATE: f64 = 120.;
 
@@ -129,16 +133,33 @@ impl Scenario {
     }
 }
 
-/// What `--perf`, `--perf-out` and `--perf-runs` asked for.
+/// Where perf mode puts its window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Placement {
+    /// The primary display's work-area size, past the right edge of the
+    /// virtual desktop, shown without activation: it never takes focus or
+    /// appears on screen, and real input can't reach it.
+    Offscreen,
+    /// Maximized on the primary display and focused, for a final check.
+    Visible,
+}
+
+/// What `--perf`, `--perf-out`, `--perf-runs` and `--perf-placement` asked for.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
     pub scenarios: Vec<Scenario>,
     pub out: PathBuf,
     pub runs: usize,
+    pub placement: Placement,
 }
 
 impl Plan {
-    pub fn parse(scenario: &str, out: Option<PathBuf>, runs: Option<&str>) -> Result<Self> {
+    pub fn parse(
+        scenario: &str,
+        out: Option<PathBuf>,
+        runs: Option<&str>,
+        placement: Option<&str>,
+    ) -> Result<Self> {
         let scenarios = match scenario {
             "all" => Scenario::ALL.to_vec(),
             name => vec![
@@ -162,19 +183,27 @@ impl Plan {
                 .ok_or_else(|| anyhow!("--perf-runs needs a positive number, not {runs}"))?,
             None => 5,
         };
+        let placement = match placement {
+            None | Some("offscreen") => Placement::Offscreen,
+            Some("visible") => Placement::Visible,
+            Some(other) => bail!("--perf-placement is offscreen or visible, not {other}"),
+        };
         Ok(Self {
             scenarios,
             out: out.context("--perf needs --perf-out <dir> for its results")?,
             runs,
+            placement,
         })
     }
 }
 
-/// The display the window is on, read once at the start.
-struct Display {
+/// The display and window a run measures, read once at the start.
+struct Setup {
     hz: f64,
     period: Duration,
     budget_ms: f64,
+    placement: Placement,
+    scale: f32,
 }
 
 pub fn run(window: WindowHandle<Root>, plan: Plan, cx: &mut App) {
@@ -190,28 +219,39 @@ pub fn run(window: WindowHandle<Root>, plan: Plan, cx: &mut App) {
 
 async fn run_plan(window: WindowHandle<Root>, plan: &Plan, cx: &mut AsyncApp) -> Result<()> {
     std::fs::create_dir_all(&plan.out)?;
+    frames::run_at_full_speed();
     let hz = frames::refresh_rate()?;
-    let display = Display {
-        hz,
-        period: Duration::from_secs_f64(1. / hz),
-        budget_ms: 1000. / hz.max(MIN_RATE),
-    };
     cx.update_window(window.into(), |_, window, _| {
-        window.activate_window();
+        if plan.placement == Placement::Visible {
+            window.activate_window();
+        }
         frames::install(window)
     })??;
+    // Outside any update: moving the window makes gpui handle WM_SIZE, which
+    // updates the app.
+    if plan.placement == Placement::Offscreen {
+        frames::place_offscreen()?;
+    }
     wait(cx, SETTLE * 2).await;
     let (scale, viewport) = cx.update_window(window.into(), |_, window, _| {
         (window.scale_factor(), window.viewport_size())
     })?;
+    let display = Setup {
+        hz,
+        period: Duration::from_secs_f64(1. / hz),
+        budget_ms: 1000. / hz.max(MIN_RATE),
+        placement: plan.placement,
+        scale,
+    };
     let header = format!(
-        "refresh {:.2} Hz, budget {:.2} ms, scale {scale}, viewport {}x{} px ({}x{} device)",
+        "refresh {:.2} Hz, budget {:.2} ms, scale {scale}, viewport {}x{} px ({}x{} device), {:?} window",
         display.hz,
         display.budget_ms,
         f32::from(viewport.width),
         f32::from(viewport.height),
         (f32::from(viewport.width) * scale).round(),
         (f32::from(viewport.height) * scale).round(),
+        plan.placement,
     );
     println!("{header}");
     let mut summary = format!("{header}\n");
@@ -219,6 +259,7 @@ async fn run_plan(window: WindowHandle<Root>, plan: &Plan, cx: &mut AsyncApp) ->
     for &scenario in &plan.scenarios {
         let mut runs = Vec::new();
         let mut raw = Vec::new();
+        let mut loads = Vec::new();
         for index in 0..plan.runs {
             let measured =
                 measure(scenario, window, &display, viewport, &mut search_icons, cx).await?;
@@ -228,22 +269,30 @@ async fn run_plan(window: WindowHandle<Root>, plan: &Plan, cx: &mut AsyncApp) ->
                 scenario.name(),
                 index + 1,
                 stats.line(display.budget_ms),
-                measured.warnings()
+                measured.warnings(display.placement)
             );
             raw.push(measured.to_json(&stats));
+            loads.push(measured.recording.other_load);
             runs.push(stats);
         }
         let median = stats::median_of(&runs);
-        let line = format!("{:<26}{}", scenario.name(), median.line(display.budget_ms));
+        let load = stats::median(loads.into_iter());
+        let line = format!(
+            "{:<26}{}  load {load:.1}",
+            scenario.name(),
+            median.line(display.budget_ms)
+        );
         println!("{line}");
         writeln!(summary, "{line}")?;
         let report = json!({
             "scenario": scenario.name(),
             "refresh_hz": display.hz,
             "budget_ms": display.budget_ms,
+            "placement": format!("{:?}", display.placement),
             "scale_factor": scale,
             "viewport": [f32::from(viewport.width), f32::from(viewport.height)],
             "median": median.to_json(),
+            "median_other_load_cores": load,
             "runs": raw,
         });
         write_json(&plan.out.join(format!("{}.json", scenario.name())), &report)?;
@@ -270,7 +319,7 @@ struct Measured {
 }
 
 impl Measured {
-    fn warnings(&self) -> String {
+    fn warnings(&self, placement: Placement) -> String {
         let mut warnings = String::new();
         if self.recording.input_messages > 0 {
             let _ = write!(
@@ -279,7 +328,15 @@ impl Measured {
                 self.recording.input_messages
             );
         }
-        if self.inactive_frames > 0 {
+        if self.recording.other_load > OTHER_LOAD_LIMIT {
+            let _ = write!(
+                warnings,
+                "  [other processes used {:.1} cores: the machine was busy]",
+                self.recording.other_load
+            );
+        }
+        // An off-screen window is never focused.
+        if self.inactive_frames > 0 && placement == Placement::Visible {
             let _ = write!(
                 warnings,
                 "  [{} frames unfocused: something took focus]",
@@ -312,6 +369,7 @@ impl Measured {
             "stats": stats.to_json(),
             "off_tick_draws": self.recording.off_tick_draws,
             "input_messages": self.recording.input_messages,
+            "other_load_cores": self.recording.other_load,
             "inactive_frames": self.inactive_frames,
             "idle_frames_per_page": idle,
             "profile": self.profile,
@@ -323,7 +381,7 @@ impl Measured {
 async fn measure(
     scenario: Scenario,
     window: WindowHandle<Root>,
-    display: &Display,
+    display: &Setup,
     viewport: Size<Pixels>,
     search_icons: &mut Vec<SharedString>,
     cx: &mut AsyncApp,
@@ -331,7 +389,15 @@ async fn measure(
     if scenario == Scenario::Idle {
         return measure_idle(window, cx).await;
     }
-    prepare(scenario, window, viewport, search_icons, cx).await?;
+    prepare(
+        scenario,
+        window,
+        viewport,
+        display.placement,
+        search_icons,
+        cx,
+    )
+    .await?;
     let profiling = start_profile(cx);
     frames::start();
     let inactive_frames = drive(scenario, window, viewport, display, cx).await?;
@@ -340,7 +406,10 @@ async fn measure(
     match scenario {
         Scenario::Dialogs => update(window, cx, |window, cx| window.close_all_dialogs(cx))?,
         Scenario::Resize => {
-            frames::maximize();
+            match display.placement {
+                Placement::Visible => frames::maximize(),
+                Placement::Offscreen => frames::place_offscreen()?,
+            }
             wait(cx, SETTLE).await;
         }
         Scenario::Snackbar => wait(cx, snackbar::TIMEOUT).await,
@@ -402,6 +471,7 @@ async fn measure_idle(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<M
         recording.ticks.extend(page.ticks);
         recording.off_tick_draws += page.off_tick_draws;
         recording.input_messages += page.input_messages;
+        recording.other_load = recording.other_load.max(page.other_load);
     }
     Ok(Measured {
         recording,
@@ -415,11 +485,14 @@ async fn prepare(
     scenario: Scenario,
     window: WindowHandle<Root>,
     viewport: Size<Pixels>,
+    placement: Placement,
     search_icons: &[SharedString],
     cx: &mut AsyncApp,
 ) -> Result<()> {
     update(window, cx, |window, cx| {
-        window.activate_window();
+        if placement == Placement::Visible {
+            window.activate_window();
+        }
         navigate(scenario.route(), window, cx);
         move_pointer(pointer(scenario, viewport), window, cx);
     })?;
@@ -432,7 +505,7 @@ async fn prepare(
                 navigate(Route::Modpacks, window, cx)
             })?;
         }
-        Scenario::Resize => frames::restore(),
+        Scenario::Resize if placement == Placement::Visible => frames::restore(),
         Scenario::Search => return prepare_search(window, search_icons, cx).await,
         _ => {}
     }
@@ -498,13 +571,14 @@ async fn drive(
     scenario: Scenario,
     window: WindowHandle<Root>,
     viewport: Size<Pixels>,
-    display: &Display,
+    display: &Setup,
     cx: &mut AsyncApp,
 ) -> Result<u32> {
     let (done, finished) = tokio::sync::oneshot::channel();
     let driver = Driver {
         scenario,
         viewport,
+        scale: display.scale,
         started: Instant::now(),
         frame: 0,
         slot: None,
@@ -539,6 +613,7 @@ async fn within(
 struct Driver {
     scenario: Scenario,
     viewport: Size<Pixels>,
+    scale: f32,
     started: Instant,
     frame: u32,
     /// The current period of a scenario that acts every so often.
@@ -645,7 +720,22 @@ impl Driver {
                 }
             }
             Scenario::Hover => move_pointer(sweep(elapsed, viewport), window, cx),
-            Scenario::Resize => window.resize(resized(elapsed)),
+            Scenario::Resize => {
+                // Resizing sends WM_SIZE, which gpui handles by updating the
+                // app, so it can't happen inside this callback. gpui's own
+                // `Window::resize` defers the same way, but activates the
+                // window.
+                let size = resized(elapsed);
+                let scale = self.scale;
+                cx.foreground_executor()
+                    .spawn(async move {
+                        frames::resize(
+                            f32::from(size.width) * scale,
+                            f32::from(size.height) * scale,
+                        )
+                    })
+                    .detach();
+            }
         }
     }
 }

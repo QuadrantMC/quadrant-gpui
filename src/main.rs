@@ -62,7 +62,7 @@ fn parse_args(
     let mut data_dir = env("QUADRANT_GPUI_DATA_DIR");
     let mut mc_folder = env("QUADRANT_GPUI_MC_FOLDER");
     let mut screenshot = None;
-    let [mut perf, mut perf_out, mut perf_runs] = [None, None, None];
+    let [mut perf, mut perf_out, mut perf_runs, mut perf_placement] = [None, None, None, None];
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let slot = match arg.to_str() {
@@ -72,6 +72,7 @@ fn parse_args(
             Some("--perf") if cfg!(feature = "perf") => &mut perf,
             Some("--perf-out") if cfg!(feature = "perf") => &mut perf_out,
             Some("--perf-runs") if cfg!(feature = "perf") => &mut perf_runs,
+            Some("--perf-placement") if cfg!(feature = "perf") => &mut perf_placement,
             _ => bail!("unknown argument {}", arg.to_string_lossy()),
         };
         let value = args
@@ -90,12 +91,15 @@ fn parse_args(
                 &scenario.to_string_lossy(),
                 perf_out.map(PathBuf::from),
                 perf_runs.as_deref().and_then(|runs| runs.to_str()),
+                perf_placement
+                    .as_deref()
+                    .and_then(|placement| placement.to_str()),
             )?),
             _ => bail!("--screenshot and --perf can't run together"),
         },
     };
     #[cfg(not(feature = "perf"))]
-    let _ = (perf_out, perf_runs);
+    let _ = (perf_out, perf_runs, perf_placement);
     // Perf mode measures on fixtures and must never touch real data.
     #[cfg(feature = "perf")]
     if matches!(parsed.mode, Mode::Perf(_))
@@ -192,13 +196,22 @@ fn open_main_window(mode: &Mode, cx: &mut App) -> Result<WindowHandle<Root>> {
         focus: !hidden,
         ..Default::default()
     };
-    // Perf mode's window is maximized, to time the real swap chain at the
-    // display's own resolution. gpui caps an unfocused window's animations
-    // at 30 fps; the window the user works in has focus, and a run started
-    // from a terminal can't count on getting it.
+    // Perf mode times the real swap chain at the display's own resolution:
+    // maximized when visible; off screen, perf mode places the window once
+    // it exists and shows it without activating it. gpui caps an unfocused
+    // window's animations at 30 fps; the window the user works in has focus,
+    // and a measured one can't count on it.
     #[cfg(feature = "perf")]
-    if let Mode::Perf(_) = mode {
-        options.window_bounds = Some(WindowBounds::Maximized(bounds));
+    if let Mode::Perf(plan) = mode {
+        match plan.placement {
+            perf::Placement::Visible => {
+                options.window_bounds = Some(WindowBounds::Maximized(bounds))
+            }
+            perf::Placement::Offscreen => {
+                options.show = false;
+                options.focus = false;
+            }
+        }
         options.inactive_frame_interval = None;
     }
     let handle = cx.open_window(options, |window, cx| {
@@ -339,6 +352,18 @@ mod tests {
         };
         assert_eq!(plan.scenarios, perf::Scenario::ALL);
         assert_eq!(plan.runs, 5);
+        assert_eq!(plan.placement, perf::Placement::Offscreen);
+        assert!(
+            perf(&[
+                "--data-dir",
+                "d",
+                "--mc-folder",
+                "m",
+                "--perf-placement",
+                "up"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

@@ -10,6 +10,9 @@ param(
     [string]$Scenario = "all",
     [int]$Runs = 5,
     [ValidateSet("large", "small")][string]$Sandbox = "large",
+    # offscreen: full size past the edge of the desktop, never focused or seen.
+    # visible: maximized and focused; only for a confirmation run.
+    [ValidateSet("offscreen", "visible")][string]$Placement = "offscreen",
     [string]$Out
 )
 
@@ -27,7 +30,7 @@ $root = Join-Path $env:TEMP ($(if ($Sandbox -eq "large") { "quadrant-gpui-sandbo
 
 $exe = Join-Path $repo "target\release\quadrant-gpui.exe"
 & $exe --data-dir (Join-Path $root "data") --mc-folder (Join-Path $root "mc") `
-    --perf $Scenario --perf-runs $Runs --perf-out $Out 2>&1 |
+    --perf $Scenario --perf-runs $Runs --perf-placement $Placement --perf-out $Out 2>&1 |
     Where-Object { "$_" -notmatch "^\[\*\]" } | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0) { throw "perf run failed" }
 

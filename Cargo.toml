@@ -38,7 +38,7 @@ url = "2"
 [target.'cfg(windows)'.dependencies]
 # Already in the tree through gpui; perf mode times frames from the window procedure.
 raw-window-handle = { version = "0.6", optional = true }
-windows = { version = "0.62", optional = true, features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", optional = true, features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = "3"
