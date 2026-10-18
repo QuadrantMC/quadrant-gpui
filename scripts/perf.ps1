@@ -29,6 +29,8 @@ $root = Join-Path $env:TEMP ($(if ($Sandbox -eq "large") { "quadrant-gpui-sandbo
 & (Join-Path $PSScriptRoot "sandbox.ps1") -Large:($Sandbox -eq "large") -Root $root | Out-Null
 
 $exe = Join-Path $repo "target\release\quadrant-native.exe"
+# A fatal error prints instead of opening a message box on the user's screen.
+$env:QUADRANT_NATIVE_NO_DIALOG = "1"
 & $exe --data-dir (Join-Path $root "data") --mc-folder (Join-Path $root "mc") `
     --perf $Scenario --perf-runs $Runs --perf-placement $Placement --perf-out $Out 2>&1 |
     Where-Object { "$_" -notmatch "^\[\*\]" } | ForEach-Object { "$_" }

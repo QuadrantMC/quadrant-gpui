@@ -62,6 +62,7 @@ Worktrees share `refs/stash`, so `git stash pop` can take another agent's work. 
 ## Frame times
 
 - The target is a frame every refresh, at least 120 a second: a budget of `1000 / max(120, Hz)` ms. `scripts\perf.ps1` is the ruler; its scenarios, durations and the dropped-frame rule are frozen, since changing them invalidates every earlier number. Compare a change against a run of the same command at its parent commit, on the same sandbox.
+- Judge a change by `draw` and `over` (frames whose draw exceeded the budget). Off screen, Windows sometimes stalls `Present`, so `frame`, `dropped` and `missed` count only in a visible run.
 - Runs are off screen by default and never take focus. Don't use `-Placement visible` (a maximized, focused window over the user's screen) without asking the user first; it is for a final confirmation only.
 - Don't build or run anything else while it measures; other CPU load slows frames down. The summary's `load` is the cores other processes used; a run that warns about load, real input or lost focus was disturbed, so run it again or compare it only with runs under similar load.
 - `perf::frame_drawn` in `QuadrantApp::render` marks a tick as drawn. That relies on no view being `cached()`; a cached root view would hide frames from the harness.

@@ -30,7 +30,7 @@ use crate::{
     snackbar::{self, SnackbarKind},
 };
 
-pub use frames::frame_drawn;
+pub use frames::{frame_drawn, paint_marker};
 use stats::RunStats;
 
 /// How long each driven scenario runs, and each page sits in `idle`.
@@ -263,7 +263,11 @@ async fn run_plan(window: WindowHandle<Root>, plan: &Plan, cx: &mut AsyncApp) ->
         for index in 0..plan.runs {
             let measured =
                 measure(scenario, window, &display, viewport, &mut search_icons, cx).await?;
-            let stats = stats::summarize(&measured.recording.ticks, display.period);
+            let stats = stats::summarize(
+                &measured.recording.ticks,
+                display.period,
+                Duration::from_secs_f64(display.budget_ms / 1000.),
+            );
             eprintln!(
                 "  {} run {}: {}{}",
                 scenario.name(),
@@ -355,6 +359,7 @@ impl Measured {
                 let since = |at: Instant| origin.map_or(0., |origin| stats::ms(at - origin));
                 json!([
                     since(tick.start),
+                    tick.painted.map(|painted| stats::ms(painted - tick.start)),
                     stats::ms(tick.end - tick.start),
                     tick.drew
                 ])
@@ -373,7 +378,7 @@ impl Measured {
             "inactive_frames": self.inactive_frames,
             "idle_frames_per_page": idle,
             "profile": self.profile,
-            "ticks": { "columns": ["start_ms", "cpu_ms", "drew"], "rows": frames },
+            "ticks": { "columns": ["start_ms", "draw_ms", "frame_ms", "drew"], "rows": frames },
         })
     }
 }

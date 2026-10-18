@@ -163,7 +163,7 @@ impl Render for QuadrantApp {
         #[cfg(feature = "perf")]
         crate::perf::frame_drawn();
         let page = self.page(self.history.current(), window, cx);
-        h_flex()
+        let root = h_flex()
             .id("quadrant")
             .size_full()
             .bg(rgb(theme::PAGE))
@@ -186,6 +186,9 @@ impl Render for QuadrantApp {
                     .child(self.render_title_bar(cx))
                     .child(div().flex_1().overflow_hidden().child(page)),
             )
-            .child(self.snackbar.clone())
+            .child(self.snackbar.clone());
+        #[cfg(feature = "perf")]
+        let root = root.child(crate::perf::paint_marker());
+        root
     }
 }

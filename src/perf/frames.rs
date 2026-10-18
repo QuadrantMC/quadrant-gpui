@@ -10,7 +10,7 @@
 use std::{cell::RefCell, mem, time::Instant};
 
 use anyhow::Result;
-use gpui::Window;
+use gpui::{AnyElement, IntoElement as _, Window, canvas, deferred};
 
 use super::stats::Tick;
 
@@ -20,6 +20,8 @@ struct Recorder {
     ticks: Vec<Tick>,
     /// Set by `frame_drawn` during the current tick.
     drew: bool,
+    /// Set by the paint marker during the current tick.
+    painted: Option<Instant>,
     /// Frames drawn outside a `WM_PAINT`, such as on opening a window.
     off_tick_draws: u32,
     /// Real mouse and keyboard messages, which the harness never sends.
@@ -83,6 +85,18 @@ pub fn frame_drawn() {
     RECORDER.with_borrow_mut(|recorder| recorder.drew = true);
 }
 
+/// The paint marker: an element gpui paints after everything else in the
+/// window, so the time it runs ends the app's share of the frame. What follows
+/// is gpui rendering the scene and presenting it.
+pub fn paint_marker() -> AnyElement {
+    deferred(canvas(
+        |_, _, _| (),
+        |_, _, _, _| RECORDER.with_borrow_mut(|recorder| recorder.painted = Some(Instant::now())),
+    ))
+    .with_priority(usize::MAX)
+    .into_any_element()
+}
+
 pub fn start() {
     RECORDER.with_borrow_mut(|recorder| {
         *recorder = Recorder {
@@ -110,6 +124,7 @@ fn begin_tick() -> Instant {
         if mem::take(&mut recorder.drew) && recorder.recording {
             recorder.off_tick_draws += 1;
         }
+        recorder.painted = None;
     });
     Instant::now()
 }
@@ -118,8 +133,14 @@ fn end_tick(start: Instant) {
     let end = Instant::now();
     RECORDER.with_borrow_mut(|recorder| {
         let drew = mem::take(&mut recorder.drew);
+        let painted = recorder.painted.take();
         if recorder.recording {
-            recorder.ticks.push(Tick { start, end, drew });
+            recorder.ticks.push(Tick {
+                start,
+                painted,
+                end,
+                drew,
+            });
         }
     });
 }
