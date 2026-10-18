@@ -91,5 +91,30 @@ installer-icon = "packaging/icons/icon.ico"
 [package.metadata.packager.macos]
 minimum-system-version = "11.0"
 
+# gpui opens libwayland-client, libwayland-egl and Vulkan at runtime; ldd
+# only shows libxkbcommon. xdg-open opens links and the sign-in page.
 [package.metadata.packager.deb]
 section = "utils"
+depends = ["libxkbcommon0", "libwayland-client0", "libwayland-egl1", "libvulkan1", "xdg-utils"]
+# Also the AppImage's. Its name matches the Wayland app id.
+desktop-template = "packaging/linux/quadrant-native.desktop"
+
+# cargo-packager makes no rpm; `cargo generate-rpm` (cargo-generate-rpm)
+# packs the same files from target/release.
+[package.metadata.generate-rpm]
+summary = "Manage your mods and modpacks with ease."
+assets = [
+  { source = "target/release/quadrant-native", dest = "/usr/bin/quadrant-native", mode = "755" },
+  { source = "packaging/linux/quadrant-native.desktop", dest = "/usr/share/applications/quadrant-native.desktop", mode = "644" },
+  { source = "packaging/icons/32x32.png", dest = "/usr/share/icons/hicolor/32x32/apps/quadrant-native.png", mode = "644" },
+  { source = "packaging/icons/128x128.png", dest = "/usr/share/icons/hicolor/128x128/apps/quadrant-native.png", mode = "644" },
+  { source = "packaging/icons/256x256.png", dest = "/usr/share/icons/hicolor/256x256/apps/quadrant-native.png", mode = "644" },
+  { source = "packaging/icons/512x512.png", dest = "/usr/share/icons/hicolor/512x512/apps/quadrant-native.png", mode = "644" },
+]
+
+[package.metadata.generate-rpm.requires]
+libxkbcommon = "*"
+libwayland-client = "*"
+libwayland-egl = "*"
+vulkan-loader = "*"
+xdg-utils = "*"

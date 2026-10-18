@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Quadrant-Native
+Comment=Manage your mods and modpacks with ease.
+Exec=quadrant-native
+Icon=quadrant-native
+Terminal=false
+Categories=Utility;
+Keywords=Minecraft;mods;modpacks;
+StartupWMClass=quadrant-native
