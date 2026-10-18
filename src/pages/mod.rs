@@ -4,6 +4,7 @@ use gpui::{
 };
 use gpui_component::v_flex;
 
+mod account;
 mod current_modpack;
 mod installed_content;
 mod mod_install;
@@ -12,6 +13,7 @@ mod modpacks;
 mod search;
 mod settings;
 
+pub use account::AccountPage;
 pub use current_modpack::CurrentModpackPage;
 pub use installed_content::InstalledContentPage;
 pub use modpacks::ModpacksPage;
@@ -31,7 +33,7 @@ pub fn build(route: Route, window: &mut Window, cx: &mut App) -> AnyView {
         Route::CurrentModpack => cx.new(CurrentModpackPage::new).into(),
         Route::Settings => cx.new(SettingsPage::new).into(),
         Route::InstalledContent => cx.new(InstalledContentPage::new).into(),
-        Route::Account => cx.new(|_| Placeholder { route }).into(),
+        Route::Account => cx.new(AccountPage::new).into(),
     }
 }
 

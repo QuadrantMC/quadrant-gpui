@@ -8,6 +8,7 @@ use std::{path::Path, path::PathBuf, time::Duration};
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Window, WindowHandle};
 use gpui_component::{Root, WindowExt as _};
+use quadrant_core::account::id::AccountInfo;
 
 use quadrant_core::models::{InstalledMod, ModSource};
 
@@ -16,10 +17,11 @@ use crate::{
     backend::Backend,
     i18n::{t, t_with},
     pages::{
-        ContentType, CurrentModpackPage, InstalledContentPage, ModpacksPage, SearchPage,
-        SettingsPage,
+        AccountPage, ContentType, CurrentModpackPage, InstalledContentPage, ModpacksPage,
+        SearchPage, SettingsPage,
     },
     route::Route,
+    session::Session,
     snackbar::{self, SnackbarKind},
 };
 
@@ -90,7 +92,38 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
         |page: &mut InstalledContentPage, _, cx| page.preview_selection(cx),
     )?;
     resize(window, cx, 1300.)?;
-    capture(window, &dir.join("installed-content-open.png"), cx).await
+    capture(window, &dir.join("installed-content-open.png"), cx).await?;
+    resize(window, cx, 720.)?;
+
+    show(window, cx, Route::Account)?;
+    capture(window, &dir.join("account-signed-out.png"), cx).await?;
+    // Default builds have no Quadrant ID client, so this fails at once.
+    with_page(
+        window,
+        cx,
+        Route::Account,
+        |page: &mut AccountPage, _, cx| page.sign_in(cx),
+    )?;
+    capture(window, &dir.join("account-sign-in-failed.png"), cx).await?;
+    cx.update(|cx| {
+        Session::global(cx).update(cx, |session, cx| {
+            session.preview_signed_in(sample_account(), cx)
+        })
+    });
+    capture(window, &dir.join("account-signed-in.png"), cx).await
+}
+
+/// An account for the signed-in pictures. Nothing is asked of Quadrant ID.
+fn sample_account() -> AccountInfo {
+    AccountInfo {
+        id: "preview".into(),
+        name: "Alex".into(),
+        email: "alex@example.com".into(),
+        quadrant_sync_limit: 10,
+        quadrant_share_limit: 50,
+        login: "alex".into(),
+        notifications: Vec::new(),
+    }
 }
 
 fn resize(window: WindowHandle<Root>, cx: &mut AsyncApp, height: f32) -> Result<()> {

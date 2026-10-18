@@ -718,6 +718,32 @@ pub fn warning_box(text: impl Into<SharedString>) -> impl IntoElement {
         .child(text.into())
 }
 
+/// A full-width button whose label wraps, like the Account page's terms of
+/// service notice. gpui-component's `Button` keeps its label on one line.
+pub fn block_button(
+    id: impl Into<ElementId>,
+    tone: Tone,
+    label: impl Into<SharedString>,
+    icon: Option<MdIcon>,
+) -> gpui::Stateful<Div> {
+    let (color, hover) = tone.colors();
+    gpui_component::h_flex()
+        .id(id)
+        .w_full()
+        .p_2()
+        .gap_2()
+        .items_center()
+        .rounded(radius_card())
+        .bg(color)
+        .hover(move |style| style.bg(hover))
+        .cursor_pointer()
+        .font_weight(FontWeight::EXTRA_BOLD)
+        .child(div().flex_1().min_w_0().text_center().child(label.into()))
+        .when_some(icon, |this, icon| {
+            this.child(Icon::new(icon).flex_shrink_0().size_6())
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
