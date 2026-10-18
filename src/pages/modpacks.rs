@@ -11,9 +11,9 @@ use quadrant_host::ErrorCode;
 use chrono::{Local, TimeZone as _};
 use gpui::{
     Animation, AnimationExt as _, AnyElement, App, AppContext as _, ClickEvent, ClipboardItem,
-    Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Subscription, Task, Window, div, prelude::FluentBuilder as _, px,
-    rgb,
+    Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ListAlignment, ListState,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, Task, Window, div, list,
+    prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{
     IndexPath, WindowExt as _,
@@ -453,6 +453,27 @@ pub struct ModpacksPage {
     leaving_done: Task<()>,
     _session_changed: Subscription,
     _prism_changed: Subscription,
+    /// The list view, virtualized: only the cards on screen are drawn.
+    list: ListState,
+    /// What the list's items are, as of the last frame.
+    rows: Vec<ListRow>,
+}
+
+/// One item of the list view.
+#[derive(Clone, Debug, PartialEq)]
+enum ListRow {
+    Toolbar,
+    /// The search reads as a Quadrant Share code.
+    Banner(String),
+    /// The list's only item while it loads, failed or is empty.
+    Status,
+    /// A card, by its place among the merged rows and its local and cloud
+    /// records' places in `modpacks` and `synced`.
+    Card {
+        index: usize,
+        local: Option<usize>,
+        synced: Option<usize>,
+    },
 }
 
 impl ModpacksPage {
@@ -506,6 +527,8 @@ impl ModpacksPage {
             _search_changed: search_changed,
             _session_changed: session_changed,
             _prism_changed: prism_changed,
+            list: ListState::new(0, ListAlignment::Top, px(0.)),
+            rows: Vec::new(),
         };
         page.refresh(cx);
         page.load_versions(cx);
@@ -1217,9 +1240,125 @@ impl ModpacksPage {
             .children(panel)
     }
 
-    fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The list view's items: the toolbar, the share banner, then the
+    /// cards, or the one status item in their place.
+    fn list_rows(&self, cx: &App) -> Vec<ListRow> {
         let query = self.search.read(cx).value();
-        let body = match &self.modpacks {
+        let mut rows = vec![ListRow::Toolbar];
+        rows.extend(cloud::parse_share_code(&query).map(ListRow::Banner));
+        if let Loadable::Ready(modpacks) = &self.modpacks {
+            let has_account = self.sync_account(cx).is_some();
+            let synced = self.synced_slice();
+            let cards = cloud::merge_modpacks(modpacks, synced, &query)
+                .into_iter()
+                .enumerate()
+                .filter(|(_, row)| row.local.is_some() || (row.synced.is_some() && has_account))
+                .map(|(index, row)| ListRow::Card {
+                    index,
+                    local: row.local.map(|local| place_in(modpacks, local)),
+                    synced: row.synced.map(|cloud| place_in(synced, cloud)),
+                });
+            rows.extend(cards);
+        }
+        if !matches!(rows.last(), Some(ListRow::Card { .. })) {
+            rows.push(ListRow::Status);
+        }
+        rows
+    }
+
+    fn synced_slice(&self) -> &[SyncedModpack] {
+        match &self.synced {
+            Loadable::Ready(synced) => synced.as_slice(),
+            Loadable::Idle | Loadable::Loading | Loadable::Failed(_) => &[],
+        }
+    }
+
+    /// Points the list at this frame's items. Unchanged items keep their
+    /// measured heights and the scroll position.
+    fn sync_list(&mut self, cx: &App) {
+        let rows = self.list_rows(cx);
+        if rows == self.rows {
+            return;
+        }
+        let same_start = rows
+            .iter()
+            .zip(&self.rows)
+            .take_while(|(a, b)| a == b)
+            .count();
+        let same_end = rows[same_start..]
+            .iter()
+            .rev()
+            .zip(self.rows[same_start..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        self.list.splice(
+            same_start..self.rows.len() - same_end,
+            rows.len() - same_start - same_end,
+        );
+        self.rows = rows;
+    }
+
+    /// Item `ix` of the list view. The cards sit on one slate-800 panel,
+    /// drawn a slice per card.
+    fn render_row(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let Some(row) = self.rows.get(ix).cloned() else {
+            return div().into_any_element();
+        };
+        let first = ix > 0 && !matches!(self.rows[ix - 1], ListRow::Card { .. });
+        let last = ix + 1 == self.rows.len();
+        let panel = |content: AnyElement| {
+            div()
+                .when(first, |this| this.pt_4())
+                .when(last, |this| this.pb_4())
+                .child(
+                    div()
+                        .mx_6()
+                        .bg(rgb(theme::SURFACE))
+                        .when(first, |this| this.rounded_t(theme::radius_card()))
+                        .when(last, |this| this.rounded_b(theme::radius_card()))
+                        .child(content),
+                )
+                .into_any_element()
+        };
+        match row {
+            ListRow::Toolbar => div().child(self.render_toolbar(cx)).into_any_element(),
+            ListRow::Banner(code) => div()
+                .child(self.render_share_banner(code, cx))
+                .into_any_element(),
+            ListRow::Status => panel(self.render_status(cx)),
+            ListRow::Card {
+                index,
+                local,
+                synced,
+            } => {
+                let Loadable::Ready(modpacks) = &self.modpacks else {
+                    return div().into_any_element();
+                };
+                let account = self.sync_account(cx);
+                let synced = synced.map(|place| &self.synced_slice()[place]);
+                let card = match (local, synced, &account) {
+                    (Some(local), synced, account) => self
+                        .render_card(index, &modpacks[local], synced, account.as_ref(), cx)
+                        .into_any_element(),
+                    (None, Some(synced), Some(account)) => self
+                        .render_cloud_card(index, synced, account, cx)
+                        .into_any_element(),
+                    (None, _, _) => div().into_any_element(),
+                };
+                panel(
+                    div()
+                        .pt_5()
+                        .when(last, |this| this.pb_5())
+                        .child(card)
+                        .into_any_element(),
+                )
+            }
+        }
+    }
+
+    /// The list's one item while it loads, failed or found nothing.
+    fn render_status(&self, cx: &mut Context<Self>) -> AnyElement {
+        match &self.modpacks {
             Loadable::Idle | Loadable::Loading => status_row(Spinner::new().into_any_element()),
             Loadable::Failed(error) => status_row(
                 v_flex()
@@ -1238,41 +1377,14 @@ impl ModpacksPage {
                     )
                     .into_any_element(),
             ),
-            Loadable::Ready(modpacks) => {
-                let account = self.sync_account(cx);
-                let synced = match &self.synced {
-                    Loadable::Ready(synced) => synced.as_slice(),
-                    Loadable::Idle | Loadable::Loading | Loadable::Failed(_) => &[],
-                };
-                let shown: Vec<_> = cloud::merge_modpacks(modpacks, synced, &query)
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(|(index, row)| match (row.local, row.synced, &account) {
-                        (Some(local), synced, account) => Some(
-                            self.render_card(index, local, synced, account.as_ref(), cx)
-                                .into_any_element(),
-                        ),
-                        (None, Some(synced), Some(account)) => Some(
-                            self.render_cloud_card(index, synced, account, cx)
-                                .into_any_element(),
-                        ),
-                        (None, _, _) => None,
-                    })
-                    .collect();
-                if shown.is_empty() {
-                    status_row("No modpacks here yet.".into_any_element())
-                } else {
-                    v_flex().py_5().gap_5().children(shown).into_any_element()
-                }
-            }
-        };
-        div()
-            .mx_6()
-            .my_4()
-            .rounded(theme::radius_card())
-            .bg(rgb(theme::SURFACE))
-            .child(body)
+            Loadable::Ready(_) => status_row("No modpacks here yet.".into_any_element()),
+        }
     }
+}
+
+/// Where `item`, an element of `items`, sits in it.
+fn place_in<T>(items: &[T], item: &T) -> usize {
+    (item as *const T as usize - items.as_ptr() as usize) / std::mem::size_of::<T>().max(1)
 }
 
 fn status_row(content: gpui::AnyElement) -> gpui::AnyElement {
@@ -1311,6 +1423,7 @@ impl Render for ModpacksPage {
                 page.update(cx, |page, cx| page.confirm_sync_anyway(modpack, window, cx))
             });
         }
+        self.sync_list(cx);
         let current = self.render_view(&self.view, window, cx);
         let Some((leaving, crossfade)) = &self.leaving else {
             return current;
@@ -1347,14 +1460,18 @@ impl ModpacksPage {
     fn render_view(&self, view: &View, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let page = v_flex().size_full().overflow_y_scrollbar();
         match view {
-            View::List => {
-                let banner = cloud::parse_share_code(&self.search.read(cx).value())
-                    .map(|code| self.render_share_banner(code, cx).into_any_element());
-                page.child(self.render_toolbar(cx))
-                    .children(banner)
-                    .child(self.render_list(cx))
-                    .into_any_element()
-            }
+            View::List => div()
+                .size_full()
+                .relative()
+                .child(
+                    list(
+                        self.list.clone(),
+                        cx.processor(|this, ix, window, cx| this.render_row(ix, window, cx)),
+                    )
+                    .size_full(),
+                )
+                .vertical_scrollbar(&self.list)
+                .into_any_element(),
             View::Details { view, .. } => view.clone().into_any_element(),
             View::Shared { modpack, sync } => {
                 let header = format!(
