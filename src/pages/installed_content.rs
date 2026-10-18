@@ -363,9 +363,7 @@ impl InstalledContentPage {
 
     /// Replaces the listing in place, so the sections the user opened stay open.
     fn reload(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.locations, Loadable::Ready(_)) {
-            self.locations = Loadable::Loading;
-        }
+        self.locations.reload();
         let task =
             Backend::global(cx).run(cx, |host| async move { host.get_installed_content(true) });
         self.listing = cx.spawn(async move |this, cx| {
@@ -379,6 +377,14 @@ impl InstalledContentPage {
             });
         });
         cx.notify();
+    }
+
+    /// Lists the content again as the page is shown again, unless a listing
+    /// is on its way or a running change will reload it when it ends.
+    pub fn revalidate(&mut self, cx: &mut Context<Self>) {
+        if self.listing.is_ready() && self.running.is_none() {
+            self.reload(cx);
+        }
     }
 
     fn run(&mut self, op: Op, cx: &mut Context<Self>) {

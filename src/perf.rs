@@ -784,7 +784,7 @@ fn app(window: &Window, cx: &App) -> Option<Entity<QuadrantApp>> {
 
 fn navigate(route: Route, window: &mut Window, cx: &mut App) {
     if let Some(app) = app(window, cx) {
-        app.update(cx, |app, cx| app.navigate(route, cx));
+        app.update(cx, |app, cx| app.navigate(route, window, cx));
     }
 }
 

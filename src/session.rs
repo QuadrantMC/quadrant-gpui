@@ -63,6 +63,19 @@ impl Session {
     /// Asks the host who is signed in, showing the check while it runs.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.account = Loadable::Loading;
+        self.check(cx);
+    }
+
+    /// Asks again while the account shown stays on screen, unless a check
+    /// is on its way.
+    pub fn revalidate(&mut self, cx: &mut Context<Self>) {
+        if self.checking.is_ready() {
+            self.account.reload();
+            self.check(cx);
+        }
+    }
+
+    fn check(&mut self, cx: &mut Context<Self>) {
         let task = Backend::global(cx).run(cx, |host| async move {
             match host.get_account_info().await {
                 Ok(info) => Ok(Some(info)),

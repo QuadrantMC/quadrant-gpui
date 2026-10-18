@@ -164,9 +164,7 @@ impl PrismMenus {
     /// Lists the instances again. The list only changes outside the folders
     /// Quadrant watches, so the page calls this when it reloads its modpacks.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.instances, Loadable::Ready(_)) {
-            self.instances = Loadable::Loading;
-        }
+        self.instances.reload();
         self.plans.clear();
         self.planning.clear();
         let task = Backend::global(cx).run(cx, |host| async move { host.get_prism_instances() });

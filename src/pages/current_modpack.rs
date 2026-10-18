@@ -72,6 +72,14 @@ impl CurrentModpackPage {
         });
     }
 
+    /// Re-reads the applied modpack as the page is shown again, unless a
+    /// read is on its way.
+    pub fn revalidate(&mut self, cx: &mut Context<Self>) {
+        if self.loading.is_ready() {
+            self.refresh(cx);
+        }
+    }
+
     /// Points the view at the applied modpack: the same pack's view takes
     /// the new manifest, another pack gets a view of its own.
     fn show_applied(&mut self, cx: &mut Context<Self>) {

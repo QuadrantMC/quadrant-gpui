@@ -121,6 +121,8 @@ pub struct SearchPage {
     /// The newest search; replacing it drops a stale one's answer.
     searching: Task<()>,
     loading_categories: Task<()>,
+    /// The newest re-read of the target picker's modpacks.
+    listing_modpacks: Task<()>,
     /// Until the saved filters load, changes don't search or save.
     booted: bool,
     _progress: Task<()>,
@@ -206,6 +208,7 @@ impl SearchPage {
             filters_scroll: ScrollHandle::new(),
             searching: Task::ready(()),
             loading_categories: Task::ready(()),
+            listing_modpacks: Task::ready(()),
             booted: false,
             _progress: progress,
             _subscriptions: subscriptions,
@@ -311,7 +314,7 @@ impl SearchPage {
 
     pub fn refresh_modpacks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let task = Backend::global(cx).run(cx, |host| async move { host.get_modpacks(true).await });
-        cx.spawn_in(window, async move |this, cx| {
+        self.listing_modpacks = cx.spawn_in(window, async move |this, cx| {
             let Ok(modpacks) = task.await else {
                 return;
             };
@@ -319,8 +322,21 @@ impl SearchPage {
                 this.set_modpacks(modpacks, window, cx);
                 cx.notify();
             });
-        })
-        .detach();
+        });
+    }
+
+    /// Re-reads the target picker's modpacks and the "Install to"
+    /// locations as the page is shown again, once the first load is done.
+    pub fn revalidate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.booted {
+            return;
+        }
+        if self.listing_modpacks.is_ready() {
+            self.refresh_modpacks(window, cx);
+        }
+        let mod_type = self.filters.content.mod_type();
+        self.install_to
+            .update(cx, |picker, cx| picker.revalidate(mod_type, window, cx));
     }
 
     fn categories(&self) -> &[MergedCategory] {

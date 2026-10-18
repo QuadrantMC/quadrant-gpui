@@ -528,9 +528,7 @@ impl ModpacksPage {
             cx.notify();
             return;
         }
-        if !matches!(self.synced, Loadable::Ready(_)) {
-            self.synced = Loadable::Loading;
-        }
+        self.synced.reload();
         let task = Backend::global(cx).run(cx, |host| async move {
             host.get_synced_modpacks(true, None).await
         });
@@ -547,9 +545,7 @@ impl ModpacksPage {
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         // A loaded list stays on screen while it reloads, so acting on a card
         // doesn't blank the page.
-        if !matches!(self.modpacks, Loadable::Ready(_)) {
-            self.modpacks = Loadable::Loading;
-        }
+        self.modpacks.reload();
         self.prism.update(cx, |prism, cx| prism.refresh(cx));
         let task = Backend::global(cx).run(cx, |host| async move { host.get_modpacks(true).await });
         self.listing = cx.spawn(async move |this, cx| {
@@ -561,6 +557,17 @@ impl ModpacksPage {
             });
         });
         cx.notify();
+    }
+
+    /// Lists the modpacks, their Prism Launcher instances and the Sync packs
+    /// again as the page is shown again, unless a listing is on its way.
+    pub fn revalidate(&mut self, cx: &mut Context<Self>) {
+        if self.listing.is_ready() {
+            self.refresh(cx);
+        }
+        if self.synced_listing.is_ready() {
+            self.load_synced(cx);
+        }
     }
 
     /// Hands an open Details view its pack's re-read manifest.

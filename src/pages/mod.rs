@@ -47,6 +47,23 @@ pub fn back(page: &AnyView, cx: &mut App) -> bool {
     false
 }
 
+/// Re-reads the host data `page` shows, now that its route is shown again:
+/// the desktop app remounts a page on every visit, so its data reloads.
+/// What the page shows stays until the answers replace it.
+pub fn shown(page: &AnyView, window: &mut Window, cx: &mut App) {
+    if let Ok(page) = page.clone().downcast::<ModpacksPage>() {
+        page.update(cx, |page, cx| page.revalidate(cx));
+    } else if let Ok(page) = page.clone().downcast::<CurrentModpackPage>() {
+        page.update(cx, |page, cx| page.revalidate(cx));
+    } else if let Ok(page) = page.clone().downcast::<InstalledContentPage>() {
+        page.update(cx, |page, cx| page.revalidate(cx));
+    } else if let Ok(page) = page.clone().downcast::<AccountPage>() {
+        page.update(cx, |page, cx| page.revalidate(cx));
+    } else if let Ok(page) = page.clone().downcast::<SearchPage>() {
+        page.update(cx, |page, cx| page.revalidate(window, cx));
+    }
+}
+
 /// Builds the view for `route`. Called once per route; the app keeps the
 /// view alive across navigation.
 pub fn build(route: Route, window: &mut Window, cx: &mut App) -> AnyView {

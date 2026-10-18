@@ -63,14 +63,18 @@ impl QuadrantApp {
         }
     }
 
-    pub fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
+    pub fn navigate(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
         if self.history.navigate(route) {
-            self.entrance = self.entrance.next();
-            cx.notify();
+            self.entered(window, cx);
         }
     }
 
-    fn step(&mut self, direction: NavigationDirection, cx: &mut Context<Self>) {
+    fn step(
+        &mut self,
+        direction: NavigationDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if direction == NavigationDirection::Back
             && let Some(page) = self.pages.get(&self.history.current()).cloned()
             && pages::back(&page, cx)
@@ -83,9 +87,18 @@ impl QuadrantApp {
             NavigationDirection::Forward => self.history.forward(),
         };
         if moved.is_some() {
-            self.entrance = self.entrance.next();
-            cx.notify();
+            self.entered(window, cx);
         }
+    }
+
+    /// Another page is open: it plays its entrance and, if it was open
+    /// before, re-reads its host data.
+    fn entered(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.entrance = self.entrance.next();
+        if let Some(page) = self.pages.get(&self.history.current()) {
+            pages::shown(page, window, cx);
+        }
+        cx.notify();
     }
 
     pub fn page(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) -> AnyView {
@@ -122,7 +135,9 @@ impl QuadrantApp {
                     .children(Route::ALL.map(|route| {
                         theme::rail_button(route, route == current, cx)
                             .tooltip(route.label())
-                            .on_click(cx.listener(move |this, _, _, cx| this.navigate(route, cx)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.navigate(route, window, cx)
+                            }))
                     })),
             )
             .child(div().w(px(4.)).h_full().bg(rgb(theme::CONTROL)))
@@ -212,11 +227,13 @@ impl Render for QuadrantApp {
             .font_family(theme::FONT_FAMILY)
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
-                cx.listener(|this, _, _, cx| this.step(NavigationDirection::Back, cx)),
+                cx.listener(|this, _, window, cx| this.step(NavigationDirection::Back, window, cx)),
             )
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Forward),
-                cx.listener(|this, _, _, cx| this.step(NavigationDirection::Forward, cx)),
+                cx.listener(|this, _, window, cx| {
+                    this.step(NavigationDirection::Forward, window, cx)
+                }),
             )
             .child(self.render_rail(cx))
             .child(

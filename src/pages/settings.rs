@@ -182,9 +182,7 @@ impl SettingsPage {
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.settings, Loadable::Ready(_)) {
-            self.settings = Loadable::Loading;
-        }
+        self.settings.reload();
         let task = Backend::global(cx).run(cx, |host| async move { Settings::read(&host) });
         cx.spawn(async move |this, cx| {
             let result = task.await;

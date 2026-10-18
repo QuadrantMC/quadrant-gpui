@@ -66,6 +66,12 @@ impl AccountPage {
         }
     }
 
+    /// Asks who is signed in again as the page is shown again.
+    pub fn revalidate(&mut self, cx: &mut Context<Self>) {
+        self.session
+            .update(cx, |session, cx| session.revalidate(cx));
+    }
+
     fn run(&mut self, op: Op, cx: &mut Context<Self>) {
         if self.running.is_some() {
             return;

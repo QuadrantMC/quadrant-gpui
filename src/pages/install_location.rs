@@ -109,10 +109,27 @@ impl LocationPicker {
         cx: &mut Context<Self>,
     ) {
         self.set_locations(Vec::new(), None, None, window, cx);
-        if !is_pack(mod_type) {
-            self.loading = Task::ready(());
-            return;
+        self.loading = Task::ready(());
+        if is_pack(mod_type) {
+            self.list_for_search(None, window, cx);
         }
+    }
+
+    /// Lists Search's locations again, keeping the one picked while it is
+    /// still there, unless a listing is on its way.
+    pub fn revalidate(&mut self, mod_type: ModType, window: &mut Window, cx: &mut Context<Self>) {
+        if is_pack(mod_type) && self.loading.is_ready() {
+            let picked = self.selected(cx);
+            self.list_for_search(picked, window, cx);
+        }
+    }
+
+    fn list_for_search(
+        &mut self,
+        picked: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let task =
             Backend::global(cx).run(cx, |host| async move { host.get_installed_content(false) });
         self.loading = cx.spawn_in(window, async move |this, cx| {
@@ -120,9 +137,10 @@ impl LocationPicker {
                 log::warn!("Listing content locations failed: {error:#}");
                 Vec::new()
             });
+            let picked = picked.filter(|id| locations.iter().any(|location| &location.id == id));
             let _ = this.update_in(cx, |this, window, cx| {
                 let automatic = Some(t("installedContentInstallAuto"));
-                this.set_locations(locations, automatic, None, window, cx)
+                this.set_locations(locations, automatic, picked, window, cx)
             });
         });
     }

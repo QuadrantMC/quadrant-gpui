@@ -177,7 +177,39 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     )?;
     capture(window, &dir.join("share-code.png"), cx).await?;
     capture_motion(window, dir, cx).await?;
-    capture_updater(window, dir, cx).await
+    capture_updater(window, dir, cx).await?;
+    capture_revalidate(window, dir, cx).await
+}
+
+/// Experimental features turned off and on again while the Apply page is
+/// away, as Settings does: showing the page again lists the Prism Launcher
+/// instances again, so the "Applied to" line leaves and comes back without
+/// a refresh.
+async fn capture_revalidate(
+    window: WindowHandle<Root>,
+    dir: &Path,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let shots = dir.join("revalidate");
+    std::fs::create_dir_all(&shots)?;
+    with_page::<ModpacksPage>(window, cx, Route::Modpacks, |page, window, cx| {
+        page.preview_cloud(Vec::new(), "", None, window, cx)
+    })?;
+    for (on, file) in [
+        (false, "apply-experimental-off.png"),
+        (true, "apply-experimental-on.png"),
+    ] {
+        show(window, cx, Route::Settings)?;
+        cx.update(|cx| {
+            Backend::global(cx).run(cx, move |host| async move {
+                host.set_config_value("experimentalFeatures", on.into())
+            })
+        })
+        .await?;
+        show(window, cx, Route::Modpacks)?;
+        capture(window, &shots.join(file), cx).await?;
+    }
+    Ok(())
 }
 
 /// Frames from the page transitions: a page entering as it opens, part way
@@ -519,7 +551,7 @@ fn app(root: &Root) -> Result<Entity<QuadrantApp>> {
 fn show(window: WindowHandle<Root>, cx: &mut AsyncApp, route: Route) -> Result<()> {
     window.update(cx, |root, window, cx| {
         app(root)?.update(cx, |app, cx| {
-            app.navigate(route, cx);
+            app.navigate(route, window, cx);
             // Built now rather than at the next draw, so its first load
             // runs while the capture waits.
             app.page(route, window, cx);
@@ -672,7 +704,7 @@ fn with_page<P: 'static>(
             .ok()
             .context("root is not the app")?;
         let page = app.update(cx, |app, cx| {
-            app.navigate(route, cx);
+            app.navigate(route, window, cx);
             app.page(route, window, cx)
         });
         let page = page.downcast::<P>().ok().context("not the expected page")?;
