@@ -1,0 +1,32 @@
+[package]
+name = "quadrant-gpui"
+version = "0.1.0"
+edition = "2024"
+description = "Native GPUI desktop frontend for Quadrant"
+license = "MPL-2.0"
+publish = false
+
+[features]
+default = []
+curseforge = ["quadrant-host/curseforge"]
+
+[dependencies]
+anyhow = "1"
+dirs = "6"
+gpui = { package = "gpui-pre", version = "=0.3.9" }
+gpui-component = "0.7.3"
+gpui-kit-assets = "0.7.3"
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit", "wayland", "x11"] }
+quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "5957faf11733163e5272cc756cc227905a6080ae" }
+quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "5957faf11733163e5272cc756cc227905a6080ae" }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+# Uncomment to build against a sibling checkout of the quadrant repo instead of
+# the pinned upstream revision.
+# [patch."https://github.com/QuadrantMC/quadrant"]
+# quadrant-core = { path = "../quadrant/src-tauri/crates/quadrant-core" }
+# quadrant-host = { path = "../quadrant/src-tauri/crates/quadrant-host" }
