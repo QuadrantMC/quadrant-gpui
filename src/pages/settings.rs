@@ -1,14 +1,14 @@
 //! The Settings page, after `SettingsPage` in the desktop app.
 //!
+//! The update channel shows while the self-updater runs (feature `updater`).
 //! Left out, because they configure the Tauri shell rather than Quadrant: the
-//! update channel (the Tauri updater), the UI scale (webview zoom) and native
-//! window decorations. The language picker is left out too: this app ships
-//! only the English strings.
+//! UI scale (webview zoom) and native window decorations. The language picker
+//! is left out too: this app ships only the English strings.
 
 use std::path::PathBuf;
 
 use gpui::{
-    Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    App, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
     div, prelude::FluentBuilder as _, rgb,
 };
@@ -276,7 +276,12 @@ impl SettingsPage {
             .child(div().ml_4().child(toggle.label()))
     }
 
-    fn render_settings(&self, settings: &Settings, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_settings(
+        &self,
+        settings: &Settings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let toggle = |this: &Self, toggle: Toggle, cx: &mut Context<Self>| {
             this.render_toggle(toggle, settings.get(toggle), cx)
                 .into_any_element()
@@ -293,6 +298,7 @@ impl SettingsPage {
                     ("runtimeVersion", RUNTIME.1),
                 ],
             )))
+            .children(update_channel(window, cx))
             .child(
                 panel(settings.mc_folder.clone()).mt_4().child(
                     h_flex()
@@ -449,6 +455,17 @@ impl SettingsPage {
     }
 }
 
+/// The self-updater's channel picker, while it runs.
+fn update_channel(window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement> {
+    #[cfg(feature = "updater")]
+    return crate::updater::channel_setting(window, cx);
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = (window, cx);
+        None
+    }
+}
+
 /// A `bg-slate-800` panel around a `bg-slate-700` line of text.
 fn panel(text: impl Into<SharedString>) -> gpui::Div {
     v_flex()
@@ -469,7 +486,7 @@ fn panel(text: impl Into<SharedString>) -> gpui::Div {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match &self.settings {
             Loadable::Idle | Loadable::Loading => h_flex()
                 .p_8()
@@ -482,7 +499,9 @@ impl Render for SettingsPage {
                 .text_color(rgb(theme::TEXT_MUTED))
                 .child(error.clone())
                 .into_any_element(),
-            Loadable::Ready(settings) => self.render_settings(settings, cx).into_any_element(),
+            Loadable::Ready(settings) => self
+                .render_settings(settings, window, cx)
+                .into_any_element(),
         };
         div()
             .id("settings")

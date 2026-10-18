@@ -4,12 +4,12 @@ use gpui::{AssetSource, SharedString};
 use gpui_component::IconNamed;
 
 macro_rules! md_icons {
-    ($($name:ident => $file:literal,)*) => {
+    ($($(#[$meta:meta])* $name:ident => $file:literal,)*) => {
         /// The Material Design icons the desktop app draws (react-icons/md),
         /// extracted into `assets/icons` by `scripts/extract-icons.mjs`.
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         pub enum MdIcon {
-            $($name,)*
+            $($(#[$meta])* $name,)*
         }
 
         impl IconNamed for MdIcon {
@@ -70,6 +70,9 @@ md_icons! {
     Cloud => "cloud",
     CloudDone => "cloud-done",
     PersonAdd => "person-add",
+    // Title bar
+    #[cfg_attr(not(feature = "updater"), expect(dead_code))]
+    InstallDesktop => "install-desktop",
 }
 
 /// The app's own icons, falling back to gpui-component's for its widgets.

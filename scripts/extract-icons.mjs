@@ -54,6 +54,8 @@ const icons = {
   cloud: "MdCloud",
   "cloud-done": "MdCloudDone",
   "person-add": "MdPersonAdd",
+  // Title bar
+  "install-desktop": "MdInstallDesktop",
 };
 
 const source = readFileSync(join(quadrant, "node_modules", "react-icons", "md", "index.mjs"), "utf8");

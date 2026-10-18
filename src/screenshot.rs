@@ -172,7 +172,26 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
             page.preview_cloud(sample_synced(), "1234567", None, window, cx)
         },
     )?;
-    capture(window, &dir.join("share-code.png"), cx).await
+    capture(window, &dir.join("share-code.png"), cx).await?;
+    capture_updater(window, dir, cx).await
+}
+
+/// The title bar's update button while downloading and once ready, over the
+/// settings page with its channel picker. No update server is asked.
+#[cfg(feature = "updater")]
+async fn capture_updater(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
+    use crate::updater::{Status, Updater};
+    show(window, cx, Route::Settings)?;
+    cx.update(|cx| Updater::preview(Status::Downloading(0.42), cx));
+    capture(window, &dir.join("update-downloading.png"), cx).await?;
+    let update = Updater::preview_update("26.10.1-stable");
+    cx.update(|cx| Updater::preview(Status::Ready(update), cx));
+    capture(window, &dir.join("update-ready.png"), cx).await
+}
+
+#[cfg(not(feature = "updater"))]
+async fn capture_updater(_: WindowHandle<Root>, _: &Path, _: &mut AsyncApp) -> Result<()> {
+    Ok(())
 }
 
 /// An account for the signed-in pictures. Nothing is asked of Quadrant ID.

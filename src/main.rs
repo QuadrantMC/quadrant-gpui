@@ -1,3 +1,10 @@
+// Installed builds open no console window. Screenshot and perf runs keep
+// it, since their callers read what they print.
+#![cfg_attr(
+    not(any(debug_assertions, feature = "screenshot", feature = "perf")),
+    windows_subsystem = "windows"
+)]
+
 mod app;
 mod assets;
 mod backend;
@@ -14,6 +21,8 @@ mod screenshot;
 mod session;
 mod snackbar;
 mod theme;
+#[cfg(feature = "updater")]
+mod updater;
 
 use std::{
     ffi::OsString,
@@ -47,6 +56,9 @@ struct Args {
     data_dir: Option<PathBuf>,
     mc_folder: Option<PathBuf>,
     mode: Mode,
+    /// `--noupdater`, as the desktop app takes it: the package manager
+    /// (AUR, Flatpak) owns updates.
+    no_updater: bool,
 }
 
 /// Who drives the window.
@@ -71,8 +83,13 @@ fn parse_args(
     let mut mc_folder = env("QUADRANT_GPUI_MC_FOLDER");
     let mut screenshot = None;
     let [mut perf, mut perf_out, mut perf_runs, mut perf_placement] = [None, None, None, None];
+    let mut no_updater = false;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
+        if arg == "--noupdater" {
+            no_updater = true;
+            continue;
+        }
         let slot = match arg.to_str() {
             Some("--data-dir") => &mut data_dir,
             Some("--mc-folder") => &mut mc_folder,
@@ -105,6 +122,7 @@ fn parse_args(
             )?),
             _ => bail!("--screenshot and --perf can't run together"),
         },
+        no_updater,
     };
     #[cfg(not(feature = "perf"))]
     let _ = (perf_out, perf_runs, perf_placement);
@@ -250,6 +268,10 @@ fn main() -> ExitCode {
             cx.set_global(backend);
             snackbar::install(cx);
             events::forward(cx);
+            #[cfg(feature = "updater")]
+            if args.mode == Mode::Interactive && !args.no_updater {
+                updater::Updater::start(cx);
+            }
             let window = match open_main_window(&args.mode, cx) {
                 Ok(window) => window,
                 Err(error) => {
@@ -293,6 +315,7 @@ mod tests {
                 data_dir: Some("flag-data".into()),
                 mc_folder: Some("mc".into()),
                 mode: Mode::Interactive,
+                no_updater: false,
             }
         );
     }
@@ -374,6 +397,14 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn noupdater_takes_no_value() {
+        let parsed = parse_args(args(&["--noupdater", "--data-dir", "data"]), |_| None).unwrap();
+        assert!(parsed.no_updater);
+        assert_eq!(parsed.data_dir, Some("data".into()));
+        assert!(!parse_args(args(&[]), |_| None).unwrap().no_updater);
     }
 
     #[test]

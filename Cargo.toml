@@ -17,12 +17,16 @@ curseforge = ["quadrant-host/curseforge"]
 screenshot = ["gpui/test-support", "gpui_platform/test-support"]
 # Adds `--perf <scenario|all>`, which drives the window and records its frame times.
 perf = ["dep:raw-window-handle", "dep:windows"]
+# The self-updater: checks Quadrant's update server for quadrant-native and
+# installs signed releases. Release CI turns it on; dev builds leave it off.
+updater = ["dep:base64", "dep:minisign-verify", "dep:serde"]
 # Perf mode plus gpui's profiler, which adds where each run's time went to its
 # JSON. For diagnosis only: the profiler's overhead skews the frame times.
 perf-profile = ["perf", "gpui/profiler"]
 
 [dependencies]
 anyhow = "1"
+base64 = { version = "0.22", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "6"
 getrandom = "0.3"
@@ -31,10 +35,12 @@ gpui-component = "0.7.3"
 gpui-kit-assets = "0.7.3"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit", "wayland"] }
 log = "0.4"
+minisign-verify = { version = "0.3", optional = true }
 quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "5957faf11733163e5272cc756cc227905a6080ae" }
 quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "5957faf11733163e5272cc756cc227905a6080ae" }
 # Already in the tree through quadrant-core; fetches remote images for `img(url)`.
 reqwest = { version = "0.13", default-features = false }
+serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 url = "2"
@@ -56,3 +62,4 @@ embed-resource = "3"
 # [patch."https://github.com/QuadrantMC/quadrant"]
 # quadrant-core = { path = "../quadrant/src-tauri/crates/quadrant-core" }
 # quadrant-host = { path = "../quadrant/src-tauri/crates/quadrant-host" }
+

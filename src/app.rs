@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use gpui::{
-    AnyView, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
+    AnyElement, AnyView, App, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
     NavigationDirection, ParentElement as _, Render, Styled as _, Window, WindowControlArea, div,
     prelude::FluentBuilder as _, px, rgb,
 };
@@ -29,6 +29,10 @@ pub struct QuadrantApp {
 
 impl QuadrantApp {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        #[cfg(feature = "updater")]
+        if let Some(updater) = crate::updater::Updater::global(cx) {
+            cx.observe(&updater, |_, _, cx| cx.notify()).detach();
+        }
         Self {
             history: History::new(Route::Modpacks),
             pages: HashMap::new(),
@@ -114,25 +118,43 @@ impl QuadrantApp {
             .child(theme::title_pill(self.history.current().label()))
             .child(
                 h_flex()
-                    .p_2()
-                    .gap_2()
-                    .rounded_full()
-                    .bg(rgb(theme::SURFACE))
-                    .child(theme::window_button(
-                        "notifications",
-                        Tone::Control,
-                        MdIcon::Notifications,
-                        cx,
-                    ))
-                    .child(
-                        theme::window_button("minimize", Tone::Control, MdIcon::Minimize, cx)
-                            .on_click(|_, window, _| window.minimize_window()),
-                    )
-                    .child(
-                        theme::window_button("close", Tone::Control, MdIcon::Close, cx)
-                            .on_click(|_, _, cx| cx.quit()),
-                    ),
+                    .gap_4()
+                    .children(update_button(cx))
+                    .child(self.render_window_controls(cx)),
             )
+    }
+
+    fn render_window_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .p_2()
+            .gap_2()
+            .rounded_full()
+            .bg(rgb(theme::SURFACE))
+            .child(theme::window_button(
+                "notifications",
+                Tone::Control,
+                MdIcon::Notifications,
+                cx,
+            ))
+            .child(
+                theme::window_button("minimize", Tone::Control, MdIcon::Minimize, cx)
+                    .on_click(|_, window, _| window.minimize_window()),
+            )
+            .child(
+                theme::window_button("close", Tone::Control, MdIcon::Close, cx)
+                    .on_click(|_, _, cx| cx.quit()),
+            )
+    }
+}
+
+/// The self-updater's button, while it has something to show.
+fn update_button(cx: &App) -> Option<AnyElement> {
+    #[cfg(feature = "updater")]
+    return crate::updater::title_bar_button(cx);
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = cx;
+        None
     }
 }
 
