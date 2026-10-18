@@ -201,10 +201,19 @@ fn start(args: &Args) -> Result<Backend> {
     Ok(Backend::new(host, runtime))
 }
 
+/// Debug builds only: `QUADRANT_NATIVE_BACKGROUND` opens the window without
+/// taking focus, for test runs that need a real window (the update
+/// end-to-end test drives it through UI Automation) but must not take over
+/// the user's keyboard.
+fn background_window() -> bool {
+    cfg!(debug_assertions) && std::env::var_os("QUADRANT_NATIVE_BACKGROUND").is_some()
+}
+
 /// Screenshot mode's window never shows or takes focus, so the user's clicks
 /// can't reach it.
 fn open_main_window(mode: &Mode, cx: &mut App) -> Result<WindowHandle<Root>> {
     let hidden = matches!(mode, Mode::Screenshot(_));
+    let background = background_window();
     let bounds = Bounds::centered(None, size(px(1150.), px(720.)), cx);
     #[cfg_attr(not(feature = "perf"), expect(unused_mut))]
     let mut options = WindowOptions {
@@ -219,7 +228,7 @@ fn open_main_window(mode: &Mode, cx: &mut App) -> Result<WindowHandle<Root>> {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(800.), px(500.))),
         show: !hidden,
-        focus: !hidden,
+        focus: !hidden && !background,
         app_id: Some(WAYLAND_APP_ID.into()),
         ..Default::default()
     };
@@ -280,7 +289,9 @@ fn main() -> ExitCode {
                     return;
                 }
             };
-            cx.activate(true);
+            if !background_window() {
+                cx.activate(true);
+            }
             #[cfg(not(any(feature = "screenshot", feature = "perf")))]
             let _ = window;
             match args.mode {

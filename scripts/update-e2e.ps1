@@ -135,10 +135,23 @@ try {
     $env:QUADRANT_GPUI_DATA_DIR = "$work\sandbox\data"
     $env:QUADRANT_GPUI_MC_FOLDER = "$work\sandbox\mc"
     $env:QUADRANT_NATIVE_UPDATE_ENDPOINT = "http://localhost:$Port"
+    # Windows without focus, which Hide moves off-screen, so the test
+    # doesn't take over the screen. The setup's relaunch inherits both.
+    $env:QUADRANT_NATIVE_BACKGROUND = "1"
     $exe = Join-Path $installDir "quadrant-native.exe"
 
+    Add-Type -Namespace E2E -Name Win32 -MemberDefinition @"
+[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+"@
+    function Hide($Process) {
+        WaitFor { $Process.Refresh(); $Process.MainWindowHandle -ne 0 } "the window"
+        # SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+        [E2E.Win32]::SetWindowPos($Process.MainWindowHandle, 0, -30000, -30000, 0, 0, 0x15) | Out-Null
+    }
     function Run([string]$Log) {
-        Start-Process $exe -RedirectStandardError "$work\$Log" -RedirectStandardOutput "$work\$Log.out" -PassThru
+        $process = Start-Process $exe -WindowStyle Hidden -RedirectStandardError "$work\$Log" -RedirectStandardOutput "$work\$Log.out" -PassThru
+        Hide $process
+        $process
     }
     function LogHas([string]$Log, [string]$Text) {
         (Test-Path "$work\$Log") -and (Get-Content -Raw "$work\$Log") -like "*$Text*"
@@ -162,6 +175,7 @@ try {
     $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     WaitFor { $app.HasExited } "the old version to quit"
     WaitFor { (FileVersion) -eq $newVersion -and (Installed) } "the new version to start"
+    Hide (Installed)
     Check ((FileVersion) -eq $newVersion) "installed exe is now $newVersion"
     Check ((Get-ItemProperty $uninstallKey).DisplayVersion -eq $newVersion) "uninstall entry says $newVersion"
     $relaunched = Installed
