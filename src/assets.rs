@@ -60,7 +60,9 @@ md_icons! {
     GridView => "grid-view",
     LastPage => "last-page",
     OpenInNew => "open-in-new",
+    PermIdentity => "perm-identity",
     Person => "person",
+    Update => "update",
     WbSunny => "wb-sunny",
 }
 

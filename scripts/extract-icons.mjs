@@ -44,7 +44,9 @@ const icons = {
   "grid-view": "MdGridView",
   "last-page": "MdLastPage",
   "open-in-new": "MdOpenInNew",
+  "perm-identity": "MdPermIdentity",
   person: "MdPerson",
+  update: "MdUpdate",
   "wb-sunny": "MdWbSunny",
 };
 
