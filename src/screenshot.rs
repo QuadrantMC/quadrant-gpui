@@ -47,6 +47,7 @@ pub fn run(window: WindowHandle<Root>, dir: PathBuf, cx: &mut App) {
 async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     capture(window, &dir.join("modpacks.png"), cx).await?;
+    capture_prism(window, dir, cx).await?;
 
     with_page(
         window,
@@ -255,6 +256,35 @@ async fn transition(
     capture_now(window, &dir.join(format!("{name}-mid.png")), cx)?;
     cx.background_executor().timer(SETTLE).await;
     capture_now(window, &dir.join(format!("{name}-rest.png")), cx)
+}
+
+/// The Prism Launcher menu over the sandbox's two instances. Alpha Pack's
+/// shows Modded linked and what applying would switch Survival to; Beta
+/// Pack's shows a version and a loader switch for both. Nothing is applied.
+async fn capture_prism(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
+    let shots = dir.join("prism");
+    std::fs::create_dir_all(&shots)?;
+    for (modpack, file) in [
+        ("Alpha Pack", "menu-linked.png"),
+        ("Beta Pack", "menu-switch.png"),
+    ] {
+        with_page(
+            window,
+            cx,
+            Route::Modpacks,
+            move |page: &mut ModpacksPage, _, cx| page.preview_prism_menu(Some(modpack), cx),
+        )?;
+        // The popover places itself from the trigger's bounds of the frame
+        // before.
+        draw(window, cx)?;
+        capture(window, &shots.join(file), cx).await?;
+    }
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, _, cx| page.preview_prism_menu(None, cx),
+    )
 }
 
 /// The title bar's update button while downloading and once ready, over the

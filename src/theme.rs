@@ -785,6 +785,35 @@ pub fn block_button(
         })
 }
 
+/// The floating panel of a Headless UI menu (`menuPanelClass`): a `p-2` bold
+/// slate-800 panel with the card radius, at most `max-w-80` wide.
+pub fn menu_panel<E: Styled>(panel: E) -> E {
+    panel
+        .p_2()
+        .max_w(gpui::rems(20.))
+        .rounded(radius_card())
+        .bg(rgb(SURFACE))
+        .font_weight(FontWeight::BOLD)
+}
+
+/// One entry of such a panel (`menuItemClass`): slate-700 under the pointer,
+/// half transparent while disabled. The layout inside is the caller's.
+pub fn menu_item(id: impl Into<ElementId>, disabled: bool) -> gpui::Stateful<Div> {
+    div()
+        .id(id)
+        .w_full()
+        .px_4()
+        .py_2()
+        .rounded(radius_card())
+        .map(|this| {
+            if disabled {
+                this.opacity(0.5)
+            } else {
+                this.cursor_pointer().hover(|style| style.bg(rgb(CONTROL)))
+            }
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

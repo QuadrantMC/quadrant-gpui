@@ -44,6 +44,7 @@ use crate::{
 
 mod cloud;
 mod details;
+mod prism;
 
 /// Loader choices in the order the desktop app offers them.
 const LOADERS: [ModLoader; 13] = [
@@ -444,12 +445,14 @@ pub struct ModpacksPage {
     install_progress: Option<f64>,
     /// A sync the cloud refused for being older, waiting for the dialog.
     sync_conflict: Option<LocalModpack>,
+    prism: Entity<prism::PrismMenus>,
     _search_changed: Subscription,
     /// The view the last change of view left, fading out under the new one
     /// until the crossfade ends, and the crossfade's number.
     leaving: Option<(View, usize)>,
     leaving_done: Task<()>,
     _session_changed: Subscription,
+    _prism_changed: Subscription,
 }
 
 impl ModpacksPage {
@@ -481,6 +484,9 @@ impl ModpacksPage {
                 cx.notify();
             }
         });
+        let prism = cx.new(prism::PrismMenus::new);
+        let prism_changed =
+            cx.subscribe(&prism, |this, _, _: &prism::Changed, cx| this.refresh(cx));
         let mut page = Self {
             view: View::List,
             modpacks: Loadable::Idle,
@@ -496,8 +502,10 @@ impl ModpacksPage {
             sync_conflict: None,
             leaving: None,
             leaving_done: Task::ready(()),
+            prism,
             _search_changed: search_changed,
             _session_changed: session_changed,
+            _prism_changed: prism_changed,
         };
         page.refresh(cx);
         page.load_versions(cx);
@@ -542,6 +550,7 @@ impl ModpacksPage {
         if !matches!(self.modpacks, Loadable::Ready(_)) {
             self.modpacks = Loadable::Loading;
         }
+        self.prism.update(cx, |prism, cx| prism.refresh(cx));
         let task = Backend::global(cx).run(cx, |host| async move { host.get_modpacks(true).await });
         self.listing = cx.spawn(async move |this, cx| {
             let result = task.await.map(sort_modpacks);
@@ -1177,12 +1186,14 @@ impl ModpacksPage {
                     }),
             )
             .child(div().text_color(rgb(theme::TEXT_MUTED)).child(line))
+            .children(self.prism.read(cx).applied_line(&modpack.name))
             .child(
                 h_flex()
                     .my_2()
                     .flex_wrap()
                     .gap_4()
                     .child(apply)
+                    .children(prism::PrismMenus::menu(&self.prism, &modpack.name, cx))
                     .child(share)
                     .children(sync)
                     .child(update)
