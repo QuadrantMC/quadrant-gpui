@@ -37,9 +37,12 @@ use stats::RunStats;
 const DURATION: Duration = Duration::from_secs(5);
 /// Time for a page's first host calls to answer before it is measured.
 const SETTLE: Duration = Duration::from_millis(1500);
-/// Scroll speed: about 2900 px/s at 143 Hz, a brisk wheel flick.
-const SCROLL_PER_FRAME: f32 = 20.;
-const HOVER_PER_FRAME: f32 = 24.;
+/// Scroll speed in px/s, a brisk wheel flick: 20 px a frame at 144 Hz. Motion
+/// follows the clock, not the frame count, so a slow build and a fast one
+/// pass the same content at the same moments.
+const SCROLL_SPEED: f32 = 2880.;
+/// Pointer speed in px/s for `hover`.
+const HOVER_SPEED: f32 = 3456.;
 /// The middle of the page rail's buttons.
 const RAIL_X: Pixels = px(30.);
 /// A search with a full page of results that have icons.
@@ -506,6 +509,7 @@ async fn drive(
         frame: 0,
         slot: None,
         slot_frame: 0,
+        scrolled: 0.,
         inactive_frames: 0,
         done,
     };
@@ -541,6 +545,8 @@ struct Driver {
     slot: Option<u32>,
     /// Frames since `slot` began.
     slot_frame: u32,
+    /// How far the scroll steps have moved the content so far.
+    scrolled: f32,
     inactive_frames: u32,
     done: tokio::sync::oneshot::Sender<u32>,
 }
@@ -584,12 +590,10 @@ impl Driver {
             | Scenario::ScrollSettings
             | Scenario::Search => {
                 // Down for the first half, back up for the second.
-                let down = elapsed < DURATION / 2;
-                let dy = if down {
-                    -SCROLL_PER_FRAME
-                } else {
-                    SCROLL_PER_FRAME
-                };
+                let t = elapsed.as_secs_f32();
+                let target = SCROLL_SPEED * t.min(DURATION.as_secs_f32() - t);
+                let dy = self.scrolled - target;
+                self.scrolled = target;
                 let event = ScrollWheelEvent {
                     position: pointer(self.scenario, viewport),
                     delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
@@ -640,7 +644,7 @@ impl Driver {
                     }
                 }
             }
-            Scenario::Hover => move_pointer(sweep(self.frame, viewport), window, cx),
+            Scenario::Hover => move_pointer(sweep(elapsed, viewport), window, cx),
             Scenario::Resize => window.resize(resized(elapsed)),
         }
     }
@@ -649,19 +653,16 @@ impl Driver {
 /// The pointer's path: down the rail's buttons, then across the window at
 /// one of six heights through the toolbar and the first cards' buttons,
 /// in turn. Only crossing something hoverable redraws.
-fn sweep(frame: u32, viewport: Size<Pixels>) -> gpui::Point<Pixels> {
-    let down = (f32::from(viewport.height) / HOVER_PER_FRAME).ceil() as u32;
-    let across = (f32::from(viewport.width) / HOVER_PER_FRAME).ceil() as u32;
-    let pass = frame / (down + across);
-    let step = frame % (down + across);
-    if step < down {
-        return point(RAIL_X, px(step as f32 * HOVER_PER_FRAME));
+fn sweep(elapsed: Duration, viewport: Size<Pixels>) -> gpui::Point<Pixels> {
+    let down = f32::from(viewport.height);
+    let across = f32::from(viewport.width);
+    let travelled = HOVER_SPEED * elapsed.as_secs_f32();
+    let pass = (travelled / (down + across)).floor();
+    let along = travelled - pass * (down + across);
+    if along < down {
+        return point(RAIL_X, px(along));
     }
-    let row = (pass % 6) as f32;
-    point(
-        px((step - down) as f32 * HOVER_PER_FRAME),
-        px(90. + 72. * row),
-    )
+    point(px(along - down), px(90. + 72. * (pass % 6.)))
 }
 
 /// A triangle wave between the restored size and about twice it, two
