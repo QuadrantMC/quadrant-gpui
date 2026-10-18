@@ -36,6 +36,7 @@ use crate::{
     events::{ModStage, watch_mod_progress},
     i18n::{describe, t, t_with},
     loadable::Loadable,
+    motion,
     pages::{
         mod_grid::{self, WidthProbe},
         mod_install::{InstallRequest, InstallViewEvent, ModInstallView, remember},
@@ -103,6 +104,9 @@ pub struct SearchPage {
     finished: Vec<String>,
     /// Install pages opened from a result, the newest on top.
     details: Vec<(Entity<ModInstallView>, Subscription)>,
+    /// Counts install pages opened and closed: each change plays the
+    /// arriving content's entrance, as a page switch does.
+    transitions: usize,
     target_picker: Picker<Option<String>>,
     version_picker: Picker<Option<String>>,
     sort_picker: Picker<Sort>,
@@ -188,6 +192,7 @@ impl SearchPage {
             installs: HashMap::new(),
             finished: Vec::new(),
             details: Vec::new(),
+            transitions: 0,
             target_picker,
             version_picker,
             sort_picker,
@@ -573,6 +578,7 @@ impl SearchPage {
             match event {
                 InstallViewEvent::Close => {
                     this.details.pop();
+                    this.transitions += 1;
                 }
                 InstallViewEvent::Open(item) => this.open_details((**item).clone(), window, cx),
                 InstallViewEvent::Installed => this.refresh_modpacks(window, cx),
@@ -580,6 +586,7 @@ impl SearchPage {
             cx.notify();
         });
         self.details.push((view, subscription));
+        self.transitions += 1;
         cx.notify();
     }
 
@@ -605,6 +612,7 @@ impl SearchPage {
     #[cfg(feature = "screenshot")]
     pub fn close_details(&mut self, cx: &mut Context<Self>) {
         self.details.clear();
+        self.transitions += 1;
         cx.notify();
     }
 
@@ -618,6 +626,7 @@ impl SearchPage {
     /// Closes the install page on top; false when none is open.
     pub fn back(&mut self, cx: &mut Context<Self>) -> bool {
         let closed = self.details.pop().is_some();
+        self.transitions += 1;
         cx.notify();
         closed
     }
@@ -1594,6 +1603,23 @@ fn empty_state(
 
 impl Render for SearchPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.render_content(cx);
+        if self.transitions == 0 {
+            return content;
+        }
+        // An install page enters with ModInstallPage's `initial {y: 24,
+        // opacity: 0}`, and the results enter the same way on the way back.
+        motion::entering(
+            div().size_full().relative().child(content),
+            ("search-entrance", self.transitions),
+            false,
+        )
+        .into_any_element()
+    }
+}
+
+impl SearchPage {
+    fn render_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if let Some(view) = self.details() {
             return div().size_full().child(view.clone()).into_any_element();
         }

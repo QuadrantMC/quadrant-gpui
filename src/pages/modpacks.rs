@@ -10,9 +10,10 @@ use quadrant_host::ErrorCode;
 
 use chrono::{Local, TimeZone as _};
 use gpui::{
-    App, AppContext as _, ClickEvent, ClipboardItem, Context, Entity, FontWeight, IntoElement,
-    ParentElement as _, Render, SharedString, Styled as _, Subscription, Task, Window, div,
-    prelude::FluentBuilder as _, px, rgb,
+    Animation, AnimationExt as _, AnyElement, App, AppContext as _, ClickEvent, ClipboardItem,
+    Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _, Subscription, Task, Window, div, prelude::FluentBuilder as _, px,
+    rgb,
 };
 use gpui_component::{
     IndexPath, WindowExt as _,
@@ -34,6 +35,7 @@ use crate::{
     i18n::{describe, t, t_with},
     loadable::Loadable,
     mod_catalog::ModCatalog,
+    motion,
     pages::modpack_view::{ModpackView, ModpackViewEvent, catalog_keys},
     session::Session,
     snackbar::{self, SnackbarKind},
@@ -443,6 +445,10 @@ pub struct ModpacksPage {
     /// A sync the cloud refused for being older, waiting for the dialog.
     sync_conflict: Option<LocalModpack>,
     _search_changed: Subscription,
+    /// The view the last change of view left, fading out under the new one
+    /// until the crossfade ends, and the crossfade's number.
+    leaving: Option<(View, usize)>,
+    leaving_done: Task<()>,
     _session_changed: Subscription,
 }
 
@@ -488,6 +494,8 @@ impl ModpacksPage {
             open_panels: Vec::new(),
             install_progress: None,
             sync_conflict: None,
+            leaving: None,
+            leaving_done: Task::ready(()),
             _search_changed: search_changed,
             _session_changed: session_changed,
         };
@@ -877,7 +885,18 @@ impl ModpacksPage {
             let keys = catalog_keys(&details::cards(modpack));
             ModCatalog::global(cx).update(cx, |catalog, cx| catalog.want(keys, cx));
         }
-        self.view = view;
+        let left = std::mem::replace(&mut self.view, view);
+        if std::mem::discriminant(&left) != std::mem::discriminant(&self.view) {
+            let crossfade = self.leaving.as_ref().map_or(0, |(_, id)| id + 1);
+            self.leaving = Some((left, crossfade));
+            self.leaving_done = cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(motion::CROSSFADE).await;
+                let _ = this.update(cx, |this, cx| {
+                    this.leaving = None;
+                    cx.notify();
+                });
+            });
+        }
         cx.notify();
     }
 
@@ -1268,8 +1287,42 @@ impl Render for ModpacksPage {
                 page.update(cx, |page, cx| page.confirm_sync_anyway(modpack, window, cx))
             });
         }
+        let current = self.render_view(&self.view, window, cx);
+        let Some((leaving, crossfade)) = &self.leaving else {
+            return current;
+        };
+        // The browser's view transition: the old view fades out as the new
+        // one fades in over it.
+        div()
+            .size_full()
+            .relative()
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .child(self.render_view(leaving, window, cx)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(rgb(theme::PAGE))
+                    .occlude()
+                    .child(current)
+                    .with_animation(
+                        ("crossfade", *crossfade),
+                        Animation::new(motion::CROSSFADE),
+                        |this, progress| this.opacity(motion::CROSSFADE_EASE.ease(progress)),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+
+impl ModpacksPage {
+    fn render_view(&self, view: &View, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let page = v_flex().size_full().overflow_y_scrollbar();
-        match &self.view {
+        match view {
             View::List => {
                 let banner = cloud::parse_share_code(&self.search.read(cx).value())
                     .map(|code| self.render_share_banner(code, cx).into_any_element());

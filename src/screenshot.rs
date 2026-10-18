@@ -174,7 +174,87 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
         },
     )?;
     capture(window, &dir.join("share-code.png"), cx).await?;
+    capture_motion(window, dir, cx).await?;
     capture_updater(window, dir, cx).await
+}
+
+/// Frames from the page transitions: a page entering as it opens, part way
+/// in, and at rest; a pack's Details crossfading in over the list and back;
+/// and a mod's install page entering from Search and Search entering again
+/// on the way back. The hidden window draws only when asked, so a
+/// transition starts at the first frame after the change; the "mid" frame
+/// is the one drawn right after it, a draw's time into the transition.
+async fn capture_motion(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
+    let shots = dir.join("motion");
+    std::fs::create_dir_all(&shots)?;
+    let rail = |route: Route| move |window, cx: &mut AsyncApp| show(window, cx, route);
+    transition(window, &shots, "settings-enter", rail(Route::Settings), cx).await?;
+    show(window, cx, Route::Modpacks)?;
+    capture(window, &shots.join("apply-rest.png"), cx).await?;
+    transition(
+        window,
+        &shots,
+        "settings-enter-again",
+        rail(Route::Settings),
+        cx,
+    )
+    .await?;
+
+    let details = |window, cx: &mut AsyncApp| {
+        with_page(
+            window,
+            cx,
+            Route::Modpacks,
+            |page: &mut ModpacksPage, window, cx| {
+                page.preview(Some("Alpha Pack"), false, window, cx)
+            },
+        )
+    };
+    let list = |window, cx: &mut AsyncApp| {
+        with_page(
+            window,
+            cx,
+            Route::Modpacks,
+            |page: &mut ModpacksPage, _, cx| {
+                page.back(cx);
+            },
+        )
+    };
+    show(window, cx, Route::Modpacks)?;
+    capture(window, &shots.join("apply-before-details.png"), cx).await?;
+    transition(window, &shots, "details-crossfade", details, cx).await?;
+    transition(window, &shots, "details-back", list, cx).await?;
+
+    let install = |window, cx: &mut AsyncApp| {
+        with_page::<SearchPage>(window, cx, Route::Search, |page, window, cx| {
+            page.open_first_result(window, cx)
+        })
+    };
+    let results = |window, cx: &mut AsyncApp| {
+        with_page::<SearchPage>(window, cx, Route::Search, |page, _, cx| {
+            page.back(cx);
+        })
+    };
+    show(window, cx, Route::Search)?;
+    capture(window, &shots.join("search-before-install.png"), cx).await?;
+    transition(window, &shots, "install-enter", install, cx).await?;
+    transition(window, &shots, "install-back", results, cx).await
+}
+
+/// Makes a change, draws its first frame, saves the next one, part way
+/// through the transition, then saves it at rest.
+async fn transition(
+    window: WindowHandle<Root>,
+    dir: &Path,
+    name: &str,
+    change: impl Fn(WindowHandle<Root>, &mut AsyncApp) -> Result<()>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    change(window, cx)?;
+    draw(window, cx)?;
+    capture_now(window, &dir.join(format!("{name}-mid.png")), cx)?;
+    cx.background_executor().timer(SETTLE).await;
+    capture_now(window, &dir.join(format!("{name}-rest.png")), cx)
 }
 
 /// The title bar's update button while downloading and once ready, over the
@@ -425,6 +505,18 @@ fn draw(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
 
 async fn capture(window: WindowHandle<Root>, path: &Path, cx: &mut AsyncApp) -> Result<()> {
     cx.background_executor().timer(SETTLE).await;
+    // An animation starts at the first frame that shows it, and this window
+    // draws only here: one frame starts it, the picture is taken at rest.
+    park_pointer(window, cx)?;
+    draw(window, cx)?;
+    cx.background_executor()
+        .timer(crate::motion::ENTER + Duration::from_millis(50))
+        .await;
+    capture_now(window, path, cx)
+}
+
+/// Draws and saves a frame at once, for a moment within an animation.
+fn capture_now(window: WindowHandle<Root>, path: &Path, cx: &mut AsyncApp) -> Result<()> {
     // The window is hidden, so the platform never asks it for frames; each
     // picture draws one itself. `update_window` leaves the root view free for
     // the draw to render.

@@ -9,7 +9,7 @@ use gpui_component::{h_flex, v_flex};
 
 use crate::{
     assets::MdIcon,
-    pages,
+    motion, pages,
     route::{History, Route},
     snackbar::{self, Snackbar},
     theme::{self, Tone},
@@ -25,6 +25,27 @@ pub struct QuadrantApp {
     /// window on platforms without a native drag region.
     pressed_title_bar: bool,
     snackbar: Entity<Snackbar>,
+    /// The open page's entrance, replayed whenever another page opens.
+    entrance: Entrance,
+}
+
+/// A page's entrance animation, after the desktop app's page `motion.div`s.
+#[derive(Clone, Copy)]
+struct Entrance {
+    /// Counts page changes, so each one plays afresh.
+    id: usize,
+    /// The window's first page, which the content container's own entrance
+    /// carries in too.
+    first: bool,
+}
+
+impl Entrance {
+    fn next(self) -> Self {
+        Self {
+            id: self.id + 1,
+            first: false,
+        }
+    }
 }
 
 impl QuadrantApp {
@@ -38,11 +59,13 @@ impl QuadrantApp {
             pages: HashMap::new(),
             pressed_title_bar: false,
             snackbar: snackbar::view(cx),
+            entrance: Entrance { id: 0, first: true },
         }
     }
 
     pub fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
         if self.history.navigate(route) {
+            self.entrance = self.entrance.next();
             cx.notify();
         }
     }
@@ -60,6 +83,7 @@ impl QuadrantApp {
             NavigationDirection::Forward => self.history.forward(),
         };
         if moved.is_some() {
+            self.entrance = self.entrance.next();
             cx.notify();
         }
     }
@@ -75,6 +99,15 @@ impl QuadrantApp {
     #[cfg(feature = "perf")]
     pub fn forget_pages(&mut self) {
         self.pages.clear();
+    }
+
+    /// The open page, entering from below as it fades in.
+    fn render_page(&self, page: AnyView) -> impl IntoElement {
+        motion::entering(
+            div().size_full().relative().child(page),
+            ("page-entrance", self.entrance.id),
+            self.entrance.first,
+        )
     }
 
     fn render_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -192,7 +225,12 @@ impl Render for QuadrantApp {
                     .h_full()
                     .overflow_hidden()
                     .child(self.render_title_bar(&page, cx))
-                    .child(div().flex_1().overflow_hidden().child(page)),
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(self.render_page(page)),
+                    ),
             )
             .child(self.snackbar.clone());
         #[cfg(feature = "perf")]
