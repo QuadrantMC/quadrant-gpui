@@ -115,6 +115,7 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
 
     capture_mod_pages(window, dir, cx).await?;
     capture_widths(window, dir, cx).await?;
+    capture_reach(window, dir, cx).await?;
     capture_install_to(window, dir, cx).await?;
 
     show(window, cx, Route::Settings)?;
@@ -1036,6 +1037,94 @@ async fn capture_widths(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncAp
         },
     )?;
     capture(window, &dir.join("details-back.png"), cx).await
+}
+
+/// The applied pack's mods on Current modpack and in its Details, scrolled
+/// to the end by one wheel event at a narrow, a middling and a wide window:
+/// the last row is reachable however few rows were drawn before. On the
+/// large sandbox the pack has 500 mods.
+async fn capture_reach(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
+    let shots = dir.join("reach");
+    std::fs::create_dir_all(&shots)?;
+    let restore = window.update(cx, |_, window, _| window.viewport_size())?;
+    for width in [900., 1400., 2200.] {
+        resize_to(window, cx, width, 1000.)?;
+        show(window, cx, Route::CurrentModpack)?;
+        settle_frames(window, cx).await?;
+        capture_now(
+            window,
+            &shots.join(format!("current-modpack-{width}-top.png")),
+            cx,
+        )?;
+        wheel_to_end(window, cx)?;
+        settle_frames(window, cx).await?;
+        capture_now(
+            window,
+            &shots.join(format!("current-modpack-{width}-end.png")),
+            cx,
+        )?;
+
+        with_page(
+            window,
+            cx,
+            Route::Modpacks,
+            |page: &mut ModpacksPage, window, cx| {
+                page.preview(Some("Alpha Pack"), false, window, cx)
+            },
+        )?;
+        settle_frames(window, cx).await?;
+        wheel_to_end(window, cx)?;
+        settle_frames(window, cx).await?;
+        capture_now(window, &shots.join(format!("details-{width}-end.png")), cx)?;
+        // Back up past every row to the header and its Cancel button.
+        wheel(window, cx, 1_000_000.)?;
+        settle_frames(window, cx).await?;
+        capture_now(window, &shots.join(format!("details-{width}-top.png")), cx)?;
+        with_page(
+            window,
+            cx,
+            Route::Modpacks,
+            |page: &mut ModpacksPage, window, cx| page.preview(None, false, window, cx),
+        )?;
+    }
+    resize_to(window, cx, restore.width.into(), restore.height.into())
+}
+
+/// Lets a change land and draws the frames the views ask for after it, as
+/// a visible window would: a list hinting its rows at a new width, a grid
+/// following it.
+async fn settle_frames(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
+    cx.background_executor()
+        .timer(crate::motion::CARD_ENTER + Duration::from_millis(100))
+        .await;
+    park_pointer(window, cx)?;
+    for _ in 0..3 {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_next_frame(cx);
+            window.refresh();
+            window.draw(cx).clear(cx);
+        })?;
+    }
+    Ok(())
+}
+
+/// One wheel event far past the end of the page's content.
+fn wheel_to_end(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
+    wheel(window, cx, -1_000_000.)
+}
+
+/// A wheel event `dy` pixels over the middle of the content.
+fn wheel(window: WindowHandle<Root>, cx: &mut AsyncApp, dy: f32) -> Result<()> {
+    cx.update_window(window.into(), |_, window, cx| {
+        let size = window.viewport_size();
+        let event = gpui::ScrollWheelEvent {
+            position: gpui::point(size.width / 2., size.height / 2.),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(dy))),
+            modifiers: gpui::Modifiers::default(),
+            touch_phase: gpui::TouchPhase::Moved,
+        };
+        window.dispatch_event(gpui::PlatformInput::ScrollWheel(event), cx);
+    })
 }
 
 fn close_dialogs(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
