@@ -27,6 +27,33 @@ pub struct QuadrantApp {
     snackbar: Entity<Snackbar>,
     /// The open page's entrance, replayed whenever another page opens.
     entrance: Entrance,
+    /// Where the title bar's parts were laid out in the last frame.
+    #[cfg(feature = "screenshot")]
+    title_bar_layout: std::rc::Rc<std::cell::RefCell<TitleBarLayout>>,
+}
+
+/// The title bar's parts as the last frame laid them out, for screenshot
+/// mode's check that the window controls take clicks and the rest drags.
+#[cfg(feature = "screenshot")]
+#[derive(Clone, Debug, Default)]
+pub struct TitleBarLayout {
+    /// The title pill and the cluster on the right.
+    pub bar: Vec<gpui::Bounds<gpui::Pixels>>,
+    /// The window controls' rounded container.
+    pub controls: Option<gpui::Bounds<gpui::Pixels>>,
+    /// The buttons in it: the bell, then minimize and close.
+    pub buttons: Vec<gpui::Bounds<gpui::Pixels>>,
+}
+
+/// Which of the title bar's rows `record_layout` notes.
+#[derive(Clone, Copy)]
+enum LayoutSlot {
+    /// The title pill and the cluster on the right.
+    Bar,
+    /// The update button, if any, and the window controls' container.
+    Cluster,
+    /// The window controls.
+    Controls,
 }
 
 /// A page's entrance animation, after the desktop app's page `motion.div`s.
@@ -60,7 +87,15 @@ impl QuadrantApp {
             pressed_title_bar: false,
             snackbar: snackbar::view(cx),
             entrance: Entrance { id: 0, first: true },
+            #[cfg(feature = "screenshot")]
+            title_bar_layout: Default::default(),
         }
+    }
+
+    /// The title bar's parts as the last frame laid them out.
+    #[cfg(feature = "screenshot")]
+    pub fn title_bar_layout(&self) -> TitleBarLayout {
+        self.title_bar_layout.borrow().clone()
     }
 
     pub fn navigate(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
@@ -114,6 +149,25 @@ impl QuadrantApp {
         self.pages.clear();
     }
 
+    /// Notes where `div`'s children were laid out, in screenshot builds.
+    #[cfg(feature = "screenshot")]
+    fn record_layout(&self, div: gpui::Div, slot: LayoutSlot) -> gpui::Div {
+        let layout = self.title_bar_layout.clone();
+        div.on_children_prepainted(move |bounds, _, _| {
+            let mut layout = layout.borrow_mut();
+            match slot {
+                LayoutSlot::Bar => layout.bar = bounds,
+                LayoutSlot::Cluster => layout.controls = bounds.last().copied(),
+                LayoutSlot::Controls => layout.buttons = bounds,
+            }
+        })
+    }
+
+    #[cfg(not(feature = "screenshot"))]
+    fn record_layout(&self, div: gpui::Div, _: LayoutSlot) -> gpui::Div {
+        div
+    }
+
     /// The open page, entering from below as it fades in.
     fn render_page(&self, page: AnyView) -> impl IntoElement {
         motion::entering(
@@ -145,7 +199,7 @@ impl QuadrantApp {
 
     fn render_title_bar(&self, page: &AnyView, cx: &mut Context<Self>) -> impl IntoElement {
         let title = pages::title(page, cx).unwrap_or_else(|| self.history.current().label());
-        h_flex()
+        self.record_layout(h_flex(), LayoutSlot::Bar)
             .id("title-bar")
             .w_full()
             .flex_shrink_0()
@@ -173,15 +227,15 @@ impl QuadrantApp {
             })
             .child(theme::title_pill(title))
             .child(
-                h_flex()
+                self.record_layout(h_flex(), LayoutSlot::Cluster)
                     .gap_4()
-                    .children(update_button(cx))
+                    .children(update_button(cx).map(|button| clickable(div().child(button))))
                     .child(self.render_window_controls(cx)),
             )
     }
 
     fn render_window_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
+        clickable(self.record_layout(h_flex(), LayoutSlot::Controls))
             .p_2()
             .gap_2()
             .rounded_full()
@@ -201,6 +255,19 @@ impl QuadrantApp {
                     .on_click(|_, _, cx| cx.quit()),
             )
     }
+}
+
+/// Takes `element` out of the title bar's drag region, so a press on it
+/// reaches its buttons instead of moving the window.
+///
+/// The whole title bar is a `WindowControlArea::Drag`, and gpui reports the
+/// window's control area from every hitbox under the pointer, not only the
+/// topmost. Over a button inside the bar, Windows would hear `HTCAPTION`
+/// and start a window move that swallows the click; on macOS and Wayland
+/// the bar's own press handler would start a move at the first jitter.
+/// Blocking the hitboxes behind `element` leaves the bar out of both.
+fn clickable(element: gpui::Div) -> gpui::Div {
+    element.occlude()
 }
 
 /// The self-updater's button, while it has something to show.

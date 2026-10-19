@@ -46,6 +46,12 @@ pub fn run(window: WindowHandle<Root>, dir: PathBuf, cx: &mut App) {
 
 async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
     std::fs::create_dir_all(dir)?;
+    capture_title_bar(window, dir, cx).await?;
+    // Debug aid: `QUADRANT_NATIVE_SCREENSHOT_ONLY=title-bar` stops after the
+    // title bar's pictures and checks.
+    if std::env::var_os("QUADRANT_NATIVE_SCREENSHOT_ONLY").is_some_and(|only| only == "title-bar") {
+        return Ok(());
+    }
     capture(window, &dir.join("modpacks.png"), cx).await?;
     capture_prism(window, dir, cx).await?;
 
@@ -179,6 +185,156 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     capture_motion(window, dir, cx).await?;
     capture_updater(window, dir, cx).await?;
     capture_revalidate(window, dir, cx).await
+}
+
+/// The title bar, and on Windows the check that its window controls take
+/// clicks while the rest of it drags the window.
+async fn capture_title_bar(
+    window: WindowHandle<Root>,
+    dir: &Path,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let shots = dir.join("title-bar");
+    std::fs::create_dir_all(&shots)?;
+    capture(window, &shots.join("bar.png"), cx).await?;
+    #[cfg(windows)]
+    hit_test::check(window, cx).await?;
+    Ok(())
+}
+
+/// Asks the real window procedure what each part of the title bar is, the
+/// way Windows asks it before every click: `WM_NCHITTEST`. `HTCAPTION`
+/// drags the window and swallows the click; `HTCLIENT` hands the click to
+/// the app. The window stays hidden; only messages to it are sent.
+#[cfg(windows)]
+mod hit_test {
+    use anyhow::{Context as _, Result, ensure};
+    use gpui::{AppContext as _, AsyncApp, Bounds, Pixels, Point, WindowHandle, point, px};
+    use gpui_component::Root;
+    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+    use windows::Win32::{
+        Foundation::{HWND, LPARAM, POINT, WPARAM},
+        Graphics::Gdi::ClientToScreen,
+        UI::WindowsAndMessaging::{HTCAPTION, HTCLIENT, SendMessageW, WM_NCHITTEST},
+    };
+
+    use super::{app, draw, park_pointer};
+    use crate::app::TitleBarLayout;
+
+    /// A point on the title bar, and whether pressing there should drag the
+    /// window, as `data-tauri-drag-region` makes it in the desktop app.
+    struct Probe {
+        name: String,
+        at: Point<Pixels>,
+        drags: bool,
+    }
+
+    fn probes(layout: &TitleBarLayout) -> Result<Vec<Probe>> {
+        let [pill, cluster] = layout.bar[..] else {
+            anyhow::bail!("the title bar has {} parts, not 2", layout.bar.len());
+        };
+        let controls = layout.controls.context("no window controls")?;
+        let middle = |bounds: Bounds<Pixels>| bounds.center();
+        let mut probes = vec![
+            Probe {
+                name: "title pill".into(),
+                at: middle(pill),
+                drags: true,
+            },
+            Probe {
+                name: "empty bar".into(),
+                at: point((pill.right() + cluster.left()) / 2., middle(pill).y),
+                drags: true,
+            },
+            Probe {
+                name: "controls' padding".into(),
+                at: point(controls.left() + px(4.), middle(controls).y),
+                drags: false,
+            },
+        ];
+        for (index, button) in layout.buttons.iter().enumerate() {
+            let name = ["bell", "minimize", "close"]
+                .get(index)
+                .map_or_else(|| format!("button {index}"), |name| name.to_string());
+            probes.push(Probe {
+                name,
+                at: middle(*button),
+                drags: false,
+            });
+        }
+        Ok(probes)
+    }
+
+    pub async fn check(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
+        draw(window, cx)?;
+        let (layout, hwnd, scale) = window.update(cx, |root, window, cx| {
+            let layout = app(root)?.read(cx).title_bar_layout();
+            let handle = window
+                .window_handle()
+                .map_err(|error| anyhow::anyhow!("no window handle: {error:?}"))?;
+            let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+                anyhow::bail!("not a Win32 window");
+            };
+            anyhow::Ok((
+                layout,
+                HWND(handle.hwnd.get() as *mut _),
+                window.scale_factor(),
+            ))
+        })??;
+        let mut wrong = Vec::new();
+        for probe in probes(&layout)? {
+            // gpui answers from the element under its last known pointer.
+            cx.update_window(window.into(), |_, window, cx| {
+                let event = gpui::MouseMoveEvent {
+                    position: probe.at,
+                    pressed_button: None,
+                    modifiers: gpui::Modifiers::default(),
+                };
+                window.dispatch_event(gpui::PlatformInput::MouseMove(event), cx);
+            })?;
+            // Sent outside any gpui update, so the window procedure can
+            // reach the window as it does for a real hit test.
+            let mut screen = POINT {
+                x: (f32::from(probe.at.x) * scale) as i32,
+                y: (f32::from(probe.at.y) * scale) as i32,
+            };
+            unsafe { ClientToScreen(hwnd, &mut screen).ok()? };
+            let lparam = (screen.x & 0xffff) | ((screen.y & 0xffff) << 16);
+            let code = unsafe {
+                SendMessageW(
+                    hwnd,
+                    WM_NCHITTEST,
+                    Some(WPARAM(0)),
+                    Some(LPARAM(lparam as isize)),
+                )
+            }
+            .0 as u32;
+            let expected = if probe.drags { HTCAPTION } else { HTCLIENT };
+            let name = |code| match code {
+                HTCAPTION => "HTCAPTION (drags)".to_string(),
+                HTCLIENT => "HTCLIENT (clicks)".to_string(),
+                other => format!("hit test code {other}"),
+            };
+            println!(
+                "title bar hit test: {} at ({:.0}, {:.0}) -> {}",
+                probe.name,
+                f32::from(probe.at.x),
+                f32::from(probe.at.y),
+                name(code)
+            );
+            if code != expected {
+                wrong.push(format!(
+                    "{} is {}, not {}",
+                    probe.name,
+                    name(code),
+                    name(expected)
+                ));
+            }
+        }
+        park_pointer(window, cx)?;
+        ensure!(wrong.is_empty(), "title bar hit test: {}", wrong.join("; "));
+        Ok(())
+    }
 }
 
 /// Experimental features turned off and on again while the Apply page is
