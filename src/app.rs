@@ -9,10 +9,11 @@ use gpui_component::{h_flex, v_flex};
 
 use crate::{
     assets::MdIcon,
-    motion, pages,
+    motion, notifications, pages,
     route::{History, Route},
     snackbar::{self, Snackbar},
     theme::{self, Tone},
+    tray,
 };
 
 /// The window's content: the page rail, the title bar and the open page.
@@ -90,6 +91,12 @@ impl QuadrantApp {
             #[cfg(feature = "screenshot")]
             title_bar_layout: Default::default(),
         }
+    }
+
+    /// The open page.
+    #[cfg(feature = "screenshot")]
+    pub fn current_route(&self) -> Route {
+        self.history.current()
     }
 
     /// The title bar's parts as the last frame laid them out.
@@ -238,22 +245,22 @@ impl QuadrantApp {
         clickable(self.record_layout(h_flex(), LayoutSlot::Controls))
             .p_2()
             .gap_2()
-            .rounded_full()
-            .bg(rgb(theme::SURFACE))
-            .child(theme::window_button(
-                "notifications",
-                Tone::Control,
-                MdIcon::Notifications,
-                cx,
-            ))
-            .child(
-                theme::window_button("minimize", Tone::Control, MdIcon::Minimize, cx)
-                    .on_click(|_, window, _| window.minimize_window()),
-            )
-            .child(
-                theme::window_button("close", Tone::Control, MdIcon::Close, cx)
-                    .on_click(|_, _, cx| cx.quit()),
-            )
+            .children(notifications::view(cx))
+            // macOS draws its own window buttons, as the desktop app's
+            // native decorations, on by default there, do; the bell then
+            // stands alone.
+            .when(!cfg!(target_os = "macos"), |this| {
+                this.rounded_full()
+                    .bg(rgb(theme::SURFACE))
+                    .child(
+                        theme::window_button("minimize", Tone::Control, MdIcon::Minimize, cx)
+                            .on_click(|_, window, _| window.minimize_window()),
+                    )
+                    .child(
+                        theme::window_button("close", Tone::Control, MdIcon::Close, cx)
+                            .on_click(|_, window, cx| tray::close(window, cx)),
+                    )
+            })
     }
 }
 

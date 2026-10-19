@@ -57,6 +57,7 @@ const icons = {
   // Prism Launcher menu
   "view-list": "MdViewList",
   // Title bar
+  "mark-email-read": "MdMarkEmailRead",
   "install-desktop": "MdInstallDesktop",
 };
 

@@ -5,7 +5,7 @@
 
 use std::{path::Path, path::PathBuf, time::Duration};
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, ensure};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Window, WindowHandle};
 use gpui_component::{Root, WindowExt as _};
 use quadrant_core::{
@@ -16,12 +16,16 @@ use quadrant_core::{
     models::ModLoader,
 };
 
-use quadrant_core::models::{InstalledMod, ModSource};
+use quadrant_core::{
+    account::id::Notification,
+    models::{Article, InstalledMod, ModSource},
+};
 
 use crate::{
     app::QuadrantApp,
     backend::Backend,
     i18n::{t, t_with},
+    notifications,
     pages::{
         AccountPage, ContentType, CurrentModpackPage, InstalledContentPage, ModpacksPage,
         SearchPage,
@@ -199,7 +203,200 @@ async fn capture_title_bar(
     capture(window, &shots.join("bar.png"), cx).await?;
     #[cfg(windows)]
     hit_test::check(window, cx).await?;
-    Ok(())
+
+    let notifications = cx
+        .update(|cx| notifications::view(cx))
+        .context("no notifications")?;
+    notifications.update(cx, |this, cx| {
+        this.preview(
+            &sample_snackbars(),
+            sample_notifications(),
+            sample_news(true),
+            cx,
+        )
+    });
+    capture(window, &shots.join("bell-unread.png"), cx).await?;
+    // A click on the bell, as the platform hands it to gpui once the hit
+    // test above has said it lands in the client area.
+    let bell = window
+        .update(cx, |root, _, cx| {
+            app(root).map(|app| app.read(cx).title_bar_layout().buttons.first().copied())
+        })??
+        .context("no bell")?;
+    click(window, bell.center(), cx)?;
+    ensure!(
+        notifications.read_with(cx, |this, _| this.is_open()),
+        "the bell's click didn't open the panel"
+    );
+    draw(window, cx)?;
+    capture_now(window, &shots.join("panel-enter-mid.png"), cx)?;
+    cx.background_executor().timer(SETTLE).await;
+    capture_now(window, &shots.join("panel-open.png"), cx)?;
+    // A press on the backdrop closes it, as one outside a headlessui
+    // popover does.
+    click(window, gpui::point(gpui::px(400.), gpui::px(400.)), cx)?;
+    ensure!(
+        !notifications.read_with(cx, |this, _| this.is_open()),
+        "a press outside didn't close the panel"
+    );
+    draw(window, cx)?;
+    capture_now(window, &shots.join("panel-exit-mid.png"), cx)?;
+    notifications.update(cx, |this, cx| {
+        this.preview(&[], Vec::new(), sample_news(true), cx)
+    });
+    capture(window, &shots.join("bell-news.png"), cx).await?;
+    notifications.update(cx, |this, cx| this.preview(&[], Vec::new(), Vec::new(), cx));
+
+    check_mouse_navigation(window, cx)
+}
+
+/// The mouse's back and forward buttons over the page and the rail.
+fn check_mouse_navigation(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
+    show(window, cx, Route::Settings)?;
+    draw(window, cx)?;
+    let route = |cx: &mut AsyncApp| {
+        window.update(cx, |root, _, cx| {
+            app(root).map(|app| app.read(cx).current_route())
+        })?
+    };
+    let size = window.update(cx, |_, window, _| window.viewport_size())?;
+    let page = gpui::point(size.width * 0.5, size.height * 0.7);
+    // Below the rail's buttons.
+    let rail = gpui::point(gpui::px(40.), size.height - gpui::px(20.));
+    for (at, place) in [(page, "the page"), (rail, "the rail")] {
+        press(
+            window,
+            at,
+            gpui::MouseButton::Navigate(gpui::NavigationDirection::Back),
+            cx,
+        )?;
+        ensure!(
+            route(cx)? == Route::Modpacks,
+            "mouse back over {place} didn't go back"
+        );
+        draw(window, cx)?;
+        press(
+            window,
+            at,
+            gpui::MouseButton::Navigate(gpui::NavigationDirection::Forward),
+            cx,
+        )?;
+        ensure!(
+            route(cx)? == Route::Settings,
+            "mouse forward over {place} didn't go forward"
+        );
+        draw(window, cx)?;
+        println!("mouse back and forward over {place}: ok");
+    }
+    show(window, cx, Route::Modpacks)
+}
+
+/// A left click at `at`, through gpui's input dispatch.
+fn click(
+    window: WindowHandle<Root>,
+    at: gpui::Point<gpui::Pixels>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    press(window, at, gpui::MouseButton::Left, cx)
+}
+
+/// `button` pressed and released at `at`, through gpui's input dispatch.
+fn press(
+    window: WindowHandle<Root>,
+    at: gpui::Point<gpui::Pixels>,
+    button: gpui::MouseButton,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    cx.update_window(window.into(), |_, window, cx| {
+        let modifiers = gpui::Modifiers::default();
+        window.dispatch_event(
+            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                position: at,
+                pressed_button: None,
+                modifiers,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                button,
+                position: at,
+                modifiers,
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                button,
+                position: at,
+                modifiers,
+                click_count: 1,
+            }),
+            cx,
+        );
+    })
+}
+
+/// What the snackbar showed before the panel opens: an error twice over, a
+/// success and a host event.
+fn sample_snackbars() -> [(SnackbarKind, &'static str); 4] {
+    [
+        (SnackbarKind::Error, "The modpack could not be found."),
+        (SnackbarKind::Success, "The modpack has been applied"),
+        (SnackbarKind::Error, "The modpack could not be found."),
+        (SnackbarKind::Neutral, "Every mod is up to date."),
+    ]
+}
+
+/// Account notifications as the host pushes them: a plain unread one, an
+/// invite, and one already read. Nothing is asked of Quadrant ID.
+fn sample_notifications() -> Vec<Notification> {
+    let notification = |id: &str, kind: &str, message: String, at: i64, read: bool| Notification {
+        notification_id: id.into(),
+        user_id: "preview".into(),
+        notification_type: Some(kind.into()),
+        resource_id: None,
+        message,
+        created_at: String::new(),
+        created_at_unix: at,
+        read,
+    };
+    vec![
+        notification(
+            "plain",
+            "generic",
+            serde_json::json!({ "simple_message": "Gamma Pack was shared with you" }).to_string(),
+            3,
+            false,
+        ),
+        notification(
+            "invite",
+            "invite_to_sync",
+            serde_json::json!({
+                "notification_type": "invite_to_sync",
+                "message": "You have been invited to collaborate on a modpack by sam",
+                "invite_id": "cloud-gamma",
+            })
+            .to_string(),
+            2,
+            false,
+        ),
+        notification("old", "generic", "Welcome to Quadrant Sync".into(), 1, true),
+    ]
+}
+
+/// A news post, new or not. The blog is not asked.
+fn sample_news(new: bool) -> Vec<Article> {
+    vec![Article {
+        title: "Quadrant 26.10".into(),
+        link: "https://blog.mrquantumoff.dev/".into(),
+        summary: "<p>Faster mod search, <b>Prism Launcher</b> instances &amp; more.</p>".into(),
+        date: chrono::DateTime::UNIX_EPOCH,
+        guid: "preview".into(),
+        new,
+    }]
 }
 
 /// Asks the real window procedure what each part of the title bar is, the

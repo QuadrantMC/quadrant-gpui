@@ -73,6 +73,7 @@ md_icons! {
     // Prism Launcher menu
     ViewList => "view-list",
     // Title bar
+    MarkEmailRead => "mark-email-read",
     #[cfg_attr(not(feature = "updater"), expect(dead_code))]
     InstallDesktop => "install-desktop",
 }

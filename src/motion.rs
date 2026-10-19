@@ -124,6 +124,29 @@ pub fn entering<E: IntoElement + Styled + 'static>(
     })
 }
 
+/// How far above its place the notifications panel starts and ends.
+pub const POPOVER_OFFSET: Pixels = px(16.);
+
+/// Where the notifications panel sits and how opaque it is `elapsed` into
+/// its entrance (`initial {y: -16, opacity: 0}` to `animate {y: 0,
+/// opacity: 1}`) or its exit (back to `y: -16, opacity: 0`), under the same
+/// defaults as a page.
+pub fn popover(elapsed: Duration, entering: bool) -> (Pixels, f32) {
+    let (left, faded) = if elapsed >= ENTER {
+        (0., 1.)
+    } else {
+        (
+            ENTER_SPRING.remaining(elapsed),
+            ENTER_FADE_EASE.at(elapsed, ENTER_FADE),
+        )
+    };
+    if entering {
+        (-POPOVER_OFFSET * left, faded)
+    } else {
+        (-POPOVER_OFFSET * (1. - left), 1. - faded)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +168,17 @@ mod tests {
         let deepest = (0..400).map(at).fold(f32::MAX, f32::min);
         assert!(deepest < -0.05 && deepest > -0.2, "{deepest}");
         assert!((ENTER_OFFSET * at(ENTER.as_millis() as u64)).abs() < px(0.5));
+    }
+
+    #[test]
+    fn the_popover_drops_in_and_lifts_out() {
+        let (offset, opacity) = popover(Duration::ZERO, true);
+        assert_eq!(offset, -POPOVER_OFFSET);
+        assert!(opacity < 1e-3);
+        assert_eq!(popover(ENTER, true), (px(0.), 1.));
+        let (offset, opacity) = popover(Duration::ZERO, false);
+        assert!(offset.abs() < px(1e-3) && (opacity - 1.).abs() < 1e-3);
+        assert_eq!(popover(ENTER, false), (-POPOVER_OFFSET, 0.));
     }
 
     #[test]

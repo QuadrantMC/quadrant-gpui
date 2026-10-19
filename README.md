@@ -4,7 +4,7 @@ Quadrant-Native is a native desktop frontend for [Quadrant](https://github.com/Q
 
 It drives the same backend as the Tauri app through the `quadrant-host` crate. It shares that app's data folder (`<data dir>/dev.mrquantumoff.mcmodpackmanager`), so settings and modpacks are the same in both. Everything else is its own: the binary `quadrant-native`, the bundle identifier `dev.mrquantumoff.quadrant-native`, the installers and the update feed, so it installs beside the Tauri app.
 
-Status: phase 2. Every page of the rail works: Apply (with Quadrant Share, and Quadrant Sync once signed in), Current modpack, Search and mod install, Installed content, Account and Settings. The title bar's notification bell does nothing yet.
+Status: phase 2. Every page of the rail works: Apply (with Quadrant Share, and Quadrant Sync once signed in), Current modpack, Search and mod install, Installed content, Account and Settings. The title bar's bell opens the desktop app's notifications panel, and closing the window hides it in the tray (see "Tray").
 
 ## Build and run
 
@@ -51,6 +51,12 @@ cargo run --features screenshot -- --data-dir "$env:TEMP\quadrant-gpui-sandbox\d
 ```
 
 Applying a modpack links `mods` to its folder. On Windows that needs Developer Mode or an elevated shell.
+
+Screenshot mode starts with the title bar: its pictures, the bell's panel, mouse back and forward, and on Windows a check that the window controls take clicks while the rest of the bar drags (it sends the hidden window `WM_NCHITTEST` and fails the run on a wrong answer). `QUADRANT_NATIVE_SCREENSHOT_ONLY=title-bar` stops there.
+
+## Tray
+
+As in the desktop app, closing the window keeps Quadrant-Native running in the tray, Quadrant ID's background work included; a left click on the icon brings the window back, and its menu has Show/Hide and Quit. Windows and macOS hide the window. On Linux the icon is a StatusNotifierItem (KDE, and GNOME with the AppIndicator extension); Wayland can't hide a window, so closing closes it and the tray opens a new one, with each page starting afresh. Where no tray is available, closing quits. Screenshot, perf and `QUADRANT_NATIVE_BACKGROUND` runs never add the icon.
 
 ## Updates
 

@@ -10,6 +10,7 @@ mod i18n;
 mod loadable;
 mod mod_catalog;
 mod motion;
+mod notifications;
 mod oauth;
 mod pages;
 #[cfg(feature = "perf")]
@@ -21,6 +22,7 @@ mod session;
 mod snackbar;
 mod text_cache;
 mod theme;
+mod tray;
 #[cfg(feature = "updater")]
 mod updater;
 
@@ -294,6 +296,7 @@ fn main() -> ExitCode {
             cx.set_http_client(backend.http_client());
             cx.set_global(backend);
             snackbar::install(cx);
+            notifications::install(args.mode == Mode::Interactive, cx);
             events::forward(cx);
             #[cfg(feature = "updater")]
             if args.mode == Mode::Interactive && !args.no_updater {
@@ -309,10 +312,14 @@ fn main() -> ExitCode {
             if !background_window() {
                 cx.activate(true);
             }
-            #[cfg(not(any(feature = "screenshot", feature = "perf")))]
-            let _ = window;
             match args.mode {
-                Mode::Interactive => {}
+                Mode::Interactive => {
+                    // Test runs with a real window keep out of the user's tray.
+                    if !background_window() {
+                        tray::install(window, |cx| open_main_window(&Mode::Interactive, cx), cx);
+                    }
+                    tray::watch_close(window, cx);
+                }
                 #[cfg(feature = "screenshot")]
                 Mode::Screenshot(dir) => screenshot::run(window, dir, cx),
                 #[cfg(not(feature = "screenshot"))]

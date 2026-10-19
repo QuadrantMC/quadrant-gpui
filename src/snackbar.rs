@@ -97,11 +97,13 @@ pub fn view(cx: &App) -> Entity<Snackbar> {
 }
 
 /// Shows `message`, replacing the current snackbar, and hides it after the
-/// timeout.
+/// timeout. The notifications panel remembers it.
 pub fn show(cx: &mut App, kind: SnackbarKind, message: impl Into<SharedString>) {
+    let message = message.into();
+    crate::notifications::record(cx, kind, message.clone());
     let snackbar = view(cx);
     let generation = snackbar.update(cx, |snackbar, cx| {
-        let generation = snackbar.replace(kind, message.into());
+        let generation = snackbar.replace(kind, message);
         cx.notify();
         generation
     });

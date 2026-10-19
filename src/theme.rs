@@ -49,8 +49,13 @@ const DESTRUCTIVE_HOVER: u32 = 0xb91c1c;
 const DANGER_HOVER: u32 = 0x991b1b;
 /// slate-950 at 30%, behind dialogs.
 const OVERLAY: u32 = 0x0206174d;
-/// slate-900 at 50%: a button on a colored surface, e.g. the snackbar's clear.
-const SCRIM: u32 = 0x0f172a80;
+/// slate-900 at 50%: a button on a colored surface, e.g. the snackbar's
+/// clear, and a repeat count on a remembered snackbar.
+pub const SCRIM: u32 = 0x0f172a80;
+/// slate-900 at 15%: behind the notifications panel.
+pub const BACKDROP: u32 = 0x0f172a26;
+/// red-600: the hovered bell while a notification is unread.
+const ALERT_HOVER: u32 = 0xdc2626;
 /// slate-900 at 70%
 const SCRIM_HOVER: u32 = 0x0f172ab3;
 
@@ -114,6 +119,8 @@ pub enum Tone {
     Control,
     /// Translucent slate-900 over a colored surface: the snackbar's clear.
     Scrim,
+    /// red-700 that turns red-600 on hover: the bell with unread notifications.
+    Alert,
 }
 
 impl Tone {
@@ -126,6 +133,7 @@ impl Tone {
             Self::Destructive => (SURFACE, DESTRUCTIVE_HOVER),
             Self::Danger => (DESTRUCTIVE_HOVER, DANGER_HOVER),
             Self::Control => (CONTROL, CONTROL_HOVER),
+            Self::Alert => (DESTRUCTIVE_HOVER, ALERT_HOVER),
             Self::Scrim => return (rgba(SCRIM), rgba(SCRIM_HOVER)),
         };
         (rgb(color), rgb(hover))
@@ -217,6 +225,28 @@ pub fn badge(label: impl Into<SharedString>, icon: MdIcon) -> impl IntoElement {
         .font_weight(FontWeight::EXTRA_BOLD)
         .child(Icon::new(icon).size_3())
         .child(label.into())
+}
+
+/// The desktop app's plain `Button` in the notifications panel: `p-2`
+/// extrabold, the label first and a small icon after it.
+pub fn panel_button(
+    id: impl Into<ElementId>,
+    tone: Tone,
+    label: impl Into<SharedString>,
+    icon: MdIcon,
+    cx: &App,
+) -> Button {
+    let (color, hover) = tone.colors();
+    filled(id, color, hover, cx)
+        .p_2()
+        .font_weight(FontWeight::EXTRA_BOLD)
+        .child(
+            gpui_component::h_flex()
+                .items_center()
+                .justify_center()
+                .child(label.into())
+                .child(Icon::new(icon).size_4().mx_2()),
+        )
 }
 
 /// A pill showing the open page's title, top left of the title bar.
