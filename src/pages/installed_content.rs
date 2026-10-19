@@ -115,13 +115,22 @@ pub fn section_title(mod_type: ModType) -> SharedString {
     }
 }
 
-fn names_in<'a>(locations: &'a [ContentLocation], section: &SectionRef) -> HashSet<&'a str> {
+/// The files listed in `section`, in their order.
+fn files_in<'a>(
+    locations: &'a [ContentLocation],
+    section: &SectionRef,
+) -> impl Iterator<Item = &'a ContentFile> {
     locations
         .iter()
         .filter(|location| location.id == section.location)
         .flat_map(|location| &location.sections)
         .filter(|each| each.mod_type == section.mod_type)
-        .flat_map(|each| each.files.iter().map(|file| file.file_name.as_str()))
+        .flat_map(|each| &each.files)
+}
+
+fn names_in<'a>(locations: &'a [ContentLocation], section: &SectionRef) -> HashSet<&'a str> {
+    files_in(locations, section)
+        .map(|file| file.file_name.as_str())
         .collect()
 }
 
@@ -491,6 +500,35 @@ impl InstalledContentPage {
         cx.notify();
     }
 
+    /// The files a copy from `control` takes: its file, its section's
+    /// files, or the selection.
+    fn copied_by(&self, control: &Control) -> Vec<SelectedFile> {
+        match control {
+            Control::File(section, name) => vec![SelectedFile {
+                section: section.clone(),
+                file_name: name.clone(),
+            }],
+            Control::CopyAll(section) => match &self.locations {
+                Loadable::Ready(locations) => files_in(locations, section)
+                    .map(|file| SelectedFile {
+                        section: section.clone(),
+                        file_name: file.file_name.clone(),
+                    })
+                    .collect(),
+                Loadable::Idle | Loadable::Loading | Loadable::Failed(_) => Vec::new(),
+            },
+            Control::Selection => self.selection.clone(),
+        }
+    }
+
+    /// Where a copy from `control` could go, worked out as its menu opens.
+    fn copy_targets_for(&self, control: &Control) -> Vec<CopyTarget> {
+        match &self.locations {
+            Loadable::Ready(locations) => copy_targets(locations, &self.copied_by(control)),
+            Loadable::Idle | Loadable::Loading | Loadable::Failed(_) => Vec::new(),
+        }
+    }
+
     /// A "copy to…" button with a menu of the targets. Without `label` it is
     /// the compact per-file control; with one it is a bulk control and each
     /// entry counts what would be copied there.
@@ -498,7 +536,6 @@ impl InstalledContentPage {
         &self,
         control: Control,
         label: Option<SharedString>,
-        targets: Vec<CopyTarget>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let busy = self.running.is_some();
@@ -518,7 +555,8 @@ impl InstalledContentPage {
         .loading(self.running.as_ref().map(Op::control) == Some(&control))
         .disabled(busy);
         let page = cx.entity();
-        button.dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |mut menu, _, _| {
+        button.dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |mut menu, _, cx| {
+            let targets = page.read(cx).copy_targets_for(&control);
             for target in &targets {
                 let count = target.count();
                 let text: SharedString = if bulk {
@@ -620,7 +658,6 @@ impl InstalledContentPage {
                 this.child(self.copy_menu(
                     Control::Selection,
                     Some(t("installedContentCopySelected")),
-                    copy_targets(locations, &self.selection),
                     cx,
                 ))
             })
@@ -684,16 +721,7 @@ impl InstalledContentPage {
                     ),
             )
             .when(locations.len() > 1, |this| {
-                let files = [SelectedFile {
-                    section: section.clone(),
-                    file_name: file.file_name.clone(),
-                }];
-                this.child(self.copy_menu(
-                    control.clone(),
-                    None,
-                    copy_targets(locations, &files),
-                    cx,
-                ))
+                this.child(self.copy_menu(control.clone(), None, cx))
             })
             .child(self.delete_button(
                 control,
@@ -717,14 +745,6 @@ impl InstalledContentPage {
     ) -> impl IntoElement {
         let open = self.open_sections.contains(&section);
         let title = section_title(section.mod_type);
-        let names: Vec<String> = files.iter().map(|file| file.file_name.clone()).collect();
-        let all: Vec<SelectedFile> = names
-            .iter()
-            .map(|name| SelectedFile {
-                section: section.clone(),
-                file_name: name.clone(),
-            })
-            .collect();
         let header = h_flex()
             .flex_wrap()
             .items_center()
@@ -759,7 +779,6 @@ impl InstalledContentPage {
                 this.child(self.copy_menu(
                     Control::CopyAll(section.clone()),
                     Some(t("installedContentCopyAll")),
-                    copy_targets(locations, &all),
                     cx,
                 ))
             })
@@ -809,6 +828,12 @@ impl InstalledContentPage {
                             .on_click(cx.listener({
                                 let section = section.clone();
                                 move |this, _, _, cx| {
+                                    let Loadable::Ready(locations) = &this.locations else {
+                                        return;
+                                    };
+                                    let names: Vec<String> = files_in(locations, &section)
+                                        .map(|file| file.file_name.clone())
+                                        .collect();
                                     select_all_in(&mut this.selection, &section, &names);
                                     cx.notify();
                                 }
@@ -985,29 +1010,26 @@ impl Render for InstalledContentPage {
                 .child(error.clone())
                 .into_any_element(),
             Loadable::Ready(locations) if locations.is_empty() => div().into_any_element(),
-            Loadable::Ready(locations) => {
-                let locations = locations.clone();
-                v_flex()
-                    .when(!self.selection.is_empty(), |this| {
-                        this.child(self.render_selection_bar(&locations, cx))
-                    })
-                    .child(
-                        v_flex()
-                            .mx_6()
-                            .my_4()
-                            .rounded(theme::radius_card())
-                            .bg(rgb(theme::SURFACE))
-                            .children(
-                                (0..locations.len())
-                                    .map(|index| {
-                                        self.render_location(&locations, index, cx)
-                                            .into_any_element()
-                                    })
-                                    .collect::<Vec<_>>(),
-                            ),
-                    )
-                    .into_any_element()
-            }
+            Loadable::Ready(locations) => v_flex()
+                .when(!self.selection.is_empty(), |this| {
+                    this.child(self.render_selection_bar(locations, cx))
+                })
+                .child(
+                    v_flex()
+                        .mx_6()
+                        .my_4()
+                        .rounded(theme::radius_card())
+                        .bg(rgb(theme::SURFACE))
+                        .children(
+                            (0..locations.len())
+                                .map(|index| {
+                                    self.render_location(locations, index, cx)
+                                        .into_any_element()
+                                })
+                                .collect::<Vec<_>>(),
+                        ),
+                )
+                .into_any_element(),
         };
         v_flex()
             .id("installed-content")
