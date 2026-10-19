@@ -5,9 +5,9 @@
 //! keyframes; and opening or leaving a pack's mods is a browser view
 //! transition, a 0.25 s crossfade.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use gpui::{Animation, AnimationExt as _, ElementId, IntoElement, Pixels, Styled, px};
+use gpui::{Animation, AnimationExt as _, ElementId, IntoElement, Pixels, Styled, Window, px};
 
 /// How far below its place a page starts.
 pub const ENTER_OFFSET: Pixels = px(24.);
@@ -34,6 +34,20 @@ pub const ENTER: Duration = Duration::from_millis(350);
 /// The browser's default view transition: a 0.25 s crossfade, `ease`.
 pub const CROSSFADE: Duration = Duration::from_millis(250);
 pub const CROSSFADE_EASE: CubicBezier = CubicBezier(0.25, 0.1, 0.25, 1.);
+
+/// `Mod.tsx`'s card entrance, `initial {opacity: 0, y: 24}` under
+/// `{type: "spring", stiffness: 100, duration: 0.3}`, for both values. A
+/// stiffness makes Motion ignore the duration, and its default damping is 10:
+/// an underdamped spring that passes its place by about a sixth of the way.
+pub const CARD_SPRING: Spring = Spring {
+    stiffness: 100.,
+    damping: 10.,
+    mass: 1.,
+};
+
+/// When Motion calls the card's spring at rest: opacity within 0.005 of 1,
+/// `y` within half a pixel well before.
+pub const CARD_ENTER: Duration = Duration::from_millis(1100);
 
 /// A CSS `cubic-bezier(x1, y1, x2, y2)` timing function.
 #[derive(Clone, Copy, Debug)]
@@ -110,6 +124,64 @@ pub fn enter(elapsed: Duration, first: bool) -> (Pixels, f32) {
     (offset, opacity)
 }
 
+/// Where an entering mod card sits and how opaque it is `elapsed` after it
+/// mounted. Opacity overshoots with `y` and is clamped, as a browser does.
+pub fn card_enter(elapsed: Duration) -> (Pixels, f32) {
+    if elapsed >= CARD_ENTER {
+        return (px(0.), 1.);
+    }
+    let remaining = CARD_SPRING.remaining(elapsed);
+    (ENTER_OFFSET * remaining, (1. - remaining).clamp(0., 1.))
+}
+
+/// The entrance of a list's mod cards: all of them together from the frame
+/// the list appeared or got new results. A card drawn later, scrolled into
+/// view, joins at the same point rather than starting over, as every card
+/// of the desktop app's unvirtualized grids is mounted at once.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum CardEntrance {
+    /// At rest.
+    #[default]
+    Rest,
+    /// Starts at the next frame.
+    Pending,
+    Since(Instant),
+}
+
+impl CardEntrance {
+    /// Plays the entrance again from the next frame.
+    pub fn restart(&mut self) {
+        *self = CardEntrance::Pending;
+    }
+
+    /// The cards' offset and opacity this frame, `None` at rest. Asks for
+    /// another frame of the current view while they move.
+    pub fn frame(&mut self, window: &mut Window) -> Option<(Pixels, f32)> {
+        let elapsed = match *self {
+            CardEntrance::Rest => return None,
+            CardEntrance::Pending => {
+                *self = CardEntrance::Since(Instant::now());
+                Duration::ZERO
+            }
+            CardEntrance::Since(started) => started.elapsed(),
+        };
+        if elapsed >= CARD_ENTER {
+            *self = CardEntrance::Rest;
+            return None;
+        }
+        window.request_animation_frame();
+        Some(card_enter(elapsed))
+    }
+}
+
+/// `card` where an entrance's [`CardEntrance::frame`] puts it.
+pub fn card_at<E: Styled>(card: E, frame: Option<(Pixels, f32)>) -> E {
+    match frame {
+        Some((offset, opacity)) => card.relative().top(offset).opacity(opacity),
+        None => card,
+    }
+}
+
 /// `element` entering as a page does: from [`ENTER_OFFSET`] below and
 /// transparent. A new `id` plays it again. `element` must be positioned
 /// relative, so the offset moves it without moving its neighbours.
@@ -179,6 +251,22 @@ mod tests {
         let (offset, opacity) = popover(Duration::ZERO, false);
         assert!(offset.abs() < px(1e-3) && (opacity - 1.).abs() < 1e-3);
         assert_eq!(popover(ENTER, false), (-POPOVER_OFFSET, 0.));
+    }
+
+    #[test]
+    fn a_card_springs_up_past_its_place_and_settles() {
+        let (offset, opacity) = card_enter(Duration::ZERO);
+        assert_eq!((offset, opacity), (ENTER_OFFSET, 0.));
+        // Fully opaque at the spring's first pass, about 0.24s in.
+        assert!(card_enter(Duration::from_millis(200)).1 < 1.);
+        assert_eq!(card_enter(Duration::from_millis(260)).1, 1.);
+        let deepest = (0..1100)
+            .map(|ms| f32::from(card_enter(Duration::from_millis(ms)).0))
+            .fold(f32::MAX, f32::min);
+        assert!(deepest < -3. && deepest > -5., "{deepest}");
+        let near_rest = CARD_SPRING.remaining(CARD_ENTER - Duration::from_millis(10));
+        assert!(near_rest.abs() < 0.005, "{near_rest}");
+        assert_eq!(card_enter(CARD_ENTER), (px(0.), 1.));
     }
 
     #[test]

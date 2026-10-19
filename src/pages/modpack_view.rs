@@ -29,6 +29,7 @@ use crate::{
     i18n::{describe, t, t_with},
     loadable::Loadable,
     mod_catalog::{ModCatalog, ModKey},
+    motion::{self, CardEntrance},
     pages::{
         mod_grid::{self, CardSlot, GridList, Item, RowHeights, Rows, Shape},
         mod_ui::{CardPress, CardStatus, OnCardPress, Primary, card_key, mod_card},
@@ -328,6 +329,9 @@ pub struct ModpackView {
     /// The cards the grid shows this frame, as indices into the mode's
     /// cards.
     shown: Vec<usize>,
+    /// The cards' `Mod.tsx` entrance, and where it puts them this frame.
+    entrance: CardEntrance,
+    card_frame: Option<(Pixels, f32)>,
     catalog: Entity<ModCatalog>,
     _catalog_changed: Subscription,
     _progress: Task<()>,
@@ -364,6 +368,8 @@ impl ModpackView {
             list: GridList::new(ROW_HINT),
             row_heights: RowHeights::default(),
             shown: Vec::new(),
+            entrance: CardEntrance::Pending,
+            card_frame: None,
             catalog,
             _catalog_changed: catalog_changed,
             _progress: progress,
@@ -381,6 +387,13 @@ impl ModpackView {
         cx.notify();
     }
 
+    /// Plays the cards' entrance again, as the desktop app's cards mount
+    /// again each time their page is shown.
+    pub fn replay_entrance(&mut self, cx: &mut Context<Self>) {
+        self.entrance.restart();
+        cx.notify();
+    }
+
     /// Shows the re-read manifest of the same modpack.
     pub fn set_modpack(&mut self, modpack: LocalModpack, cx: &mut Context<Self>) {
         self.cards = installed_cards(&modpack);
@@ -395,6 +408,7 @@ impl ModpackView {
     pub fn toggle_updates(&mut self, cx: &mut Context<Self>) {
         if self.mode == Mode::Updates {
             self.mode = Mode::Mods;
+            self.entrance.restart();
             cx.notify();
             return;
         }
@@ -417,6 +431,7 @@ impl ModpackView {
                     snackbar::show(cx, SnackbarKind::Neutral, "Every mod is up to date.");
                 }
                 this.updates = Loadable::from_result(result);
+                this.entrance.restart();
                 cx.notify();
             });
         });
@@ -426,6 +441,7 @@ impl ModpackView {
     pub fn toggle_identify(&mut self, cx: &mut Context<Self>) {
         if self.mode == Mode::Identify {
             self.mode = Mode::Mods;
+            self.entrance.restart();
             cx.notify();
             return;
         }
@@ -440,6 +456,7 @@ impl ModpackView {
                     this.mode = Mode::Mods;
                 }
                 this.unknowns = Loadable::from_result(result);
+                this.entrance.restart();
                 cx.notify();
             });
         });
@@ -550,7 +567,11 @@ impl ModpackView {
     ) -> AnyElement {
         let on_press: OnCardPress<Self> =
             Rc::new(|this, press, item, _, cx| this.press(press, item, cx));
-        mod_card(index, item, *status, slot, on_press, cx).into_any_element()
+        motion::card_at(
+            mod_card(index, item, *status, slot, on_press, cx),
+            self.card_frame,
+        )
+        .into_any_element()
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -740,6 +761,7 @@ impl Render for ModpackView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let width = window.viewport_size().width;
         self.row_heights.next_frame(width);
+        self.card_frame = self.entrance.frame(window);
         let grid = self.grid_cards().map(|cards| {
             let columns = match self.mode {
                 Mode::Updates => mod_grid::update_columns(width),

@@ -16,6 +16,7 @@ use super::{ModpacksPage, View};
 use crate::{
     i18n::t,
     mod_catalog::ModCatalog,
+    motion,
     pages::{
         mod_grid::{self, Rows},
         mod_ui::{CardStatus, OnCardPress, mod_card},
@@ -42,6 +43,7 @@ pub fn render(
     summary: SharedString,
     action: AnyElement,
     cards: &[Mod],
+    card_frame: Option<(gpui::Pixels, f32)>,
     window: &Window,
     cx: &mut Context<ModpacksPage>,
 ) -> impl IntoElement {
@@ -58,13 +60,16 @@ pub fn render(
                 .map(|index| {
                     let card = &cards[index];
                     let card = with_record(card, catalog.read(cx).get(&card.source, &card.id));
-                    mod_card(
-                        index,
-                        &card,
-                        CardStatus::default(),
-                        None,
-                        on_press.clone(),
-                        cx,
+                    motion::card_at(
+                        mod_card(
+                            index,
+                            &card,
+                            CardStatus::default(),
+                            None,
+                            on_press.clone(),
+                            cx,
+                        ),
+                        card_frame,
                     )
                     .into_any_element()
                 })

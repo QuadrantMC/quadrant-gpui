@@ -77,6 +77,9 @@ impl CurrentModpackPage {
 
     /// Re-reads the applied modpack as the page is shown again.
     pub fn revalidate(&mut self, cx: &mut Context<Self>) {
+        if let Some((view, _)) = &self.view {
+            view.update(cx, |view, cx| view.replay_entrance(cx));
+        }
         if self.loading.ask() {
             self.refresh(cx);
         }

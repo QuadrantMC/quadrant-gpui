@@ -27,6 +27,7 @@ use crate::{
     events::{ModProgress, ModStage, watch_mod_progress},
     i18n::{describe, t, t_with},
     loadable::Loadable,
+    motion::{self, CardEntrance},
     pages::{
         install_location::{self, LocationPicker, initial_location, is_pack},
         mod_grid,
@@ -209,6 +210,10 @@ pub struct ModInstallView {
     install_progress: i32,
     /// Its own, so each install page starts at the top.
     scroll: ScrollHandle,
+    /// The dependencies' `Mod.tsx` entrance, and where it puts them this
+    /// frame.
+    entrance: CardEntrance,
+    card_frame: Option<(Pixels, f32)>,
     _progress: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -271,6 +276,8 @@ impl ModInstallView {
             download_progress: 0,
             install_progress: 0,
             scroll: ScrollHandle::new(),
+            entrance: CardEntrance::Rest,
+            card_frame: None,
             _progress: progress,
             _subscriptions: subscriptions,
         };
@@ -469,6 +476,7 @@ impl ModInstallView {
                     Ok((owners, deps)) => {
                         this.owners = Loadable::Ready(owners);
                         this.deps = Loadable::Ready(deps);
+                        this.entrance.restart();
                     }
                     Err(error) => {
                         let error = describe(error);
@@ -725,7 +733,11 @@ impl ModInstallView {
                     installed: installed_in(dep, selected.as_ref()).is_some(),
                     ..CardStatus::default()
                 };
-                mod_card(index, dep, status, None, on_press.clone(), cx).into_any_element()
+                motion::card_at(
+                    mod_card(index, dep, status, None, on_press.clone(), cx),
+                    self.card_frame,
+                )
+                .into_any_element()
             })
             .collect();
         Some(
@@ -902,6 +914,7 @@ fn count_badge(count: usize) -> impl IntoElement {
 impl Render for ModInstallView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_width = window.viewport_size().width;
+        self.card_frame = self.entrance.frame(window);
         let wide = mod_grid::at_least(window_width, 64.);
         v_flex()
             .id("mod-install")

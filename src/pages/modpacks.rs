@@ -457,6 +457,10 @@ pub struct ModpacksPage {
     /// until the crossfade ends, and the crossfade's number.
     leaving: Option<(View, usize)>,
     leaving_done: Task<()>,
+    /// A shared pack's cards' `Mod.tsx` entrance, and where it puts them
+    /// this frame.
+    shared_entrance: motion::CardEntrance,
+    shared_frame: Option<(gpui::Pixels, f32)>,
     _session_changed: Subscription,
     _prism_changed: Subscription,
     /// The list view, virtualized: only the cards on screen are drawn.
@@ -529,6 +533,8 @@ impl ModpacksPage {
             sync_conflict: None,
             leaving: None,
             leaving_done: Task::ready(()),
+            shared_entrance: motion::CardEntrance::Rest,
+            shared_frame: None,
             prism,
             _search_changed: search_changed,
             _session_changed: session_changed,
@@ -935,6 +941,7 @@ impl ModpacksPage {
         if let View::Shared { modpack, .. } = &view {
             let keys = catalog_keys(&details::cards(modpack));
             ModCatalog::global(cx).update(cx, |catalog, cx| catalog.want(keys, cx));
+            self.shared_entrance.restart();
         }
         let left = std::mem::replace(&mut self.view, view);
         if std::mem::discriminant(&left) != std::mem::discriminant(&self.view) {
@@ -1426,6 +1433,10 @@ fn is_error(error: &anyhow::Error, code: ErrorCode) -> bool {
 
 impl Render for ModpacksPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.shared_frame = match self.view {
+            View::Shared { .. } => self.shared_entrance.frame(window),
+            View::List | View::Details { .. } => None,
+        };
         if let Some(modpack) = self.sync_conflict.take() {
             let page = cx.entity();
             window.defer(cx, move |window, cx| {
@@ -1501,8 +1512,15 @@ impl ModpacksPage {
                     )
                     .into_any_element();
                 let cards = details::cards(modpack);
-                page.child(details::render(header.into(), download, &cards, window, cx))
-                    .into_any_element()
+                page.child(details::render(
+                    header.into(),
+                    download,
+                    &cards,
+                    self.shared_frame,
+                    window,
+                    cx,
+                ))
+                .into_any_element()
             }
         }
     }

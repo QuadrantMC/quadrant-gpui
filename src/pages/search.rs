@@ -36,7 +36,7 @@ use crate::{
     events::{ModStage, watch_mod_progress},
     i18n::{describe, t, t_with},
     loadable::{Loadable, Reload},
-    motion,
+    motion::{self, CardEntrance},
     pages::{
         install_location::LocationPicker,
         mod_grid::{self, CardSlot, RowHeights, WidthProbe},
@@ -119,6 +119,10 @@ pub struct SearchPage {
     results_width: WidthProbe,
     /// The result grid's row heights, so an unchanged grid lays out once.
     row_heights: RowHeights,
+    /// The result cards' `Mod.tsx` entrance, and where it puts them this
+    /// frame.
+    entrance: CardEntrance,
+    card_frame: Option<(Pixels, f32)>,
     filters_scroll: ScrollHandle,
     /// The newest search; replacing it drops a stale one's answer.
     searching: Task<()>,
@@ -208,6 +212,8 @@ impl SearchPage {
             results_scroll: ScrollHandle::new(),
             results_width: WidthProbe::default(),
             row_heights: RowHeights::default(),
+            entrance: CardEntrance::Rest,
+            card_frame: None,
             filters_scroll: ScrollHandle::new(),
             searching: Task::ready(()),
             loading_categories: Task::ready(()),
@@ -338,6 +344,8 @@ impl SearchPage {
         if !self.booted {
             return;
         }
+        // The desktop app mounts the page, and its cards, again.
+        self.entrance.restart();
         if self.listing_modpacks.ask() {
             self.refresh_modpacks(window, cx);
         }
@@ -555,6 +563,7 @@ impl SearchPage {
                     (_, result) => {
                         this.results =
                             Loadable::from_result(result.map(|lists| Results::new(lists, sort)));
+                        this.entrance.restart();
                     }
                 }
                 cx.notify();
@@ -618,6 +627,7 @@ impl SearchPage {
                 InstallViewEvent::Close => {
                     this.details.pop();
                     this.transitions += 1;
+                    this.entrance.restart();
                 }
                 InstallViewEvent::Open(item) => this.open_details((**item).clone(), window, cx),
                 InstallViewEvent::Installed => this.refresh_modpacks(window, cx),
@@ -666,6 +676,9 @@ impl SearchPage {
     pub fn back(&mut self, cx: &mut Context<Self>) -> bool {
         let closed = self.details.pop().is_some();
         self.transitions += 1;
+        if closed {
+            self.entrance.restart();
+        }
         cx.notify();
         closed
     }
@@ -734,6 +747,7 @@ impl SearchPage {
 
     fn set_page(&mut self, page: usize, cx: &mut Context<Self>) {
         self.page = page;
+        self.entrance.restart();
         self.results_scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
@@ -1361,13 +1375,16 @@ impl SearchPage {
                     row: row_keys[index / columns],
                     first: index % columns == 0,
                 };
-                mod_card(
-                    page * PAGE_SIZE + index,
-                    item,
-                    *status,
-                    Some(slot),
-                    on_press.clone(),
-                    cx,
+                motion::card_at(
+                    mod_card(
+                        page * PAGE_SIZE + index,
+                        item,
+                        *status,
+                        Some(slot),
+                        on_press.clone(),
+                        cx,
+                    ),
+                    self.card_frame,
                 )
                 .into_any_element()
             })
@@ -1686,6 +1703,10 @@ fn empty_state(
 impl Render for SearchPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.row_heights.next_frame(window.viewport_size().width);
+        self.card_frame = match self.details() {
+            Some(_) => None,
+            None => self.entrance.frame(window),
+        };
         let content = self.render_content(cx);
         if self.transitions == 0 {
             return content;
