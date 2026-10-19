@@ -336,6 +336,18 @@ impl ModInstallView {
         &self.item
     }
 
+    /// Whether the page is shrinking back into the card it grew out of,
+    /// over what it returns to.
+    pub fn closing(&self) -> bool {
+        matches!(
+            self.hero,
+            Some(Hero {
+                phase: HeroPhase::Closing(_),
+                ..
+            })
+        )
+    }
+
     /// Leaves the page: a page at rest that grew out of a card first
     /// shrinks back into it, as `ModInstallPage`'s `close` does; one still
     /// growing, or opened otherwise, leaves at once.
@@ -1017,6 +1029,10 @@ impl Render for ModInstallView {
             None => panel,
         };
         let wide = mod_grid::at_least(window_width, 64.);
+        let cancel = h_flex().child(
+            theme::cancel_button("cancel", t("cancel"), cx)
+                .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
+        );
         v_flex()
             .id("mod-install")
             .size_full()
@@ -1026,12 +1042,9 @@ impl Render for ModInstallView {
             .px_4()
             .pt_2()
             .pb_5()
-            .child(
-                h_flex().child(
-                    theme::cancel_button("cancel", t("cancel"), cx)
-                        .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
-                ),
-            )
+            // The page it returns to shows beneath as it closes, so Cancel
+            // fades out with the other panels rather than float over it.
+            .child(if self.closing() { rest(cancel) } else { cancel })
             // `lg:grid-cols-[minmax(0,1fr)_22rem]`: the form beside the
             // details from Tailwind's `lg` up, below them before that.
             .child(

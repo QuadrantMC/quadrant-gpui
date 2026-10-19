@@ -629,7 +629,7 @@ async fn capture_motion(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncAp
     transition(window, &shots, "install-back", results, cx).await?;
 
     // A result's install page growing out of its card on a double click,
-    // then shrinking back into it, after which Search enters again.
+    // then shrinking back into it over Search, which stays as it was.
     show(window, cx, Route::Search)?;
     capture(window, &shots.join("search-before-hero.png"), cx).await?;
     let open_card = |window, cx: &mut AsyncApp| double_click(window, cx, FIRST_RESULT);

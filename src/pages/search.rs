@@ -103,10 +103,7 @@ pub struct SearchPage {
     /// Results installed from here, whose download button retires.
     finished: Vec<String>,
     /// Install pages opened from a result, the newest on top.
-    details: Vec<(Entity<ModInstallView>, Subscription)>,
-    /// Counts install pages opened and closed: each change plays the
-    /// arriving content's entrance, as a page switch does.
-    transitions: usize,
+    details: InstallPages<(Entity<ModInstallView>, Subscription)>,
     target_picker: Picker<Option<String>>,
     version_picker: Picker<Option<String>>,
     sort_picker: Picker<Sort>,
@@ -211,8 +208,7 @@ impl SearchPage {
             page: 0,
             installs: HashMap::new(),
             finished: Vec::new(),
-            details: Vec::new(),
-            transitions: 0,
+            details: InstallPages::new(),
             target_picker,
             version_picker,
             sort_picker,
@@ -355,8 +351,11 @@ impl SearchPage {
         if !self.booted {
             return;
         }
-        // The desktop app mounts the page, and its cards, again.
-        self.entrance.restart();
+        // The desktop app mounts the page, and its cards, again. Under an
+        // install page they wait: coming back from it plays nothing.
+        if self.details.is_empty() {
+            self.entrance.restart();
+        }
         if self.listing_modpacks.ask() {
             self.refresh_modpacks(window, cx);
         }
@@ -651,11 +650,7 @@ impl SearchPage {
         let view = cx.new(|cx| ModInstallView::new(item, target, location, origin, window, cx));
         let subscription = cx.subscribe_in(&view, window, |this, _, event, window, cx| {
             match event {
-                InstallViewEvent::Close => {
-                    this.details.pop();
-                    this.transitions += 1;
-                    this.entrance.restart();
-                }
+                InstallViewEvent::Close => this.details.close(),
                 InstallViewEvent::Open(item, origin) => {
                     this.open_details((**item).clone(), Some(*origin), window, cx)
                 }
@@ -663,10 +658,7 @@ impl SearchPage {
             }
             cx.notify();
         });
-        self.details.push((view, subscription));
-        if origin.is_none() {
-            self.transitions += 1;
-        }
+        self.details.open((view, subscription), origin.is_some());
         cx.notify();
     }
 
@@ -700,7 +692,6 @@ impl SearchPage {
     #[cfg(feature = "screenshot")]
     pub fn close_details(&mut self, cx: &mut Context<Self>) {
         self.details.clear();
-        self.transitions += 1;
         cx.notify();
     }
 
@@ -723,7 +714,7 @@ impl SearchPage {
 
     /// The install page on top, if one is open.
     fn details(&self) -> Option<&Entity<ModInstallView>> {
-        self.details.last().map(|(view, _)| view)
+        self.details.top().map(|(view, _)| view)
     }
 
     pub fn set_filters_open(&mut self, open: bool, cx: &mut Context<Self>) {
@@ -1543,6 +1534,56 @@ impl SearchPage {
     }
 }
 
+/// The install pages opened over the results, the newest on top.
+///
+/// One opened without a card to grow out of enters as a page switch does;
+/// `entrances` counts those. Closing one changes nothing beneath it: the
+/// results, or the install page it was opened from, come back as they were,
+/// scrolled where they were and without an entrance.
+struct InstallPages<V> {
+    pages: Vec<V>,
+    entrances: usize,
+}
+
+impl<V> InstallPages<V> {
+    fn new() -> Self {
+        Self {
+            pages: Vec::new(),
+            entrances: 0,
+        }
+    }
+
+    fn open(&mut self, page: V, from_card: bool) {
+        if !from_card {
+            self.entrances += 1;
+        }
+        self.pages.push(page);
+    }
+
+    fn close(&mut self) {
+        self.pages.pop();
+    }
+
+    #[cfg(feature = "screenshot")]
+    fn clear(&mut self) {
+        self.pages.clear();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pages.is_empty()
+    }
+
+    fn top(&self) -> Option<&V> {
+        self.pages.last()
+    }
+
+    /// The install page the top one was opened from.
+    fn under(&self) -> Option<&V> {
+        let below = self.pages.len().checked_sub(2)?;
+        self.pages.get(below)
+    }
+}
+
 /// `w-79`: the filters panel, and its sidebar when open.
 const FILTERS_WIDTH: Pixels = px(19.75 * theme::FONT_SIZE);
 
@@ -1788,14 +1829,14 @@ impl Render for SearchPage {
             None => None,
         };
         let content = self.render_content(cx);
-        if self.transitions == 0 {
+        if self.details.entrances == 0 {
             return content;
         }
-        // An install page enters with ModInstallPage's `initial {y: 24,
-        // opacity: 0}`, and the results enter the same way on the way back.
+        // An install page opened without a card enters with
+        // ModInstallPage's `initial {y: 24, opacity: 0}`.
         motion::entering(
             div().size_full().relative().child(content),
-            ("search-entrance", self.transitions),
+            ("search-entrance", self.details.entrances),
             false,
         )
         .into_any_element()
@@ -1804,9 +1845,27 @@ impl Render for SearchPage {
 
 impl SearchPage {
     fn render_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        if let Some(view) = self.details() {
-            return div().size_full().child(view.clone()).into_any_element();
+        let Some(view) = self.details().cloned() else {
+            return self.render_results_page(cx);
+        };
+        if !view.read(cx).closing() {
+            return div().size_full().child(view).into_any_element();
         }
+        // Shrinking back into its card, over what it returns to: the
+        // results, or the install page it was opened from, as they were.
+        let under = match self.details.under() {
+            Some((under, _)) => div().size_full().child(under.clone()).into_any_element(),
+            None => self.render_results_page(cx),
+        };
+        div()
+            .size_full()
+            .relative()
+            .child(under)
+            .child(div().absolute().top_0().left_0().size_full().child(view))
+            .into_any_element()
+    }
+
+    fn render_results_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let chips = self.filters.chips(self.categories());
         // The `aside` grows or shrinks around the panel, which keeps its full
         // width and is clipped; the gap beside it follows the state at once.
@@ -1849,6 +1908,24 @@ impl SearchPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coming_back_from_an_install_page_plays_no_entrance() {
+        let mut pages = InstallPages::new();
+        pages.open("card", true);
+        pages.open("dependency", true);
+        assert_eq!(pages.under(), Some(&"card"));
+        pages.close();
+        assert_eq!((pages.top(), pages.under()), (Some(&"card"), None));
+        pages.close();
+        assert!(pages.is_empty());
+        assert_eq!(pages.entrances, 0, "grown out of cards");
+
+        pages.open("deep link", false);
+        assert_eq!(pages.entrances, 1, "enters as a page switch does");
+        pages.close();
+        assert_eq!(pages.entrances, 1, "the results don't enter again");
+    }
 
     #[test]
     fn filters_survive_a_save_and_restore() {
