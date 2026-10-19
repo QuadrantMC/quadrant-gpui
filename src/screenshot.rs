@@ -625,7 +625,66 @@ async fn capture_motion(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncAp
     show(window, cx, Route::Search)?;
     capture(window, &shots.join("search-before-install.png"), cx).await?;
     transition(window, &shots, "install-enter", install, cx).await?;
-    transition(window, &shots, "install-back", results, cx).await
+    transition(window, &shots, "install-back", results, cx).await?;
+
+    // Mod cards flying in as Current modpack is shown again.
+    show(window, cx, Route::Modpacks)?;
+    capture(window, &shots.join("apply-before-cards.png"), cx).await?;
+    timeline(
+        window,
+        &shots,
+        "cards-enter",
+        rail(Route::CurrentModpack),
+        &[40, 120, 240, 500, 1200],
+        cx,
+    )
+    .await?;
+
+    // The spinner sliding in, then turning.
+    let searching = |window, cx: &mut AsyncApp| {
+        with_page::<SearchPage>(window, cx, Route::Search, |page, _, cx| {
+            page.preview_searching(cx)
+        })
+    };
+    timeline(
+        window,
+        &shots,
+        "progress",
+        searching,
+        &[30, 70, 500, 1500],
+        cx,
+    )
+    .await
+}
+
+/// Makes a change, draws its first frame, then saves frames about `at_ms`
+/// milliseconds after it.
+async fn timeline(
+    window: WindowHandle<Root>,
+    dir: &Path,
+    name: &str,
+    change: impl Fn(WindowHandle<Root>, &mut AsyncApp) -> Result<()>,
+    at_ms: &[u64],
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    change(window, cx)?;
+    draw(window, cx)?;
+    let started = std::time::Instant::now();
+    for &ms in at_ms {
+        // Waits at least a moment, so tasks the change started (a page
+        // leaving after its own animation) get to run as they would.
+        let wait = Duration::from_millis(ms)
+            .checked_sub(started.elapsed())
+            .unwrap_or(Duration::from_millis(1));
+        cx.background_executor().timer(wait).await;
+        // The frames views asked for, which the hidden window never gets:
+        // a grid following its new width, an animation's next step.
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_next_frame(cx);
+        })?;
+        capture_now(window, &dir.join(format!("{name}-{ms}ms.png")), cx)?;
+    }
+    Ok(())
 }
 
 /// Makes a change, draws its first frame, saves the next one, part way

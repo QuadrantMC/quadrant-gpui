@@ -12,7 +12,6 @@ use gpui::{
 use gpui_component::{
     Disableable as _, Icon, h_flex,
     select::{SearchableVec, Select, SelectEvent, SelectState},
-    spinner::Spinner,
     v_flex,
 };
 use quadrant_core::{
@@ -812,7 +811,7 @@ impl ModInstallView {
             Loadable::Idle | Loadable::Loading => h_flex()
                 .p_4()
                 .justify_center()
-                .child(Spinner::new())
+                .child(theme::circular_progress("progress"))
                 .into_any_element(),
             Loadable::Failed(error) => div().child(error.clone()).into_any_element(),
             Loadable::Ready(_) => v_flex()

@@ -11,12 +11,11 @@ use gpui::{
     Window, div, prelude::FluentBuilder as _, rgb,
 };
 use gpui_component::{
-    Disableable as _, Icon, Sizable as _,
+    Disableable as _, Icon,
     button::Button,
     h_flex,
     menu::{DropdownMenu as _, PopupMenuItem},
     scroll::ScrollableElement as _,
-    spinner::Spinner,
     v_flex,
 };
 use quadrant_core::{
@@ -1000,7 +999,7 @@ impl Render for InstalledContentPage {
                 .flex_1()
                 .p_8()
                 .justify_center()
-                .child(Spinner::new().large())
+                .child(theme::circular_progress("progress"))
                 .into_any_element(),
             // A failed load leaves the page usable; refresh is the retry.
             Loadable::Failed(error) => h_flex()

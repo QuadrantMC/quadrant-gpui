@@ -6,17 +6,16 @@ pub mod logic;
 use std::{collections::HashMap, rc::Rc};
 
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, point,
-    prelude::FluentBuilder as _, px, rgb,
+    Animation, AnimationExt as _, AnyElement, App, AppContext as _, Context, Entity, FontWeight,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
+    point, prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{
-    Disableable as _, Icon, Sizable as _, h_flex,
+    Disableable as _, Icon, h_flex,
     input::{Input, InputEvent, InputState},
     scroll::ScrollableElement as _,
     select::{SearchableVec, Select, SelectEvent, SelectState},
-    spinner::Spinner,
     v_flex,
 };
 use quadrant_core::{
@@ -657,6 +656,14 @@ impl SearchPage {
         cx.notify();
     }
 
+    /// Shows the results as loading, for screenshots. Nothing is asked.
+    #[cfg(feature = "screenshot")]
+    pub fn preview_searching(&mut self, cx: &mut Context<Self>) {
+        self.searching = Task::ready(());
+        self.results = Loadable::Loading;
+        cx.notify();
+    }
+
     /// Closes every open install page, for screenshots.
     #[cfg(feature = "screenshot")]
     pub fn close_details(&mut self, cx: &mut Context<Self>) {
@@ -842,7 +849,7 @@ impl SearchPage {
             );
 
         theme::panel()
-            .w(px(19.75 * 16.8))
+            .w(FILTERS_WIDTH)
             .flex_none()
             .h_full()
             .flex()
@@ -1289,7 +1296,7 @@ impl SearchPage {
                 Loadable::Idle | Loadable::Loading => h_flex()
                     .py_16()
                     .justify_center()
-                    .child(Spinner::new().large())
+                    .child(theme::circular_progress("progress"))
                     .into_any_element(),
                 Loadable::Failed(error) => div()
                     .p_4()
@@ -1402,18 +1409,34 @@ impl SearchPage {
                         this.cursor_pointer()
                             .on_click(cx.listener(|this, _, _, cx| this.search(true, cx)))
                     })
-                    .child(if loading {
-                        Spinner::new().into_any_element()
-                    } else {
-                        div()
+                    .child({
+                        let arrow = div()
+                            .relative()
                             .size_10()
                             .flex()
                             .items_center()
                             .justify_center()
                             .rounded_full()
                             .bg(rgb(theme::POSITIVE_FILL))
-                            .child(Icon::new(MdIcon::ArrowForward).size_5())
-                            .into_any_element()
+                            .child(Icon::new(MdIcon::ArrowForward).size_5());
+                        // The desktop app's arrow slides away right while
+                        // more results load, rather than turning into a
+                        // spinner.
+                        if loading {
+                            arrow
+                                .with_animation(
+                                    "search-further-slide",
+                                    Animation::new(motion::FURTHER_SLIDE),
+                                    |this, progress| {
+                                        let eased = motion::EASE_IN.ease(progress);
+                                        this.left(motion::FURTHER_SLIDE_BY * eased)
+                                            .opacity(1. - eased)
+                                    },
+                                )
+                                .into_any_element()
+                        } else {
+                            arrow.into_any_element()
+                        }
                     })
                     .into_any_element(),
             );
@@ -1480,6 +1503,9 @@ impl SearchPage {
             .into_any_element()
     }
 }
+
+/// `w-79`: the filters panel, and its sidebar when open.
+const FILTERS_WIDTH: Pixels = px(19.75 * theme::FONT_SIZE);
 
 /// The results panel's padding on each side.
 const RESULTS_PADDING: Pixels = px(18.9);

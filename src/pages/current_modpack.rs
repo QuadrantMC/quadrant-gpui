@@ -7,9 +7,7 @@ use gpui::{
     AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
     Styled as _, Subscription, Task, Window, div,
 };
-use gpui_component::{
-    Sizable as _, h_flex, scroll::ScrollableElement as _, spinner::Spinner, v_flex,
-};
+use gpui_component::{h_flex, scroll::ScrollableElement as _, v_flex};
 use quadrant_core::models::LocalModpack;
 
 use crate::{
@@ -150,7 +148,7 @@ impl Render for CurrentModpackPage {
         }
         let content = match &self.modpack {
             Loadable::Idle | Loadable::Loading => {
-                waiting(Spinner::new().large().into_any_element())
+                waiting(theme::circular_progress("progress").into_any_element())
             }
             Loadable::Failed(error) => waiting(error.clone().into_any_element()),
             Loadable::Ready(_) => div().child("-").into_any_element(),

@@ -22,7 +22,6 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     scroll::ScrollableElement as _,
     select::{SearchableVec, Select, SelectItem, SelectState},
-    spinner::Spinner,
     v_flex,
 };
 use quadrant_core::models::{LocalModpack, ModLoader};
@@ -1375,7 +1374,9 @@ impl ModpacksPage {
     /// The list's one item while it loads, failed or found nothing.
     fn render_status(&self, cx: &mut Context<Self>) -> AnyElement {
         match &self.modpacks {
-            Loadable::Idle | Loadable::Loading => status_row(Spinner::new().into_any_element()),
+            Loadable::Idle | Loadable::Loading => {
+                status_row(theme::circular_progress("progress").into_any_element())
+            }
             Loadable::Failed(error) => status_row(
                 v_flex()
                     .items_center()

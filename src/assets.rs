@@ -78,12 +78,26 @@ md_icons! {
     InstallDesktop => "install-desktop",
 }
 
+/// The top quarter of `CircularProgress.tsx`'s `border-8` ring, the
+/// slate-700 `border-t` of a 150.4px circle, cut along the diagonals as a
+/// browser joins the borders.
+pub const PROGRESS_ARC: &str = "shapes/progress-arc.svg";
+
+const SHAPE_FILES: &[(&str, &[u8])] = &[(
+    PROGRESS_ARC,
+    include_bytes!("../assets/shapes/progress-arc.svg"),
+)];
+
 /// The app's own icons, falling back to gpui-component's for its widgets.
 pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
-        match MD_ICON_FILES.iter().find(|(file, _)| *file == path) {
+        match MD_ICON_FILES
+            .iter()
+            .chain(SHAPE_FILES)
+            .find(|(file, _)| *file == path)
+        {
             Some((_, bytes)) => Ok(Some(Cow::Borrowed(bytes))),
             None => gpui_kit_assets::Assets.load(path),
         }
@@ -94,6 +108,7 @@ impl AssetSource for Assets {
         paths.extend(
             MD_ICON_FILES
                 .iter()
+                .chain(SHAPE_FILES)
                 .filter(|(file, _)| file.starts_with(path))
                 .map(|(file, _)| SharedString::from(*file)),
         );

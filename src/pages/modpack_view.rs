@@ -13,9 +13,7 @@ use gpui::{
     Pixels, Render, SharedString, Styled as _, Subscription, Task, Window, div, list,
     prelude::FluentBuilder as _, px, rems, rgb,
 };
-use gpui_component::{
-    Sizable as _, h_flex, scroll::ScrollableElement as _, spinner::Spinner, v_flex,
-};
+use gpui_component::{h_flex, scroll::ScrollableElement as _, v_flex};
 use quadrant_core::{
     mc_mod::{GetModArgs, Mod, ModType, UniversalModFile},
     models::{InstalledMod, LocalModpack, ModSource},
@@ -742,7 +740,7 @@ impl ModpackView {
 }
 
 fn spinner() -> AnyElement {
-    Spinner::new().large().into_any_element()
+    theme::circular_progress("progress").into_any_element()
 }
 
 /// The desktop app's waiting panel: a slate-800 strip with one thing in it.

@@ -18,7 +18,7 @@ use gpui_component::{
     dialog::Dialog,
 };
 
-use crate::{assets::MdIcon, route::Route, snackbar::SnackbarKind};
+use crate::{assets::MdIcon, motion, route::Route, snackbar::SnackbarKind};
 
 pub const FONT_FAMILY: &str = "Inter";
 pub const FONT_SIZE: f32 = 16.8;
@@ -649,6 +649,54 @@ pub fn progress_bar(percent: i32) -> impl IntoElement {
 
 /// A `rounded-[28px]` slate-800 panel, as the filters, results and install
 /// panels are drawn.
+/// slate-900 and slate-700: `CircularProgress.tsx`'s ring and its top.
+const PROGRESS_RING: u32 = PAGE;
+const PROGRESS_ARC: u32 = CONTROL;
+
+/// `CircularProgress.tsx`, the desktop app's only spinner: a `border-8`
+/// slate-900 ring with a slate-700 top, `p-16` inside (150.4px across),
+/// turning as [`motion::SPIN`] says. It slides in from 100px right as it
+/// mounts and lifts 5px, with a `shadow-2xl`, under the pointer.
+pub fn circular_progress(id: impl Into<ElementId>) -> impl IntoElement {
+    use gpui::{Animation, AnimationExt as _, Transformation, svg};
+    let id = id.into();
+    let size = px(8. * 2. + 2. * 4. * FONT_SIZE);
+    let ring = div()
+        .size(size)
+        .rounded_full()
+        .border_8()
+        .border_color(rgb(PROGRESS_RING));
+    let arc = svg()
+        .path(crate::assets::PROGRESS_ARC)
+        .absolute()
+        .top_0()
+        .left_0()
+        .size(size)
+        .text_color(rgb(PROGRESS_ARC))
+        .with_animation(
+            (id.clone(), "spin"),
+            Animation::new(motion::SPIN).repeat(),
+            |arc, progress| {
+                arc.with_transformation(Transformation::rotate(gpui::radians(
+                    motion::spin_degrees(progress).to_radians(),
+                )))
+            },
+        );
+    div()
+        .id(id.clone())
+        .relative()
+        .flex_none()
+        .rounded_full()
+        .hover(|this| this.top(px(-5.)).shadow_2xl())
+        .child(ring)
+        .child(arc)
+        .with_animation(
+            (id, "slide"),
+            Animation::new(motion::SPINNER_SLIDE),
+            |this, progress| this.left(motion::SPINNER_SLIDE_FROM * (1. - progress)),
+        )
+}
+
 pub fn panel() -> gpui::Div {
     div().rounded(px(28.)).bg(rgb(SURFACE))
 }

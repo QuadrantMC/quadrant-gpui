@@ -6,7 +6,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
     prelude::FluentBuilder as _, relative, rems, rgb,
 };
-use gpui_component::{Disableable as _, Sizable as _, h_flex, spinner::Spinner, v_flex};
+use gpui_component::{Disableable as _, h_flex, v_flex};
 use quadrant_core::account::id::AccountInfo;
 use quadrant_host::QuadrantHost;
 use tokio::sync::oneshot;
@@ -150,7 +150,7 @@ impl AccountPage {
             .py_10()
             .rounded(theme::radius_card())
             .bg(rgb(theme::SURFACE))
-            .child(Spinner::new().large())
+            .child(theme::circular_progress("progress"))
             .child(
                 div()
                     .mt_6()

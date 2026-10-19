@@ -49,6 +49,28 @@ pub const CARD_SPRING: Spring = Spring {
 /// `y` within half a pixel well before.
 pub const CARD_ENTER: Duration = Duration::from_millis(1100);
 
+/// `CircularProgress.tsx`'s spin: `rotate: 3840` over 15s, linear, repeated
+/// from 0, so the ring turns 256° a second and jumps back 120° every 15s.
+pub const SPIN: Duration = Duration::from_secs(15);
+pub const SPIN_DEGREES: f32 = 3840.;
+
+/// Its slide in on mount: from `x: 100` over 0.1s, linear.
+pub const SPINNER_SLIDE: Duration = Duration::from_millis(100);
+pub const SPINNER_SLIDE_FROM: Pixels = px(100.);
+
+/// The spin's angle, in degrees, `progress` through one 15s pass.
+pub fn spin_degrees(progress: f32) -> f32 {
+    SPIN_DEGREES * progress
+}
+
+/// Search's "search further" arrow sliding away: `x: 260, opacity: 0` over
+/// 0.075s, `easeIn`.
+pub const FURTHER_SLIDE: Duration = Duration::from_millis(75);
+pub const FURTHER_SLIDE_BY: Pixels = px(260.);
+
+/// Motion's `easeIn`.
+pub const EASE_IN: CubicBezier = CubicBezier(0.42, 0., 1., 1.);
+
 /// A CSS `cubic-bezier(x1, y1, x2, y2)` timing function.
 #[derive(Clone, Copy, Debug)]
 pub struct CubicBezier(pub f32, pub f32, pub f32, pub f32);

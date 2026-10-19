@@ -12,7 +12,7 @@ use gpui::{
     PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
     div, prelude::FluentBuilder as _, rgb,
 };
-use gpui_component::{h_flex, scroll::ScrollableElement as _, spinner::Spinner, v_flex};
+use gpui_component::{h_flex, scroll::ScrollableElement as _, v_flex};
 use quadrant_host::QuadrantHost;
 use serde_json::Value;
 
@@ -489,7 +489,7 @@ impl Render for SettingsPage {
             Loadable::Idle | Loadable::Loading => h_flex()
                 .p_8()
                 .justify_center()
-                .child(Spinner::new())
+                .child(theme::circular_progress("progress"))
                 .into_any_element(),
             Loadable::Failed(error) => h_flex()
                 .p_8()
