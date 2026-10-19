@@ -697,8 +697,11 @@ pub fn circular_progress(id: impl Into<ElementId>) -> impl IntoElement {
         )
 }
 
+/// `rounded-[28px]`: a panel's corners.
+pub const PANEL_RADIUS: gpui::Pixels = px(28.);
+
 pub fn panel() -> gpui::Div {
-    div().rounded(px(28.)).bg(rgb(SURFACE))
+    div().rounded(PANEL_RADIUS).bg(rgb(SURFACE))
 }
 
 // Content, settings and account pages

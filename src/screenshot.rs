@@ -627,6 +627,30 @@ async fn capture_motion(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncAp
     transition(window, &shots, "install-enter", install, cx).await?;
     transition(window, &shots, "install-back", results, cx).await?;
 
+    // A result's install page growing out of its card on a double click,
+    // then shrinking back into it, after which Search enters again.
+    show(window, cx, Route::Search)?;
+    capture(window, &shots.join("search-before-hero.png"), cx).await?;
+    let open_card = |window, cx: &mut AsyncApp| double_click(window, cx, FIRST_RESULT);
+    timeline(
+        window,
+        &shots,
+        "hero-open",
+        open_card,
+        &[30, 80, 160, 250, 400, 900],
+        cx,
+    )
+    .await?;
+    timeline(
+        window,
+        &shots,
+        "hero-close",
+        results,
+        &[30, 90, 160, 210, 300, 800],
+        cx,
+    )
+    .await?;
+
     // Mod cards flying in as Current modpack is shown again.
     show(window, cx, Route::Modpacks)?;
     capture(window, &shots.join("apply-before-cards.png"), cx).await?;
@@ -655,6 +679,48 @@ async fn capture_motion(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncAp
         cx,
     )
     .await
+}
+
+/// Inside the first Search result card at the motion pictures' 1150px wide
+/// window with the filters open, on its description.
+const FIRST_RESULT: gpui::Point<gpui::Pixels> = gpui::point(gpui::px(560.), gpui::px(355.));
+
+/// A double click at `position`, as the platform sends one.
+fn double_click(
+    window: WindowHandle<Root>,
+    cx: &mut AsyncApp,
+    position: gpui::Point<gpui::Pixels>,
+) -> Result<()> {
+    cx.update_window(window.into(), |_, window, cx| {
+        let modifiers = gpui::Modifiers::default();
+        window.dispatch_event(
+            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                position,
+                pressed_button: None,
+                modifiers,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                button: gpui::MouseButton::Left,
+                position,
+                modifiers,
+                click_count: 2,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                button: gpui::MouseButton::Left,
+                position,
+                modifiers,
+                click_count: 2,
+            }),
+            cx,
+        );
+    })
 }
 
 /// Makes a change, draws its first frame, then saves frames about `at_ms`

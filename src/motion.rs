@@ -7,7 +7,11 @@
 
 use std::time::{Duration, Instant};
 
-use gpui::{Animation, AnimationExt as _, ElementId, IntoElement, Pixels, Styled, Window, px};
+use gpui::{
+    Animation, AnimationExt as _, AnyElement, App, Bounds, ContentMask, Element, ElementId,
+    GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Rgba, Styled, Window, fill,
+    point, px, size,
+};
 
 /// How far below its place a page starts.
 pub const ENTER_OFFSET: Pixels = px(24.);
@@ -68,8 +72,187 @@ pub fn spin_degrees(progress: f32) -> f32 {
 pub const FURTHER_SLIDE: Duration = Duration::from_millis(75);
 pub const FURTHER_SLIDE_BY: Pixels = px(260.);
 
-/// Motion's `easeIn`.
+/// Motion's `easeIn`, `easeOut` and `easeInOut`.
 pub const EASE_IN: CubicBezier = CubicBezier(0.42, 0., 1., 1.);
+pub const EASE_OUT: CubicBezier = CubicBezier(0., 0., 0.58, 1.);
+pub const EASE_IN_OUT: CubicBezier = CubicBezier(0.42, 0., 0.58, 1.);
+
+/// `ModInstallPage`'s `expandSpring`, stiffness 320 and damping 32: the
+/// details panel grows out of the card that opened the page, and the other
+/// panels rise 16px as they fade in, [`HERO_REST_DELAY`] later.
+pub const HERO_SPRING: Spring = Spring {
+    stiffness: 320.,
+    damping: 32.,
+    mass: 1.,
+};
+/// When the expand spring is within half a pixel of rest over the longest
+/// way a panel travels.
+pub const HERO_EXPAND: Duration = Duration::from_millis(550);
+pub const HERO_REST_DELAY: Duration = Duration::from_millis(120);
+pub const HERO_REST_OFFSET: Pixels = px(16.);
+/// Closing: the panel shrinks back into the card over 0.22s `easeInOut`
+/// while the other panels fade out over 0.15s; then the page leaves.
+pub const HERO_COLLAPSE: Duration = Duration::from_millis(220);
+pub const HERO_REST_FADE: Duration = Duration::from_millis(150);
+
+/// Where a hero transition is: the card-shaped window of the details panel,
+/// as the share of the way back to the card still to go (1 at the card, 0
+/// at rest), and the other panels' offset and opacity.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeroFrame {
+    pub remaining: f32,
+    pub rest_offset: Pixels,
+    pub rest_opacity: f32,
+}
+
+/// `elapsed` into opening, or `None` once everything is at rest.
+pub fn hero_open(elapsed: Duration) -> Option<HeroFrame> {
+    if elapsed >= HERO_REST_DELAY + HERO_EXPAND {
+        return None;
+    }
+    let remaining = if elapsed >= HERO_EXPAND {
+        0.
+    } else {
+        HERO_SPRING.remaining(elapsed)
+    };
+    let (rest_offset, rest_opacity) = match elapsed.checked_sub(HERO_REST_DELAY) {
+        None => (HERO_REST_OFFSET, 0.),
+        Some(rest) => {
+            let left = HERO_SPRING.remaining(rest);
+            (HERO_REST_OFFSET * left, (1. - left).clamp(0., 1.))
+        }
+    };
+    Some(HeroFrame {
+        remaining,
+        rest_offset,
+        rest_opacity,
+    })
+}
+
+/// `elapsed` into closing; at the card from [`HERO_COLLAPSE`] on.
+pub fn hero_close(elapsed: Duration) -> HeroFrame {
+    HeroFrame {
+        remaining: EASE_IN_OUT.at(elapsed, HERO_COLLAPSE),
+        rest_offset: px(0.),
+        rest_opacity: 1. - EASE_OUT.at(elapsed, HERO_REST_FADE),
+    }
+}
+
+/// `ModInstallPage`'s `revealFrom`: lays `child` out in place, then paints
+/// it moved `remaining` of the way to `origin` and clipped to a window of
+/// its top-left corner that is `remaining` of the way to `origin`'s size,
+/// so the content inside never stretches. The child draws no background of
+/// its own; this paints `background` with `radius` corners behind the
+/// window, as the desktop app's rounded `clip-path` does.
+pub struct Reveal {
+    child: AnyElement,
+    origin: Bounds<Pixels>,
+    remaining: f32,
+    background: Rgba,
+    radius: Pixels,
+}
+
+pub fn reveal(
+    child: impl IntoElement,
+    origin: Bounds<Pixels>,
+    remaining: f32,
+    background: Rgba,
+    radius: Pixels,
+) -> Reveal {
+    Reveal {
+        child: child.into_any_element(),
+        origin,
+        remaining,
+        background,
+        radius,
+    }
+}
+
+/// The window `rest` shows when `remaining` of the way to `origin`.
+pub fn reveal_window(
+    rest: Bounds<Pixels>,
+    origin: Bounds<Pixels>,
+    remaining: f32,
+) -> Bounds<Pixels> {
+    let shrink = |rest: Pixels, origin: Pixels| rest - (rest - origin).max(px(0.)) * remaining;
+    Bounds {
+        origin: point(
+            rest.origin.x + (origin.origin.x - rest.origin.x) * remaining,
+            rest.origin.y + (origin.origin.y - rest.origin.y) * remaining,
+        ),
+        size: size(
+            shrink(rest.size.width, origin.size.width),
+            shrink(rest.size.height, origin.size.height),
+        ),
+    }
+}
+
+impl IntoElement for Reveal {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for Reveal {
+    type RequestLayoutState = ();
+    /// The window, in window coordinates.
+    type PrepaintState = Bounds<Pixels>;
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Bounds<Pixels> {
+        let shown = reveal_window(bounds, self.origin, self.remaining);
+        let offset = shown.origin - bounds.origin;
+        window.with_element_offset(offset, |window| {
+            window.with_content_mask(Some(ContentMask { bounds: shown }), |window| {
+                self.child.prepaint(window, cx)
+            })
+        });
+        shown
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        shown: &mut Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.paint_quad(fill(*shown, self.background).corner_radii(self.radius));
+        window.with_content_mask(Some(ContentMask { bounds: *shown }), |window| {
+            self.child.paint(window, cx)
+        });
+    }
+}
 
 /// A CSS `cubic-bezier(x1, y1, x2, y2)` timing function.
 #[derive(Clone, Copy, Debug)]
@@ -289,6 +472,34 @@ mod tests {
         let near_rest = CARD_SPRING.remaining(CARD_ENTER - Duration::from_millis(10));
         assert!(near_rest.abs() < 0.005, "{near_rest}");
         assert_eq!(card_enter(CARD_ENTER), (px(0.), 1.));
+    }
+
+    #[test]
+    fn the_hero_opens_from_the_card_and_closes_into_it() {
+        let card = Bounds::new(point(px(400.), px(300.)), size(px(380.), px(167.)));
+        let panel = Bounds::new(point(px(120.), px(110.)), size(px(900.), px(420.)));
+        let first = hero_open(Duration::ZERO).unwrap();
+        assert_eq!(reveal_window(panel, card, first.remaining), card);
+        assert_eq!(
+            (first.rest_offset, first.rest_opacity),
+            (HERO_REST_OFFSET, 0.)
+        );
+        // The other panels wait, then rise as they fade in.
+        assert_eq!(hero_open(HERO_REST_DELAY).unwrap().rest_opacity, 0.);
+        let later = hero_open(HERO_REST_DELAY + Duration::from_millis(150)).unwrap();
+        assert!(later.rest_opacity > 0.5 && later.rest_offset < px(8.));
+        // Within half a pixel over the longest way the panel moves.
+        let near = hero_open(HERO_EXPAND - Duration::from_millis(1)).unwrap();
+        let window = reveal_window(panel, card, near.remaining);
+        assert!((window.size.width - panel.size.width).abs() < px(0.5));
+        assert_eq!(hero_open(HERO_REST_DELAY + HERO_EXPAND), None);
+
+        let start = hero_close(Duration::ZERO);
+        assert!(start.remaining.abs() < 1e-3 && start.rest_opacity > 0.999);
+        assert!(hero_close(HERO_REST_FADE).rest_opacity.abs() < 1e-3);
+        let closed = reveal_window(panel, card, hero_close(HERO_COLLAPSE).remaining);
+        assert!((closed.origin.x - card.origin.x).abs() < px(0.01));
+        assert!((closed.size.height - card.size.height).abs() < px(0.01));
     }
 
     #[test]

@@ -2,14 +2,15 @@
 //! card (the desktop app's `shared/Mod.tsx`) and the select option type.
 
 use std::{
+    cell::Cell,
     hash::{DefaultHasher, Hash as _, Hasher as _},
     rc::Rc,
 };
 
 use gpui::{
-    AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px, rgb,
+    AnyElement, Bounds, Context, Div, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, SharedString, Stateful, StatefulInteractiveElement as _,
+    Styled as _, Window, canvas, div, prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{Icon, h_flex, select::SelectItem, v_flex};
 use quadrant_core::{
@@ -128,7 +129,10 @@ pub fn source_label(source: &ModSource) -> &'static str {
     }
 }
 
-pub type OnCardPress<P> = Rc<dyn Fn(&mut P, CardPress, &Mod, &mut Window, &mut Context<P>)>;
+/// What a card's press runs: the press, the card's mod and where the card
+/// was on screen, which an install page it opens grows out of.
+pub type OnCardPress<P> =
+    Rc<dyn Fn(&mut P, CardPress, &Mod, Bounds<Pixels>, &mut Window, &mut Context<P>)>;
 
 /// What decides a card's height besides its width: the rows that can wrap
 /// (downloads, provider and "Installed"; the buttons and their labels).
@@ -157,11 +161,14 @@ pub fn mod_card<P: 'static>(
     cx: &mut Context<P>,
 ) -> Stateful<Div> {
     let actions = card_actions(item, status.installed, status.finished);
+    // Where the card was drawn last, for the press to hand on.
+    let origin = Rc::new(Cell::new(Bounds::default()));
     let press = |what: CardPress| {
         let on_press = on_press.clone();
         let item = item.clone();
+        let origin = origin.clone();
         cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
-            on_press(this, what, &item, window, cx)
+            on_press(this, what, &item, origin.get(), window, cx)
         })
     };
     let label = |key: &str| -> SharedString {
@@ -258,6 +265,11 @@ pub fn mod_card<P: 'static>(
                 open(event, window, cx);
             }
         })
+        .child(
+            canvas(move |bounds, _, _| origin.set(bounds), |_, _, _, _| {})
+                .absolute()
+                .size_full(),
+        )
         .child(sized(
             HEADER,
             h_flex()

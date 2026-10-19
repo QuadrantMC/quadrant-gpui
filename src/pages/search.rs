@@ -6,10 +6,10 @@ pub mod logic;
 use std::{collections::HashMap, rc::Rc};
 
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, AppContext as _, Context, Entity, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollHandle,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
-    point, prelude::FluentBuilder as _, px, rgb,
+    Animation, AnimationExt as _, AnyElement, App, AppContext as _, Bounds, Context, Entity,
+    FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render,
+    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
+    Window, div, point, prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{
     Disableable as _, Icon, h_flex,
@@ -571,7 +571,14 @@ impl SearchPage {
         cx.notify();
     }
 
-    fn press(&mut self, press: CardPress, item: &Mod, window: &mut Window, cx: &mut Context<Self>) {
+    fn press(
+        &mut self,
+        press: CardPress,
+        item: &Mod,
+        origin: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match press {
             CardPress::Primary(Primary::Download) if item.autoinstallable => {
                 if let Some(target) = self.target_modpack() {
@@ -579,12 +586,12 @@ impl SearchPage {
                     let request = InstallRequest::into_target(item, target, location);
                     self.install(request, window, cx);
                 } else {
-                    self.open_details(item.clone(), window, cx);
+                    self.open_details(item.clone(), Some(origin), window, cx);
                 }
             }
             CardPress::Primary(Primary::Download | Primary::Installed) | CardPress::Open => {
                 if item.downloadable {
-                    self.open_details(item.clone(), window, cx);
+                    self.open_details(item.clone(), Some(origin), window, cx);
                 }
             }
             CardPress::Primary(Primary::Update) | CardPress::Delete | CardPress::Select => {}
@@ -617,10 +624,19 @@ impl SearchPage {
         cx.notify();
     }
 
-    fn open_details(&mut self, item: Mod, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens `item`'s install page. With the `origin` of the card pressed,
+    /// the page's details grow out of the card, as the desktop app's
+    /// `expanded` page does, rather than the page entering from below.
+    fn open_details(
+        &mut self,
+        item: Mod,
+        origin: Option<Bounds<Pixels>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let target = self.filters.target.clone();
         let location = self.install_to.read(cx).selected(cx);
-        let view = cx.new(|cx| ModInstallView::new(item, target, location, window, cx));
+        let view = cx.new(|cx| ModInstallView::new(item, target, location, origin, window, cx));
         let subscription = cx.subscribe_in(&view, window, |this, _, event, window, cx| {
             match event {
                 InstallViewEvent::Close => {
@@ -628,13 +644,17 @@ impl SearchPage {
                     this.transitions += 1;
                     this.entrance.restart();
                 }
-                InstallViewEvent::Open(item) => this.open_details((**item).clone(), window, cx),
+                InstallViewEvent::Open(item, origin) => {
+                    this.open_details((**item).clone(), Some(*origin), window, cx)
+                }
                 InstallViewEvent::Installed => this.refresh_modpacks(window, cx),
             }
             cx.notify();
         });
         self.details.push((view, subscription));
-        self.transitions += 1;
+        if origin.is_none() {
+            self.transitions += 1;
+        }
         cx.notify();
     }
 
@@ -679,15 +699,14 @@ impl SearchPage {
             .map(|view| view.read(cx).item().name.clone().into())
     }
 
-    /// Closes the install page on top; false when none is open.
+    /// Closes the install page on top, which may first shrink back into
+    /// its card; false when none is open.
     pub fn back(&mut self, cx: &mut Context<Self>) -> bool {
-        let closed = self.details.pop().is_some();
-        self.transitions += 1;
-        if closed {
-            self.entrance.restart();
-        }
-        cx.notify();
-        closed
+        let Some(view) = self.details() else {
+            return false;
+        };
+        view.clone().update(cx, |view, cx| view.close(cx));
+        true
     }
 
     /// The install page on top, if one is open.
@@ -748,7 +767,7 @@ impl SearchPage {
         if let Loadable::Ready(results) = &self.results
             && let Some(first) = results.shown.first().cloned()
         {
-            self.open_details(first, window, cx);
+            self.open_details(first, None, window, cx);
         }
     }
 
@@ -1345,8 +1364,9 @@ impl SearchPage {
         let pages = page_count(results.shown.len());
         let page = self.page.min(pages - 1);
         let target = self.target_modpack();
-        let on_press: OnCardPress<Self> =
-            Rc::new(|this, press, item, window, cx| this.press(press, item, window, cx));
+        let on_press: OnCardPress<Self> = Rc::new(|this, press, item, origin, window, cx| {
+            this.press(press, item, origin, window, cx)
+        });
         let columns = result_columns(self.results_width.width());
         let shown: Vec<(&Mod, CardStatus)> = results
             .shown

@@ -564,7 +564,7 @@ impl ModpackView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let on_press: OnCardPress<Self> =
-            Rc::new(|this, press, item, _, cx| this.press(press, item, cx));
+            Rc::new(|this, press, item, _, _, cx| this.press(press, item, cx));
         motion::card_at(
             mod_card(index, item, *status, slot, on_press, cx),
             self.card_frame,

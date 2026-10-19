@@ -51,7 +51,7 @@ pub fn render(
         cards.len(),
         mod_grid::modpack_columns(window.viewport_size().width),
     );
-    let on_press: OnCardPress<ModpacksPage> = Rc::new(|_, _, _, _, _| {});
+    let on_press: OnCardPress<ModpacksPage> = Rc::new(|_, _, _, _, _, _| {});
     let catalog = ModCatalog::global(cx);
     let grid: Vec<AnyElement> = (0..rows.len())
         .map(|row| {

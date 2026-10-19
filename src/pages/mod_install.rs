@@ -1,13 +1,13 @@
 //! The install page for one mod, after `ModInstallPage` in the desktop app:
 //! its details and dependencies, and where to install it.
 
-use std::rc::Rc;
+use std::{rc::Rc, time::Instant};
 
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, Styled as _, StyledImage as _, Subscription, Task, Window,
-    div, prelude::FluentBuilder as _, px, rgb,
+    App, AppContext as _, Bounds, Context, Entity, EventEmitter, FontWeight,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, StyledImage as _, Subscription,
+    Task, Window, div, prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{
     Disableable as _, Icon, h_flex,
@@ -26,7 +26,7 @@ use crate::{
     events::{ModProgress, ModStage, watch_mod_progress},
     i18n::{describe, t, t_with},
     loadable::Loadable,
-    motion::{self, CardEntrance},
+    motion::{self, CardEntrance, HeroFrame},
     pages::{
         install_location::{self, LocationPicker, initial_location, is_pack},
         mod_grid,
@@ -179,8 +179,8 @@ pub fn remember(cx: &App, entries: Vec<(&'static str, String)>) {
 /// What the install page asks of the page that shows it.
 pub enum InstallViewEvent {
     Close,
-    /// Open the install page of a dependency.
-    Open(Box<Mod>),
+    /// Open the install page of a dependency, from its card's bounds.
+    Open(Box<Mod>, Bounds<Pixels>),
     /// An install finished; the opener refreshes what it shows.
     Installed,
 }
@@ -209,6 +209,8 @@ pub struct ModInstallView {
     install_progress: i32,
     /// Its own, so each install page starts at the top.
     scroll: ScrollHandle,
+    /// The page growing out of the card that opened it, or shrinking back.
+    hero: Option<Hero>,
     /// The dependencies' `Mod.tsx` entrance, and where it puts them this
     /// frame.
     entrance: CardEntrance,
@@ -219,11 +221,52 @@ pub struct ModInstallView {
 
 impl EventEmitter<InstallViewEvent> for ModInstallView {}
 
+/// `ModInstallPage`'s `expanded` page: its details grow out of the card it
+/// was opened from and shrink back into it as it closes.
+struct Hero {
+    origin: Bounds<Pixels>,
+    phase: HeroPhase,
+}
+
+/// Each phase's clock starts at the first frame that draws it.
+enum HeroPhase {
+    Opening(Option<Instant>),
+    Rest,
+    Closing(Option<Instant>),
+}
+
+impl Hero {
+    /// Where the transition is this frame, `None` at rest. Asks for the
+    /// next frame while it moves.
+    fn frame(&mut self, window: &mut Window) -> Option<HeroFrame> {
+        let (start, opening) = match &mut self.phase {
+            HeroPhase::Rest => return None,
+            HeroPhase::Opening(start) => (start, true),
+            HeroPhase::Closing(start) => (start, false),
+        };
+        let elapsed = start.get_or_insert_with(Instant::now).elapsed();
+        if opening {
+            let Some(frame) = motion::hero_open(elapsed) else {
+                self.phase = HeroPhase::Rest;
+                return None;
+            };
+            window.request_animation_frame();
+            return Some(frame);
+        }
+        // Held at the card until the opener takes the page away.
+        if elapsed < motion::HERO_COLLAPSE {
+            window.request_animation_frame();
+        }
+        Some(motion::hero_close(elapsed))
+    }
+}
+
 impl ModInstallView {
     pub fn new(
         item: Mod,
         explicit_target: Option<String>,
         opener_location: Option<String>,
+        origin: Option<Bounds<Pixels>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -275,6 +318,10 @@ impl ModInstallView {
             download_progress: 0,
             install_progress: 0,
             scroll: ScrollHandle::new(),
+            hero: origin.map(|origin| Hero {
+                origin,
+                phase: HeroPhase::Opening(None),
+            }),
             entrance: CardEntrance::Rest,
             card_frame: None,
             _progress: progress,
@@ -287,6 +334,33 @@ impl ModInstallView {
 
     pub fn item(&self) -> &Mod {
         &self.item
+    }
+
+    /// Leaves the page: a page at rest that grew out of a card first
+    /// shrinks back into it, as `ModInstallPage`'s `close` does; one still
+    /// growing, or opened otherwise, leaves at once.
+    pub fn close(&mut self, cx: &mut Context<Self>) {
+        match &mut self.hero {
+            Some(Hero {
+                phase: HeroPhase::Closing(_),
+                ..
+            }) => {}
+            Some(
+                hero @ Hero {
+                    phase: HeroPhase::Rest,
+                    ..
+                },
+            ) => {
+                hero.phase = HeroPhase::Closing(None);
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(motion::HERO_COLLAPSE).await;
+                    let _ = this.update(cx, |_, cx| cx.emit(InstallViewEvent::Close));
+                })
+                .detach();
+                cx.notify();
+            }
+            _ => cx.emit(InstallViewEvent::Close),
+        }
     }
 
     fn record(&mut self, progress: ModProgress) {
@@ -579,7 +653,9 @@ impl ModInstallView {
         .detach();
     }
 
-    fn render_details(&self, window_width: Pixels) -> impl IntoElement {
+    /// The details panel; without its background while `revealed`, when
+    /// the reveal paints it.
+    fn render_details(&self, window_width: Pixels, revealed: bool) -> impl IntoElement {
         let item = &self.item;
         let source = source_label(&item.source);
         let type_key = match item.mod_type {
@@ -594,6 +670,7 @@ impl ModInstallView {
         theme::panel()
             .p_5()
             .min_w_0()
+            .when(revealed, |this| this.bg(gpui::transparent_black()))
             .child(
                 h_flex()
                     .items_start()
@@ -718,9 +795,9 @@ impl ModInstallView {
             return None;
         }
         let selected = self.selected_modpack(cx).cloned();
-        let on_press: OnCardPress<Self> = Rc::new(|_, press, item, _, cx| match press {
+        let on_press: OnCardPress<Self> = Rc::new(|_, press, item, origin, _, cx| match press {
             CardPress::Primary(_) | CardPress::Open => {
-                cx.emit(InstallViewEvent::Open(Box::new(item.clone())))
+                cx.emit(InstallViewEvent::Open(Box::new(item.clone()), origin))
             }
             CardPress::Delete | CardPress::Select => {}
         });
@@ -914,6 +991,31 @@ impl Render for ModInstallView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_width = window.viewport_size().width;
         self.card_frame = self.entrance.frame(window);
+        let hero = self
+            .hero
+            .as_mut()
+            .and_then(|hero| Some((hero.origin, hero.frame(window)?)));
+        let details = self.render_details(window_width, hero.is_some());
+        let details = match hero {
+            Some((origin, frame)) => motion::reveal(
+                details,
+                origin,
+                frame.remaining,
+                rgb(theme::SURFACE),
+                theme::PANEL_RADIUS,
+            )
+            .into_any_element(),
+            None => details.into_any_element(),
+        };
+        // `data-expand-rest`: the panels that rise and fade in after the
+        // details start growing, and fade out as they shrink.
+        let rest = move |panel: gpui::Div| match hero {
+            Some((_, frame)) => panel
+                .relative()
+                .top(frame.rest_offset)
+                .opacity(frame.rest_opacity),
+            None => panel,
+        };
         let wide = mod_grid::at_least(window_width, 64.);
         v_flex()
             .id("mod-install")
@@ -927,7 +1029,7 @@ impl Render for ModInstallView {
             .child(
                 h_flex().child(
                     theme::cancel_button("cancel", t("cancel"), cx)
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(InstallViewEvent::Close))),
+                        .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
                 ),
             )
             // `lg:grid-cols-[minmax(0,1fr)_22rem]`: the form beside the
@@ -944,18 +1046,16 @@ impl Render for ModInstallView {
                         }
                     })
                     .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_3()
-                            .child(self.render_details(window_width))
-                            .children(self.render_deps(window_width, cx)),
+                        v_flex().flex_1().min_w_0().gap_3().child(details).children(
+                            self.render_deps(window_width, cx)
+                                .map(|deps| rest(div().child(deps))),
+                        ),
                     )
-                    .child(
+                    .child(rest(
                         div()
                             .when(wide, |this| this.w(px(22. * theme::FONT_SIZE)).flex_none())
                             .child(self.render_form(cx)),
-                    ),
+                    )),
             )
     }
 }
