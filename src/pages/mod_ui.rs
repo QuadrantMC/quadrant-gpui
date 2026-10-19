@@ -283,7 +283,8 @@ pub fn mod_card<P: 'static>(
                                 .child(item.name.clone()),
                         )
                         // Wraps rather than spilling out of a narrow card.
-                        .child(
+                        .child(sized(
+                            META,
                             h_flex()
                                 .flex_wrap()
                                 .gap_1p5()
@@ -302,7 +303,7 @@ pub fn mod_card<P: 'static>(
                                 .when(status.installed, |this| {
                                     this.child(dotted(theme::installed_pill(t("installed"))))
                                 }),
-                        )
+                        ))
                         .child(
                             div()
                                 .h_9()
@@ -334,6 +335,10 @@ pub fn mod_card<P: 'static>(
 /// The card's top part (icon, name, downloads, description), as a part of
 /// [`CardSlot::part`].
 const HEADER: u64 = 1;
+
+/// The downloads and provider row under the name, which wraps in a narrow
+/// card and is laid out from its content several times over otherwise.
+const META: u64 = 2;
 
 /// `pill` after a separating dot, the two wrapping as one.
 fn dotted(pill: impl IntoElement) -> impl IntoElement {
