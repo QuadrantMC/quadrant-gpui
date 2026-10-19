@@ -44,6 +44,8 @@ quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "5957faf
 reqwest = { version = "0.13", default-features = false }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"
+# Already in the tree through gpui; a type in gpui's platform interface.
+smallvec = "1"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 url = "2"
 

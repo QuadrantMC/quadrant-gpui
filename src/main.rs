@@ -19,6 +19,7 @@ mod route;
 mod screenshot;
 mod session;
 mod snackbar;
+mod text_cache;
 mod theme;
 #[cfg(feature = "updater")]
 mod updater;
@@ -284,7 +285,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    gpui_platform::application()
+    gpui::Application::with_platform(text_cache::platform(gpui_platform::current_platform(false)))
         .with_assets(assets::Assets)
         .run(move |cx| {
             cx.set_app_identity(BUNDLE_IDENTIFIER, PRODUCT_NAME);

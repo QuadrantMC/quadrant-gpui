@@ -5746,6 +5746,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "smallvec",
  "tempfile",
  "tokio",
  "url",
