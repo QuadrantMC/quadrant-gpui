@@ -95,6 +95,28 @@ pub const HERO_REST_OFFSET: Pixels = px(16.);
 pub const HERO_COLLAPSE: Duration = Duration::from_millis(220);
 pub const HERO_REST_FADE: Duration = Duration::from_millis(150);
 
+/// Search's filters sidebar folding away or out: its width over 0.28s on
+/// `[0.4, 0, 0.2, 1]`, while the panel inside, fixed at its full width and
+/// clipped, fades over 0.15s.
+pub const SIDEBAR: Duration = Duration::from_millis(280);
+pub const SIDEBAR_EASE: CubicBezier = CubicBezier(0.4, 0., 0.2, 1.);
+pub const SIDEBAR_FADE: Duration = Duration::from_millis(150);
+
+/// The sidebar's share of its full width and its panel's opacity `elapsed`
+/// into `opening` or closing it; `None` once it is done.
+pub fn sidebar(elapsed: Duration, opening: bool) -> Option<(f32, f32)> {
+    if elapsed >= SIDEBAR {
+        return None;
+    }
+    let width = SIDEBAR_EASE.at(elapsed, SIDEBAR);
+    let fade = EASE_OUT.at(elapsed, SIDEBAR_FADE);
+    Some(if opening {
+        (width, fade)
+    } else {
+        (1. - width, 1. - fade)
+    })
+}
+
 /// Where a hero transition is: the card-shaped window of the details panel,
 /// as the share of the way back to the card still to go (1 at the card, 0
 /// at rest), and the other panels' offset and opacity.
@@ -500,6 +522,17 @@ mod tests {
         let closed = reveal_window(panel, card, hero_close(HERO_COLLAPSE).remaining);
         assert!((closed.origin.x - card.origin.x).abs() < px(0.01));
         assert!((closed.size.height - card.size.height).abs() < px(0.01));
+    }
+
+    #[test]
+    fn the_sidebar_folds_its_width_while_its_panel_fades_sooner() {
+        let (width, opacity) = sidebar(Duration::ZERO, true).unwrap();
+        assert!(width.abs() < 1e-3 && opacity.abs() < 1e-3);
+        let (width, opacity) = sidebar(Duration::ZERO, false).unwrap();
+        assert!(width > 0.999 && opacity > 0.999);
+        let (width, opacity) = sidebar(SIDEBAR_FADE, false).unwrap();
+        assert!(width > 0.1 && opacity.abs() < 1e-3, "{width} {opacity}");
+        assert_eq!(sidebar(SIDEBAR, true), None);
     }
 
     #[test]

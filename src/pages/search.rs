@@ -3,7 +3,7 @@
 
 pub mod logic;
 
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc, time::Instant};
 
 use gpui::{
     Animation, AnimationExt as _, AnyElement, App, AppContext as _, Bounds, Context, Entity,
@@ -118,6 +118,15 @@ pub struct SearchPage {
     results_width: WidthProbe,
     /// The result grid's row heights, so an unchanged grid lays out once.
     row_heights: RowHeights,
+    /// The filters sidebar folding away or out, its clock starting at the
+    /// first frame that draws it, and its width share and panel opacity this
+    /// frame.
+    sidebar: Option<Option<Instant>>,
+    sidebar_frame: Option<(f32, f32)>,
+    /// Changes as the sidebar starts and stops moving. Part of the result
+    /// rows' height keys, so the cards are measured again for the width the
+    /// sidebar leaves them, but not on every frame while it moves.
+    sidebar_epoch: u64,
     /// The result cards' `Mod.tsx` entrance, and where it puts them this
     /// frame.
     entrance: CardEntrance,
@@ -211,6 +220,9 @@ impl SearchPage {
             results_scroll: ScrollHandle::new(),
             results_width: WidthProbe::default(),
             row_heights: RowHeights::default(),
+            sidebar: None,
+            sidebar_frame: None,
+            sidebar_epoch: 0,
             entrance: CardEntrance::Rest,
             card_frame: None,
             filters_scroll: ScrollHandle::new(),
@@ -715,6 +727,10 @@ impl SearchPage {
     }
 
     pub fn set_filters_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if open != self.filters_open {
+            self.sidebar = Some(None);
+            self.sidebar_epoch += 1;
+        }
         self.filters_open = open;
         self.save(cx);
         cx.notify();
@@ -810,7 +826,7 @@ impl SearchPage {
             )
     }
 
-    fn render_filters(&self, chips: usize, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_filters(&self, chips: usize, cx: &mut Context<Self>) -> gpui::Div {
         let header = h_flex()
             .flex_none()
             .justify_between()
@@ -1389,8 +1405,11 @@ impl SearchPage {
             .map(|(row, cards)| {
                 let last = (row + 1) * columns >= shown.len();
                 let keys = cards.iter().map(|(item, status)| card_key(item, *status));
-                self.row_heights
-                    .key(columns, keys, u64::from(last && further))
+                self.row_heights.key(
+                    columns,
+                    keys,
+                    u64::from(last && further) | self.sidebar_epoch << 1,
+                )
             })
             .collect();
         let mut cells: Vec<AnyElement> = shown
@@ -1753,6 +1772,21 @@ impl Render for SearchPage {
             Some(_) => None,
             None => self.entrance.frame(window),
         };
+        self.sidebar_frame = match &mut self.sidebar {
+            Some(start) => {
+                let elapsed = start.get_or_insert_with(Instant::now).elapsed();
+                let frame = motion::sidebar(elapsed, self.filters_open);
+                match frame {
+                    Some(_) => window.request_animation_frame(),
+                    None => {
+                        self.sidebar = None;
+                        self.sidebar_epoch += 1;
+                    }
+                }
+                frame
+            }
+            None => None,
+        };
         let content = self.render_content(cx);
         if self.transitions == 0 {
             return content;
@@ -1774,6 +1808,25 @@ impl SearchPage {
             return div().size_full().child(view.clone()).into_any_element();
         }
         let chips = self.filters.chips(self.categories());
+        // The `aside` grows or shrinks around the panel, which keeps its full
+        // width and is clipped; the gap beside it follows the state at once.
+        let sidebar = match self.sidebar_frame {
+            Some((width, opacity)) => Some(
+                div()
+                    .flex_none()
+                    .h_full()
+                    .overflow_hidden()
+                    .w(FILTERS_WIDTH * width)
+                    .when(opacity > 0., |this| {
+                        this.child(self.render_filters(chips.len(), cx).opacity(opacity))
+                    })
+                    .into_any_element(),
+            ),
+            None if self.filters_open => {
+                Some(self.render_filters(chips.len(), cx).into_any_element())
+            }
+            None => None,
+        };
         v_flex()
             .size_full()
             .min_h_0()
@@ -1785,9 +1838,8 @@ impl SearchPage {
                     .items_start()
                     .px_6()
                     .pb_6()
-                    .when(self.filters_open, |this| {
-                        this.gap_4().child(self.render_filters(chips.len(), cx))
-                    })
+                    .when(self.filters_open, |this| this.gap_4())
+                    .children(sidebar)
                     .child(self.render_results(&chips, cx).h_full()),
             )
             .into_any_element()

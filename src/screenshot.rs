@@ -651,6 +651,33 @@ async fn capture_motion(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncAp
     )
     .await?;
 
+    // The filters sidebar folding away and out again.
+    let filters = |open: bool| {
+        move |window, cx: &mut AsyncApp| {
+            with_page::<SearchPage>(window, cx, Route::Search, move |page, _, cx| {
+                page.set_filters_open(open, cx)
+            })
+        }
+    };
+    timeline(
+        window,
+        &shots,
+        "filters-close",
+        filters(false),
+        &[40, 100, 180, 400],
+        cx,
+    )
+    .await?;
+    timeline(
+        window,
+        &shots,
+        "filters-open",
+        filters(true),
+        &[40, 100, 180, 400],
+        cx,
+    )
+    .await?;
+
     // Mod cards flying in as Current modpack is shown again.
     show(window, cx, Route::Modpacks)?;
     capture(window, &shots.join("apply-before-cards.png"), cx).await?;
