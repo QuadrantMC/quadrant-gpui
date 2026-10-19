@@ -377,7 +377,7 @@ impl ModpackView {
     /// Scrolls the mods down by `distance`, for screenshots.
     #[cfg(feature = "screenshot")]
     pub fn scroll_by(&mut self, distance: Pixels, cx: &mut Context<Self>) {
-        self.list.state.scroll_by(distance);
+        self.list.state().scroll_by(distance);
         cx.notify();
     }
 
@@ -777,11 +777,12 @@ impl Render for ModpackView {
             .relative()
             .child(
                 list(
-                    self.list.state.clone(),
+                    self.list.state().clone(),
                     cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx)),
                 )
                 .size_full(),
             )
-            .vertical_scrollbar(&self.list.state)
+            .child(self.list.probe(cx.entity_id()))
+            .vertical_scrollbar(self.list.state())
     }
 }

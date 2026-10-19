@@ -11,9 +11,9 @@ use quadrant_host::ErrorCode;
 use chrono::{Local, TimeZone as _};
 use gpui::{
     Animation, AnimationExt as _, AnyElement, App, AppContext as _, ClickEvent, ClipboardItem,
-    Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ListAlignment, ListState,
-    ParentElement as _, Render, SharedString, Styled as _, Subscription, Task, Window, div, list,
-    prelude::FluentBuilder as _, px, rgb,
+    Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _, Subscription, Task, Window, div, list, prelude::FluentBuilder as _,
+    px, rgb,
 };
 use gpui_component::{
     IndexPath, WindowExt as _,
@@ -36,7 +36,10 @@ use crate::{
     loadable::{Loadable, Reload},
     mod_catalog::ModCatalog,
     motion,
-    pages::modpack_view::{ModpackView, ModpackViewEvent, catalog_keys},
+    pages::{
+        mod_grid::HintedList,
+        modpack_view::{ModpackView, ModpackViewEvent, catalog_keys},
+    },
     session::Session,
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
@@ -45,6 +48,9 @@ use crate::{
 mod cloud;
 mod details;
 mod prism;
+
+/// About one modpack card, for the scrollbar until cards are measured.
+const CARD_HINT: gpui::Pixels = px(260.);
 
 /// Loader choices in the order the desktop app offers them.
 const LOADERS: [ModLoader; 13] = [
@@ -454,7 +460,7 @@ pub struct ModpacksPage {
     _session_changed: Subscription,
     _prism_changed: Subscription,
     /// The list view, virtualized: only the cards on screen are drawn.
-    list: ListState,
+    list: HintedList,
     /// What the list's items are, as of the last frame.
     rows: Vec<ListRow>,
 }
@@ -527,7 +533,7 @@ impl ModpacksPage {
             _search_changed: search_changed,
             _session_changed: session_changed,
             _prism_changed: prism_changed,
-            list: ListState::new(0, ListAlignment::Top, px(0.)),
+            list: HintedList::new(CARD_HINT),
             rows: Vec::new(),
         };
         page.refresh(cx);
@@ -1273,33 +1279,36 @@ impl ModpacksPage {
         }
     }
 
-    /// Points the list at this frame's items. Unchanged items keep their
-    /// measured heights and the scroll position.
+    /// Points the list at this frame's items, keeping the scroll position,
+    /// and hints them again when gpui dropped their heights.
     fn sync_list(&mut self, cx: &App) {
         let rows = self.list_rows(cx);
-        if rows == self.rows {
+        if rows == self.rows && !self.list.stale() {
             return;
         }
-        let same_start = rows
-            .iter()
-            .zip(&self.rows)
-            .take_while(|(a, b)| a == b)
-            .count();
-        let same_end = rows[same_start..]
-            .iter()
-            .rev()
-            .zip(self.rows[same_start..].iter().rev())
-            .take_while(|(a, b)| a == b)
-            .count();
-        self.list.splice(
-            same_start..self.rows.len() - same_end,
-            rows.len() - same_start - same_end,
-        );
+        if rows != self.rows {
+            let same_start = rows
+                .iter()
+                .zip(&self.rows)
+                .take_while(|(a, b)| a == b)
+                .count();
+            let same_end = rows[same_start..]
+                .iter()
+                .rev()
+                .zip(self.rows[same_start..].iter().rev())
+                .take_while(|(a, b)| a == b)
+                .count();
+            // Moves the scroll position past the changed rows.
+            self.list.state.splice(
+                same_start..self.rows.len() - same_end,
+                rows.len() - same_start - same_end,
+            );
+        }
+        let top = self.list.state.logical_scroll_top();
+        self.list.reset(rows.len(), top);
         self.rows = rows;
     }
 
-    /// Item `ix` of the list view. The cards sit on one slate-800 panel,
-    /// drawn a slice per card.
     fn render_row(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(row) = self.rows.get(ix).cloned() else {
             return div().into_any_element();
@@ -1465,12 +1474,13 @@ impl ModpacksPage {
                 .relative()
                 .child(
                     list(
-                        self.list.clone(),
+                        self.list.state.clone(),
                         cx.processor(|this, ix, window, cx| this.render_row(ix, window, cx)),
                     )
                     .size_full(),
                 )
-                .vertical_scrollbar(&self.list)
+                .child(self.list.probe(cx.entity_id()))
+                .vertical_scrollbar(&self.list.state)
                 .into_any_element(),
             View::Details { view, .. } => view.clone().into_any_element(),
             View::Shared { modpack, sync } => {

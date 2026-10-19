@@ -161,40 +161,105 @@ impl Shape {
     }
 }
 
+/// A gpui list whose items not drawn yet count as `hint` tall, so the wheel
+/// and the scrollbar reach them.
+///
+/// gpui counts an item it has never measured as zero pixels tall unless it
+/// was given a height hint, and it drops every hint, along with every
+/// measurement, on the list's first frame and whenever its width changes.
+/// Scrolling clamps to the heights it knows, so without hints the wheel stops
+/// at the last item drawn and can't climb back past items above the first one
+/// drawn after a resize. [`Self::stale`] says the hints are gone, and
+/// [`Self::probe`] wakes the view the frame it happens, so its next render
+/// hints the items again.
+pub struct HintedList {
+    pub state: ListState,
+    hint: Pixels,
+    /// The list's width when its items were last hinted.
+    hinted: Option<Pixels>,
+}
+
+impl HintedList {
+    pub fn new(hint: Pixels) -> Self {
+        Self {
+            state: ListState::new(0, ListAlignment::Top, px(0.)),
+            hint,
+            hinted: None,
+        }
+    }
+
+    /// Whether gpui dropped the hints since the last [`Self::reset`]: the
+    /// list was drawn at another width since.
+    pub fn stale(&self) -> bool {
+        self.hinted != Some(self.state.viewport_bounds().size.width)
+    }
+
+    /// Points the list at `count` items, each `hint` tall until drawn, with
+    /// `top` at the top.
+    pub fn reset(&mut self, count: usize, top: ListOffset) {
+        self.state.reset_with_uniform_height(count, self.hint);
+        self.state.scroll_to(top);
+        self.hinted = Some(self.state.viewport_bounds().size.width);
+    }
+
+    /// An invisible element to lay after the list. In the frame where the
+    /// list's width changed, and so its hints went, it asks for one more
+    /// frame of `view`, whose render resets the list before anything can
+    /// scroll it further.
+    pub fn probe(&self, view: EntityId) -> AnyElement {
+        let state = self.state.clone();
+        let hinted = self.hinted;
+        canvas(
+            move |_, window: &mut Window, _| {
+                if hinted != Some(state.viewport_bounds().size.width) {
+                    window.on_next_frame(move |_, cx| cx.notify(view));
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_0()
+        .into_any_element()
+    }
+}
+
 /// A list of headers, rows of cards and trailers that keeps its scroll
 /// position, by card, as the cards or the columns change.
 pub struct GridList {
-    pub state: ListState,
+    pub list: HintedList,
     shape: Shape,
-    /// Each item's height until it is measured, so the scrollbar is about
-    /// right from the start.
-    hint: Pixels,
 }
 
 impl GridList {
     pub fn new(hint: Pixels) -> Self {
         Self {
-            state: ListState::new(0, ListAlignment::Top, px(0.)),
+            list: HintedList::new(hint),
             shape: Shape::default(),
-            hint,
         }
+    }
+
+    pub fn state(&self) -> &ListState {
+        &self.list.state
     }
 
     pub fn shape(&self) -> Shape {
         self.shape
     }
 
-    /// Re-shapes the list for this frame's items.
+    /// Re-shapes the list for this frame's items, and hints them again when
+    /// gpui dropped their heights.
     pub fn set_shape(&mut self, shape: Shape) {
-        if shape == self.shape {
+        if shape == self.shape && !self.list.stale() {
             return;
         }
-        let top = self.state.logical_scroll_top();
-        let carried = shape.carry(self.shape, top);
-        self.state
-            .reset_with_uniform_height(shape.items(), self.hint);
-        self.state.scroll_to(carried);
+        let top = self.list.state.logical_scroll_top();
+        self.list.reset(shape.items(), shape.carry(self.shape, top));
         self.shape = shape;
+    }
+
+    /// See [`HintedList::probe`].
+    pub fn probe(&self, view: EntityId) -> AnyElement {
+        self.list.probe(view)
     }
 }
 
@@ -412,5 +477,116 @@ mod tests {
         // A list's first shape starts at its top.
         let first = old.carry(Shape::default(), ListOffset::default());
         assert_eq!((first.item_ix, first.offset_in_item), (0, px(0.)));
+    }
+
+    /// A grid of a 100px header and 50px rows of cards, two columns below
+    /// 600px and three from there, in a real gpui window.
+    mod scrolling {
+        use gpui::{
+            Context, Entity, Render, ScrollDelta, ScrollWheelEvent, TestAppContext,
+            VisualTestContext, list, point, size,
+        };
+
+        use super::super::*;
+
+        const HEADER: Pixels = px(100.);
+        const ROW: Pixels = px(50.);
+        const CARDS: usize = 100;
+
+        struct Grid {
+            list: GridList,
+        }
+
+        impl Render for Grid {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let columns = if window.viewport_size().width >= px(600.) {
+                    3
+                } else {
+                    2
+                };
+                self.list.set_shape(Shape {
+                    headers: 1,
+                    rows: Rows::new(CARDS, columns),
+                    trailers: 0,
+                });
+                let shape = self.list.shape();
+                div()
+                    .size_full()
+                    .child(
+                        list(self.list.state().clone(), move |ix, _, _| {
+                            let height = match shape.item(ix) {
+                                Item::Header(_) => HEADER,
+                                Item::Row { .. } | Item::Trailer(_) => ROW,
+                            };
+                            div().w_full().h(height).into_any_element()
+                        })
+                        .size_full(),
+                    )
+                    .child(self.list.probe(cx.entity_id()))
+            }
+        }
+
+        fn window(cx: &mut TestAppContext) -> (Entity<Grid>, &mut VisualTestContext) {
+            cx.add_window_view(|_, _| Grid {
+                list: GridList::new(ROW),
+            })
+        }
+
+        /// Resizes the window to `width` and draws it, then the frames it
+        /// asks for next, as the platform would.
+        fn frame(cx: &mut VisualTestContext, width: f32) {
+            cx.simulate_resize(size(px(width), px(300.)));
+            cx.run_until_parked();
+            for _ in 0..4 {
+                if cx.update(|window, cx| window.simulate_next_frame(cx)) == 0 {
+                    break;
+                }
+                cx.run_until_parked();
+            }
+        }
+
+        fn wheel(cx: &mut VisualTestContext, down: f32) {
+            cx.simulate_event(ScrollWheelEvent {
+                position: point(px(20.), px(150.)),
+                delta: ScrollDelta::Pixels(point(px(0.), px(-down))),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+        }
+
+        fn top(view: &Entity<Grid>, cx: &mut VisualTestContext) -> (usize, Pixels) {
+            let top = view.read_with(cx, |grid, _| grid.list.state().logical_scroll_top());
+            (top.item_ix, top.offset_in_item)
+        }
+
+        #[gpui::test]
+        fn the_wheel_reaches_rows_not_drawn_yet(cx: &mut TestAppContext) {
+            let (view, cx) = window(cx);
+            frame(cx, 400.);
+            wheel(cx, 2000.);
+            // The header, then 38 rows.
+            assert_eq!(top(&view, cx), (39, px(0.)));
+        }
+
+        #[gpui::test]
+        fn the_header_is_reachable_after_the_columns_change_and_back(cx: &mut TestAppContext) {
+            let (view, cx) = window(cx);
+            frame(cx, 400.);
+            view.update(cx, |grid, cx| {
+                grid.list.state().scroll_to(ListOffset {
+                    item_ix: 19,
+                    offset_in_item: px(0.),
+                });
+                cx.notify();
+            });
+            frame(cx, 400.);
+            // Card 36 heads row 12 of three columns, then row 18 of two.
+            frame(cx, 700.);
+            assert_eq!(top(&view, cx).0, 13);
+            frame(cx, 400.);
+            assert_eq!(top(&view, cx).0, 19);
+            wheel(cx, -5000.);
+            assert_eq!(top(&view, cx), (0, px(0.)));
+        }
     }
 }
