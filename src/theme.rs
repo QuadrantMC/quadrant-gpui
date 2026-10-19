@@ -527,16 +527,43 @@ fn meta_pill(curseforge: bool) -> gpui::Div {
         .font_weight(FontWeight::EXTRA_BOLD)
 }
 
+/// [`filled`]'s pill as a plain element: laid out, colored and pressed as
+/// the `Button` is, without what a grid of mod cards drawn every frame can
+/// do without: a focus handle, made again each time the card is shown, and
+/// the variant's colors worked out on every frame.
+fn filled_light(id: impl Into<ElementId>, color: Rgba, hover: Rgba) -> gpui::Stateful<Div> {
+    use gpui::StatefulInteractiveElement as _;
+    div()
+        .id(id)
+        .role(gpui::accesskit::Role::Button)
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .cursor_default()
+        .whitespace_nowrap()
+        .line_height(gpui::relative(1.25))
+        .rounded(px(999.))
+        .bg(color)
+        .text_color(rgb(TEXT))
+        .hover(move |this| this.bg(hover).text_color(rgb(TEXT)))
+        .active(move |this| this.bg(hover).text_color(rgb(TEXT)))
+        .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+            // As a `Button`: a press neither moves focus nor selects text.
+            window.prevent_default();
+            gpui_component::GlobalState::suppress_text_selection(cx);
+        })
+}
+
 /// An `h-8` action on a mod card, the icon after the label.
 pub fn card_button(
     id: impl Into<ElementId>,
     tone: Tone,
     label: impl Into<SharedString>,
     icon: MdIcon,
-    cx: &App,
-) -> Button {
+) -> gpui::Stateful<Div> {
     let (color, hover) = tone.colors();
-    filled(id, color, hover, cx)
+    filled_light(id, color, hover)
         .h_8()
         .px_5()
         .font_weight(FontWeight::EXTRA_BOLD)

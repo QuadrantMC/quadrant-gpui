@@ -185,7 +185,6 @@ pub fn mod_card<P: 'static>(
                 Tone::Destructive,
                 t("delete"),
                 MdIcon::Delete,
-                cx,
             )
             .on_click(press(CardPress::Delete))
             .into_any_element(),
@@ -198,21 +197,18 @@ pub fn mod_card<P: 'static>(
                 Tone::Neutral,
                 t("installed"),
                 MdIcon::Check,
-                cx,
             ),
             Primary::Update => theme::card_button(
                 ("primary", index),
                 Tone::Positive,
                 label("update"),
                 MdIcon::FileDownload,
-                cx,
             ),
             Primary::Download => theme::card_button(
                 ("primary", index),
                 Tone::Positive,
                 label("download"),
                 MdIcon::FileDownload,
-                cx,
             ),
         };
         buttons.push(
@@ -223,15 +219,9 @@ pub fn mod_card<P: 'static>(
     }
     if actions.select {
         buttons.push(
-            theme::card_button(
-                ("select", index),
-                Tone::Primary,
-                t("select"),
-                MdIcon::Check,
-                cx,
-            )
-            .on_click(press(CardPress::Select))
-            .into_any_element(),
+            theme::card_button(("select", index), Tone::Primary, t("select"), MdIcon::Check)
+                .on_click(press(CardPress::Select))
+                .into_any_element(),
         );
     }
     if actions.open_web {
