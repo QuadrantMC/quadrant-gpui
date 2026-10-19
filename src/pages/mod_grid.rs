@@ -16,12 +16,15 @@ use gpui::{
     Styled, Window, canvas, div, px,
 };
 
-use crate::theme;
+/// A media query's rem: the browser's initial font size, 16px, whatever the
+/// root's (the desktop app's 16.8px) is. Tailwind's breakpoints are rems in
+/// media queries, so `md` is 768px wide, not 806.4px.
+const MEDIA_REM: f32 = 16.;
 
 /// Whether the window reaches a Tailwind breakpoint (`md` 48, `lg` 64, `xl`
-/// 80, `2xl` 96), in the desktop app's rem.
+/// 80, `2xl` 96), in a media query's rem.
 pub fn at_least(window_width: Pixels, rems: f32) -> bool {
-    window_width >= px(rems * theme::FONT_SIZE)
+    window_width >= px(rems * MEDIA_REM)
 }
 
 /// `grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4`: a modpack's
@@ -403,15 +406,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn breakpoints_follow_the_desktop_app_rem() {
-        assert_eq!(modpack_columns(px(800.)), 1);
-        assert_eq!(modpack_columns(px(806.4)), 2);
-        assert_eq!(modpack_columns(px(1344.)), 3);
-        assert_eq!(modpack_columns(px(1613.)), 4);
-        assert_eq!(update_columns(px(900.)), 3);
-        assert_eq!(update_columns(px(2200.)), 4);
+    fn breakpoints_are_in_a_media_querys_16px_rem() {
+        assert_eq!(modpack_columns(px(767.)), 1);
+        assert_eq!(modpack_columns(px(768.)), 2);
+        assert_eq!(modpack_columns(px(1279.)), 2);
+        assert_eq!(modpack_columns(px(1280.)), 3);
+        assert_eq!(modpack_columns(px(1536.)), 4);
+        assert_eq!(update_columns(px(1535.)), 3);
+        assert_eq!(update_columns(px(1536.)), 4);
         assert_eq!(dependency_columns(px(900.)), 2);
         assert_eq!(screenshot_columns(px(700.)), 2);
+        assert!(at_least(px(1024.), 64.));
     }
 
     #[test]

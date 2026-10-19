@@ -591,7 +591,11 @@ impl ModInstallView {
                 h_flex()
                     .items_start()
                     .gap_4()
-                    .child(theme::mod_icon(&item.mod_icon_url, &item.name, px(64.)))
+                    .child(theme::mod_icon(
+                        &item.mod_icon_url,
+                        &item.name,
+                        px(4. * theme::FONT_SIZE),
+                    ))
                     .child(
                         v_flex()
                             .flex_1()

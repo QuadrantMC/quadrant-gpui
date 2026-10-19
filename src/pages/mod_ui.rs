@@ -263,7 +263,11 @@ pub fn mod_card<P: 'static>(
             h_flex()
                 .items_start()
                 .gap_3()
-                .child(theme::mod_icon(&item.mod_icon_url, &item.name, px(56.)))
+                .child(theme::mod_icon(
+                    &item.mod_icon_url,
+                    &item.name,
+                    px(3.5 * theme::FONT_SIZE),
+                ))
                 .child(
                     v_flex()
                         .flex_1()
