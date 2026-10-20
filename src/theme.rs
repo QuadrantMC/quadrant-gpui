@@ -389,6 +389,37 @@ pub fn option_pill(
         )
 }
 
+/// [`option_pill`] as a plain element, for Search's many filter options and
+/// its pager, drawn on every frame of the page. A `disabled` one neither
+/// lights up nor presses; give it no click.
+pub fn option_chip(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: Option<MdIcon>,
+    picked: bool,
+    disabled: bool,
+) -> gpui::Stateful<Div> {
+    let tone = if picked { Tone::Primary } else { Tone::Control };
+    let (color, hover) = tone.colors();
+    let pill = if disabled {
+        resting_light(id, color)
+    } else {
+        filled_light(id, color, hover)
+    };
+    pill.h_8()
+        .px_3()
+        .font_weight(FontWeight::BOLD)
+        .when(!picked, |this| this.text_color(rgb(TEXT_BADGE)))
+        .child(
+            gpui_component::h_flex()
+                .gap_1p5()
+                .items_center()
+                .text_size(px(13.))
+                .when_some(icon, |this, icon| this.child(Icon::new(icon).size_4()))
+                .child(label.into()),
+        )
+}
+
 /// A source toggle: a brand dot and the provider's name, outlined blue
 /// while it is searched and dashed when something rules it out.
 pub fn source_toggle(
@@ -533,6 +564,19 @@ fn meta_pill(curseforge: bool) -> gpui::Div {
 /// the variant's colors worked out on every frame.
 fn filled_light(id: impl Into<ElementId>, color: Rgba, hover: Rgba) -> gpui::Stateful<Div> {
     use gpui::StatefulInteractiveElement as _;
+    resting_light(id, color)
+        .hover(move |this| this.bg(hover).text_color(rgb(TEXT)))
+        .active(move |this| this.bg(hover).text_color(rgb(TEXT)))
+        .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+            // As a `Button`: a press neither moves focus nor selects text.
+            window.prevent_default();
+            gpui_component::GlobalState::suppress_text_selection(cx);
+        })
+}
+
+/// [`filled_light`] as a disabled `Button` draws it: no hover, no press.
+fn resting_light(id: impl Into<ElementId>, color: Rgba) -> gpui::Stateful<Div> {
+    use gpui::StatefulInteractiveElement as _;
     div()
         .id(id)
         .role(gpui::accesskit::Role::Button)
@@ -546,13 +590,6 @@ fn filled_light(id: impl Into<ElementId>, color: Rgba, hover: Rgba) -> gpui::Sta
         .rounded(px(999.))
         .bg(color)
         .text_color(rgb(TEXT))
-        .hover(move |this| this.bg(hover).text_color(rgb(TEXT)))
-        .active(move |this| this.bg(hover).text_color(rgb(TEXT)))
-        .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
-            // As a `Button`: a press neither moves focus nor selects text.
-            window.prevent_default();
-            gpui_component::GlobalState::suppress_text_selection(cx);
-        })
 }
 
 /// An `h-8` action on a mod card, the icon after the label.

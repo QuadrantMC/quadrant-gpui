@@ -956,12 +956,12 @@ impl SearchPage {
                     .flex_wrap()
                     .gap_1p5()
                     .children(ContentType::ALL.map(|content| {
-                        theme::option_pill(
+                        theme::option_chip(
                             SharedString::from(format!("content-{content:?}")),
                             t(content.label_key()),
                             Some(content.icon()),
                             filters.content == content,
-                            cx,
+                            false,
                         )
                         .on_click(cx.listener(
                             move |this, _, window, cx| {
@@ -1034,12 +1034,12 @@ impl SearchPage {
                 .child(h_flex().flex_wrap().gap_1p5().children(
                     loader_options(&providers).into_iter().map(|loader| {
                         let picked = filters.loader == Some(loader);
-                        theme::option_pill(
+                        theme::option_chip(
                             SharedString::from(format!("loader-{loader:?}")),
                             loader.to_string(),
                             None,
                             picked,
-                            cx,
+                            false,
                         )
                         .px_3p5()
                         .on_click(cx.listener(
@@ -1156,11 +1156,16 @@ impl SearchPage {
         });
         let id = SharedString::from(format!("category-{}", category.key));
         if pill {
-            return theme::option_pill(id, category.name.clone(), None, picked && !disabled, cx)
-                .px_3p5()
-                .disabled(disabled)
-                .on_click(toggle)
-                .into_any_element();
+            return theme::option_chip(
+                id,
+                category.name.clone(),
+                None,
+                picked && !disabled,
+                disabled,
+            )
+            .px_3p5()
+            .when(!disabled, |this| this.on_click(toggle))
+            .into_any_element();
         }
         let label_color = if disabled {
             theme::TEXT_DISABLED
@@ -1492,13 +1497,14 @@ impl SearchPage {
                                 .disabled(page == 0)
                                 .on_click(cx.listener(|this, _, _, cx| this.set_page(0, cx))),
                         )
-                        .child(
-                            page_button("previous-page", t("previous"), cx)
-                                .disabled(page == 0)
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                        .child(page_button("previous-page", t("previous"), page == 0).when(
+                            page > 0,
+                            |this| {
+                                this.on_click(cx.listener(move |this, _, _, cx| {
                                     this.set_page(page.saturating_sub(1), cx)
-                                })),
-                        )
+                                }))
+                            },
+                        ))
                         .child(
                             div()
                                 .px_2()
@@ -1513,13 +1519,14 @@ impl SearchPage {
                                     ],
                                 )),
                         )
-                        .child(
-                            page_button("next-page", t("next"), cx)
-                                .disabled(page + 1 >= pages)
-                                .on_click(
+                        .child(page_button("next-page", t("next"), page + 1 >= pages).when(
+                            page + 1 < pages,
+                            |this| {
+                                this.on_click(
                                     cx.listener(move |this, _, _, cx| this.set_page(page + 1, cx)),
-                                ),
-                        )
+                                )
+                            },
+                        ))
                         .child(
                             page_icon_button("last-page", MdIcon::LastPage, cx)
                                 .tooltip(t("lastPage"))
@@ -1750,12 +1757,10 @@ fn page_icon_button(
 }
 
 /// A pager pill for the previous and next page.
-fn page_button(
-    id: &'static str,
-    label: SharedString,
-    cx: &mut Context<SearchPage>,
-) -> gpui_component::button::Button {
-    theme::option_pill(id, label, None, false, cx).h_9().px_4()
+fn page_button(id: &'static str, label: SharedString, disabled: bool) -> gpui::Stateful<gpui::Div> {
+    theme::option_chip(id, label, None, false, disabled)
+        .h_9()
+        .px_4()
 }
 
 fn empty_state(
