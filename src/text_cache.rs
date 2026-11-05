@@ -21,10 +21,11 @@ use gpui::{
     BackgroundExecutor, Bounds, ClipboardItem, ClipboardReadError, CursorStyle, DevicePixels, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GraphicalEnvironment, Hsla, Keymap,
     LineLayout, Menu, MenuItem, MissingGlyphSink, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformGestures, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, RenderGlyphParams, ScreenCaptureSource, ShapedRun, Size,
-    SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, ThermalState,
-    WindowAppearance, WindowButtonLayout, WindowParams, WindowingRequest,
+    PlatformDisplay, PlatformGestures, PlatformInfo, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PowerMode, RenderGlyphParams,
+    ScreenCaptureSource, ShapedRun, Size, SystemNotification, SystemNotificationResponse, Task,
+    TextRenderingMode, ThermalState, WindowAppearance, WindowButtonLayout, WindowParams,
+    WindowingRequest,
 };
 use smallvec::SmallVec;
 
@@ -190,6 +191,18 @@ struct CachingPlatform {
 impl Platform for CachingPlatform {
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
         self.text.clone()
+    }
+
+    fn platform_info(&self) -> PlatformInfo {
+        self.inner.platform_info()
+    }
+
+    fn power_mode(&self) -> PowerMode {
+        self.inner.power_mode()
+    }
+
+    fn on_power_mode_change(&self, callback: Box<dyn FnMut()>) {
+        self.inner.on_power_mode_change(callback)
     }
 
     fn background_executor(&self) -> BackgroundExecutor {

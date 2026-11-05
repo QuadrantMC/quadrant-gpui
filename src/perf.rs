@@ -17,8 +17,8 @@ use std::{
 use anyhow::{Context as _, Result, anyhow, bail};
 use gpui::{
     App, AppContext as _, AsyncApp, Entity, ImageSource, Modifiers, MouseMoveEvent, Pixels,
-    PlatformInput, ScrollDelta, ScrollWheelEvent, SharedString, Size, TouchPhase, Window,
-    WindowHandle, point, px, size,
+    PlatformInput, ScrollDelta, ScrollEvent, SharedString, Size, TouchPhase, Window, WindowHandle,
+    point, px, size,
 };
 use gpui_component::{Root, WindowExt as _};
 use serde_json::json;
@@ -674,13 +674,14 @@ impl Driver {
                 let target = SCROLL_SPEED * t.min(DURATION.as_secs_f32() - t);
                 let dy = self.scrolled - target;
                 self.scrolled = target;
-                let event = ScrollWheelEvent {
+                let event = ScrollEvent {
                     position: pointer(self.scenario, viewport),
                     delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
                     modifiers: Modifiers::default(),
                     touch_phase: TouchPhase::Moved,
+                    source: gpui::ScrollSource::Pointer,
                 };
-                window.dispatch_event(PlatformInput::ScrollWheel(event), cx);
+                window.dispatch_event(PlatformInput::Scroll(event), cx);
                 let page = app(window, cx).map(|app| {
                     app.update(cx, |app, cx| app.page(self.scenario.route(), window, cx))
                 });

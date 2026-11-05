@@ -488,8 +488,8 @@ mod tests {
     /// 600px and three from there, in a real gpui window.
     mod scrolling {
         use gpui::{
-            Context, Entity, Render, ScrollDelta, ScrollWheelEvent, TestAppContext,
-            VisualTestContext, list, point, size,
+            Context, Entity, Render, ScrollDelta, ScrollEvent, TestAppContext, VisualTestContext,
+            list, point, size,
         };
 
         use super::super::*;
@@ -551,7 +551,7 @@ mod tests {
         }
 
         fn wheel(cx: &mut VisualTestContext, down: f32) {
-            cx.simulate_event(ScrollWheelEvent {
+            cx.simulate_event(ScrollEvent {
                 position: point(px(20.), px(150.)),
                 delta: ScrollDelta::Pixels(point(px(0.), px(-down))),
                 ..Default::default()

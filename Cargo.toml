@@ -31,13 +31,13 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "6"
 # Already in the tree through gpui; runs the mod catalog's requests side by side.
 futures = "0.3"
-getrandom = "0.3"
+getrandom = "0.4"
 # Already in the tree through gpui; decodes the tray icon.
 image = { version = "0.25", default-features = false, features = ["png"] }
-gpui = { package = "gpui-pre", version = "=0.3.9" }
-gpui-component = "0.7.3"
-gpui-kit-assets = "0.7.3"
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit", "wayland"] }
+gpui = { package = "gpui-pre", version = "=0.3.11" }
+gpui-component = "0.9.0"
+gpui-kit-assets = "0.9.0"
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", features = ["font-kit", "wayland"] }
 log = "0.4"
 minisign-verify = { version = "0.3", optional = true }
 quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "e4c92d873ffbc1d48a025cfc251adbd29fa02b21" }
@@ -69,7 +69,7 @@ ksni = { version = "0.3", default-features = false, features = ["async-io", "blo
 
 [dev-dependencies]
 # gpui's test window, for tests that draw, resize and scroll real lists.
-gpui = { package = "gpui-pre", version = "=0.3.9", features = ["test-support"] }
+gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
 tempfile = "3"
 
 [build-dependencies]

@@ -1117,13 +1117,14 @@ fn wheel_to_end(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
 fn wheel(window: WindowHandle<Root>, cx: &mut AsyncApp, dy: f32) -> Result<()> {
     cx.update_window(window.into(), |_, window, cx| {
         let size = window.viewport_size();
-        let event = gpui::ScrollWheelEvent {
+        let event = gpui::ScrollEvent {
             position: gpui::point(size.width / 2., size.height / 2.),
             delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(dy))),
             modifiers: gpui::Modifiers::default(),
             touch_phase: gpui::TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         };
-        window.dispatch_event(gpui::PlatformInput::ScrollWheel(event), cx);
+        window.dispatch_event(gpui::PlatformInput::Scroll(event), cx);
     })
 }
 
