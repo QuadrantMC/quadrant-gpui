@@ -4,6 +4,7 @@
 mod app;
 mod assets;
 mod backend;
+mod config;
 mod console;
 mod events;
 mod i18n;

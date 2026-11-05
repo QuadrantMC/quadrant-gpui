@@ -23,6 +23,7 @@ use quadrant_host::{QuadrantHost, get_user_url};
 use crate::{
     assets::MdIcon,
     backend::Backend,
+    config,
     events::{ModProgress, ModStage, watch_mod_progress},
     i18n::{describe, t, t_with},
     loadable::Loadable,
@@ -169,7 +170,7 @@ pub fn remember(cx: &App, entries: Vec<(&'static str, String)>) {
     Backend::global(cx)
         .run(cx, move |host| async move {
             for (key, value) in entries {
-                host.set_config_value(key, value.into())?;
+                config::set(&host, key, value.into())?;
             }
             Ok(())
         })

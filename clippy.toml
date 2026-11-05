@@ -1,0 +1,6 @@
+# Config writes go through `config::set` and `config::unset`, which keep
+# settings sync's `lastSettingsUpdated` current.
+disallowed-methods = [
+  { path = "quadrant_host::QuadrantHost::set_config_value", reason = "use config::set, which bumps lastSettingsUpdated" },
+  { path = "quadrant_host::QuadrantHost::remove_config_value", reason = "use config::unset, which bumps lastSettingsUpdated" },
+]

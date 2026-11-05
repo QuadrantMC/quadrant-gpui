@@ -26,6 +26,7 @@ use tokio::sync::watch;
 use crate::{
     assets::MdIcon,
     backend::Backend,
+    config,
     i18n::{describe, t},
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
@@ -222,7 +223,7 @@ impl Updater {
     fn set_channel(&mut self, channel: &'static str, cx: &mut Context<Self>) {
         self.channel = Some(channel.to_string());
         let task = Backend::global(cx).run(cx, move |host| async move {
-            host.set_config_value("channel", channel.into())
+            config::set(&host, "channel", channel.into())
         });
         cx.spawn(async move |this, cx| match task.await {
             Ok(()) => {

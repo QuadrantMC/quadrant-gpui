@@ -1207,11 +1207,9 @@ name=Survival
         options.keyring_service_name = "quadrant-gpui-tests".into();
         let host = QuadrantHost::new(options).unwrap();
         host.init_config().unwrap();
-        host.set_config_value("experimentalFeatures", true.into())
-            .unwrap();
+        crate::config::set(&host, "experimentalFeatures", true.into()).unwrap();
         // Never the real Prism Launcher folder.
-        host.set_config_value("prismLauncherFolder", prism.to_string_lossy().into())
-            .unwrap();
+        crate::config::set(&host, "prismLauncherFolder", prism.to_string_lossy().into()).unwrap();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let run = |op: Op| runtime.block_on(op.perform(host.clone()));
 

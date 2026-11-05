@@ -556,7 +556,7 @@ async fn capture_revalidate(
         show(window, cx, Route::Settings)?;
         cx.update(|cx| {
             Backend::global(cx).run(cx, move |host| async move {
-                host.set_config_value("experimentalFeatures", on.into())
+                crate::config::set(&host, "experimentalFeatures", on.into())
             })
         })
         .await?;

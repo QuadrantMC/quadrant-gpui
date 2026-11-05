@@ -480,8 +480,7 @@ mod tests {
         options.keyring_service_name = "quadrant-gpui-tests".into();
         let host = QuadrantHost::new(options).unwrap();
         host.init_config().unwrap();
-        host.set_config_value("prismLauncherFolder", prism.to_string_lossy().into())
-            .unwrap();
+        crate::config::set(&host, "prismLauncherFolder", prism.to_string_lossy().into()).unwrap();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
             .block_on(host.create_modpack("Alpha".into(), "1.21.1".into(), ModLoader::Fabric))
@@ -500,8 +499,7 @@ mod tests {
             run(apply.clone()).is_err(),
             "refused without experimental features"
         );
-        host.set_config_value("experimentalFeatures", true.into())
-            .unwrap();
+        crate::config::set(&host, "experimentalFeatures", true.into()).unwrap();
 
         let plans = runtime
             .block_on(host.get_prism_sync_plans("Alpha".into()))

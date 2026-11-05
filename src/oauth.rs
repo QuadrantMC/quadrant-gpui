@@ -14,7 +14,7 @@ use tokio::{
 };
 use url::Url;
 
-use crate::i18n::t;
+use crate::{config, i18n::t};
 
 const AUTHORIZE_URL: &str = "https://mrquantumoff.dev/account/oauth2/authorize";
 const SCOPES: &str = "profile:read profile:write sync:read sync:write share:read share:write \
@@ -52,7 +52,7 @@ pub async fn sign_in(
         );
     }
     let state = new_state()?;
-    host.set_config_value(OAUTH_STATE, Value::String(state.clone()))?;
+    config::set(&host, OAUTH_STATE, Value::String(state.clone()))?;
     let (listener, port) = bind().await?;
     let redirect_uri = format!("http://127.0.0.1:{port}");
     let _ = browser.send(authorize_url(

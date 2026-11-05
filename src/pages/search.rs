@@ -32,6 +32,7 @@ use self::logic::{
 use crate::{
     assets::MdIcon,
     backend::Backend,
+    config,
     events::{ModStage, watch_mod_progress},
     i18n::{describe, t, t_with},
     loadable::{Loadable, Reload},
@@ -478,7 +479,7 @@ impl SearchPage {
         let saved = save_filters(&self.filters, self.filters_open);
         Backend::global(cx)
             .run(cx, move |host| async move {
-                host.set_config_value("searchFilters", saved)
+                config::set(&host, "searchFilters", saved)
             })
             .detach();
     }

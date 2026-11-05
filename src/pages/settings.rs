@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::{
     backend::Backend,
-    events,
+    config, events,
     i18n::{describe, t, t_with},
     loadable::Loadable,
     snackbar::{self, SnackbarKind},
@@ -138,7 +138,7 @@ impl Op {
     pub async fn perform(self, host: QuadrantHost) -> anyhow::Result<()> {
         match self {
             Op::Set(toggle, on) => {
-                host.set_config_value(toggle.key(), Value::Bool(on))?;
+                config::set(&host, toggle.key(), Value::Bool(on))?;
                 // Like the desktop app: the choice is kept even when the
                 // telemetry server can't be reached, and the failure reported.
                 match (toggle, on) {
@@ -154,12 +154,14 @@ impl Op {
                         quadrant_host::ErrorCode::NoMinecraftFolder,
                     ))?,
                 };
-                host.set_config_value("mcFolder", folder.to_string_lossy().into())
+                config::set(&host, "mcFolder", folder.to_string_lossy().into())
             }
-            Op::PrismFolder(Some(folder)) => {
-                host.set_config_value("prismLauncherFolder", folder.to_string_lossy().into())
-            }
-            Op::PrismFolder(None) => host.remove_config_value("prismLauncherFolder"),
+            Op::PrismFolder(Some(folder)) => config::set(
+                &host,
+                "prismLauncherFolder",
+                folder.to_string_lossy().into(),
+            ),
+            Op::PrismFolder(None) => config::unset(&host, "prismLauncherFolder"),
         }
     }
 }
