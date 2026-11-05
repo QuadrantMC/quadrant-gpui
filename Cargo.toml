@@ -2,7 +2,7 @@
 name = "quadrant-native"
 # YY.MM.REVISION with the release channel as the pre-release, like Quadrant.
 # The release tag is `v` plus this version.
-version = "26.10.0-stable"
+version = "26.11.0-stable"
 edition = "2024"
 description = "Manage your mods and modpacks with ease."
 authors = ["MrQuantumOFF (Demir Yerli) <me@mrquantumoff.dev>"]
@@ -40,8 +40,8 @@ gpui-kit-assets = "0.7.3"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit", "wayland"] }
 log = "0.4"
 minisign-verify = { version = "0.3", optional = true }
-quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "5957faf11733163e5272cc756cc227905a6080ae" }
-quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "5957faf11733163e5272cc756cc227905a6080ae" }
+quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "e4c92d873ffbc1d48a025cfc251adbd29fa02b21" }
+quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "e4c92d873ffbc1d48a025cfc251adbd29fa02b21" }
 # Already in the tree through quadrant-core; fetches remote images for `img(url)`.
 reqwest = { version = "0.13", default-features = false }
 serde = { version = "1", features = ["derive"], optional = true }
