@@ -6133,7 +6133,7 @@ dependencies = [
 
 [[package]]
 name = "quadrant-native"
-version = "26.11.0-stable"
+version = "26.11.0-alpha"
 dependencies = [
  "anyhow",
  "auto-launch",

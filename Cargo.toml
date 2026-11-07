@@ -2,7 +2,7 @@
 name = "quadrant-native"
 # YY.MM.REVISION with the release channel as the pre-release, like Quadrant.
 # The release tag is `v` plus this version.
-version = "26.11.0-stable"
+version = "26.11.0-alpha"
 edition = "2024"
 description = "Manage your mods and modpacks with ease."
 authors = ["MrQuantumOFF (Demir Yerli) <me@mrquantumoff.dev>"]
