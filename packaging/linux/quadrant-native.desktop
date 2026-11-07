@@ -2,9 +2,10 @@
 Type=Application
 Name=Quadrant-Native
 Comment=Manage your mods and modpacks with ease.
-Exec=quadrant-native
+Exec=quadrant-native %U
 Icon=quadrant-native
 Terminal=false
 Categories=Utility;
 Keywords=Minecraft;mods;modpacks;
 StartupWMClass=quadrant-native
+MimeType=x-scheme-handler/quadrantnext;x-scheme-handler/curseforge;x-scheme-handler/modrinth;

@@ -15,7 +15,7 @@ mod settings;
 pub use account::AccountPage;
 pub use current_modpack::CurrentModpackPage;
 pub use installed_content::InstalledContentPage;
-pub use modpacks::ModpacksPage;
+pub use modpacks::{ModpacksPage, parse_share_code};
 pub use search::SearchPage;
 #[cfg(feature = "screenshot")]
 pub use search::logic::ContentType;

@@ -109,6 +109,40 @@ pub fn close(window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Puts a window opened hidden for `--autostart` in the tray, as the
+/// desktop app's autostart does. Without a tray it shows the window, which
+/// would otherwise be out of reach.
+pub fn start_hidden(window: WindowHandle<Root>, cx: &mut App) {
+    if !cx.has_global::<Tray>() {
+        let _ = window.update(cx, |_, window, cx| platform::show(window, cx));
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    let _ = window.update(cx, |_, window, cx| hide(window, cx));
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = window;
+        cx.global_mut::<Tray>().hidden = true;
+    }
+}
+
+/// Brings the main window back for a second launch or a link, as the
+/// desktop app's single-instance handler does: out of the tray, restored,
+/// centred and in front. `window` is the one `main` opened, which is the
+/// main window for good when there is no tray. `None` if it couldn't be
+/// opened again.
+pub fn reveal(window: WindowHandle<Root>, cx: &mut App) -> Option<WindowHandle<Root>> {
+    let window = if cx.has_global::<Tray>() {
+        show(cx);
+        cx.global::<Tray>().window?
+    } else {
+        let _ = window.update(cx, |_, window, cx| platform::show(window, cx));
+        window
+    };
+    let _ = window.update(cx, |_, window, _| platform::center(window));
+    Some(window)
+}
+
 fn run(command: Command, cx: &mut App) {
     let hidden = cx.global::<Tray>().hidden;
     match command {
@@ -275,6 +309,65 @@ mod platform {
         cx.activate(true);
         window.activate_window();
     }
+
+    /// Restores a minimized window and centres it on its monitor's work
+    /// area, as Tauri's `unminimize` and `center` do. A maximized window
+    /// stays put. gpui can't move a window on macOS, so there it only
+    /// comes to the front.
+    pub fn center(window: &mut Window) {
+        #[cfg(windows)]
+        if let Some(hwnd) = hwnd(window) {
+            use windows::Win32::{
+                Foundation::RECT,
+                Graphics::Gdi::{
+                    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+                },
+                UI::WindowsAndMessaging::{
+                    GetWindowRect, IsIconic, IsZoomed, SW_RESTORE, SWP_NOACTIVATE, SWP_NOSIZE,
+                    SWP_NOZORDER, SetWindowPos, ShowWindow,
+                },
+            };
+            // SAFETY: plain Win32 calls on this process's own window, with
+            // stack-owned out parameters.
+            unsafe {
+                if IsIconic(hwnd).as_bool() {
+                    let _ = ShowWindow(hwnd, SW_RESTORE);
+                }
+                if IsZoomed(hwnd).as_bool() {
+                    return;
+                }
+                let mut rect = RECT::default();
+                let mut monitor = MONITORINFO {
+                    cbSize: size_of::<MONITORINFO>() as u32,
+                    ..Default::default()
+                };
+                if GetWindowRect(hwnd, &mut rect).is_err()
+                    || !GetMonitorInfoW(
+                        MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                        &mut monitor,
+                    )
+                    .as_bool()
+                {
+                    return;
+                }
+                let work = monitor.rcWork;
+                let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+                let x = work.left + (work.right - work.left - width) / 2;
+                let y = work.top + (work.bottom - work.top - height) / 2;
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    x,
+                    y,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+        }
+        #[cfg(target_os = "macos")]
+        let _ = window;
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -355,6 +448,10 @@ mod platform {
     pub fn show(window: &mut Window, _: &mut App) {
         window.activate_window();
     }
+
+    /// Wayland leaves where a window goes, and whether it is minimized, to
+    /// the compositor.
+    pub fn center(_: &mut Window) {}
 }
 
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
@@ -376,6 +473,8 @@ mod platform {
     pub fn show(window: &mut Window, _: &mut App) {
         window.activate_window();
     }
+
+    pub fn center(_: &mut Window) {}
 }
 
 #[cfg(test)]

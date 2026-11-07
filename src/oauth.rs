@@ -70,6 +70,28 @@ pub async fn sign_in(
     Ok(Outcome::SignedIn)
 }
 
+/// A `quadrantnext://login` redirect, the desktop app's deep-link way back
+/// from the browser: finishes the sign-in it belongs to, and ignores one
+/// whose state no sign-in here started.
+pub async fn finish_redirect(
+    host: QuadrantHost,
+    state: Option<String>,
+    code: Option<String>,
+    redirect_uri: String,
+) -> Result<()> {
+    let expected = host
+        .get_config_value(OAUTH_STATE)?
+        .and_then(|value| value.as_str().map(str::to_string));
+    let (Some(state), Some(code)) = (state, code) else {
+        return Ok(());
+    };
+    if expected.as_ref() != Some(&state) {
+        log::warn!("Ignored a sign-in redirect this app didn't start");
+        return Ok(());
+    }
+    host.oauth2_login(code, redirect_uri).await
+}
+
 fn new_state() -> Result<String> {
     let mut bytes = [0u8; 24];
     getrandom::fill(&mut bytes).map_err(|error| anyhow!("no randomness available: {error}"))?;

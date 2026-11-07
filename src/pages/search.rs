@@ -19,7 +19,7 @@ use gpui_component::{
     v_flex,
 };
 use quadrant_core::{
-    mc_mod::{Mod, SearchCategory},
+    mc_mod::{Mod, ModType, SearchCategory},
     models::{LocalModpack, ModLoader},
 };
 use quadrant_host::QuadrantHost;
@@ -33,9 +33,11 @@ use crate::{
     assets::MdIcon,
     backend::Backend,
     config,
+    deep_link::ModLink,
     events::{ModStage, watch_mod_progress},
     i18n::{describe, t, t_with},
     loadable::{Loadable, Reload},
+    mod_catalog::{ModKey, provider_record},
     motion::{self, CardEntrance},
     pages::{
         install_location::LocationPicker,
@@ -598,12 +600,12 @@ impl SearchPage {
                     let request = InstallRequest::into_target(item, target, location);
                     self.install(request, window, cx);
                 } else {
-                    self.open_details(item.clone(), Some(origin), window, cx);
+                    self.open_details(item.clone(), Some(origin), None, window, cx);
                 }
             }
             CardPress::Primary(Primary::Download | Primary::Installed) | CardPress::Open => {
                 if item.downloadable {
-                    self.open_details(item.clone(), Some(origin), window, cx);
+                    self.open_details(item.clone(), Some(origin), None, window, cx);
                 }
             }
             CardPress::Primary(Primary::Update) | CardPress::Delete | CardPress::Select => {}
@@ -643,17 +645,19 @@ impl SearchPage {
         &mut self,
         item: Mod,
         origin: Option<Bounds<Pixels>>,
+        file_id: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let target = self.filters.target.clone();
         let location = self.install_to.read(cx).selected(cx);
-        let view = cx.new(|cx| ModInstallView::new(item, target, location, origin, window, cx));
+        let view =
+            cx.new(|cx| ModInstallView::new(item, target, location, origin, file_id, window, cx));
         let subscription = cx.subscribe_in(&view, window, |this, _, event, window, cx| {
             match event {
                 InstallViewEvent::Close => this.details.close(),
                 InstallViewEvent::Open(item, origin) => {
-                    this.open_details((**item).clone(), Some(*origin), window, cx)
+                    this.open_details((**item).clone(), Some(*origin), None, window, cx)
                 }
                 InstallViewEvent::Installed => this.refresh_modpacks(window, cx),
             }
@@ -661,6 +665,37 @@ impl SearchPage {
         });
         self.details.open((view, subscription), origin.is_some());
         cx.notify();
+    }
+
+    /// Opens the install page of the mod a link names, as the desktop app's
+    /// deep links do: entering as a page switch does, with no card to grow
+    /// out of. A link to a file installs that file.
+    pub fn open_link(&mut self, link: ModLink, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(key) = ModKey::new(&link.source, &link.id) else {
+            return;
+        };
+        let task =
+            Backend::global(cx).run(
+                cx,
+                move |host| async move { provider_record(&host, &key).await },
+            );
+        cx.spawn_in(window, async move |this, cx| {
+            let found = task.await;
+            let _ = this.update_in(cx, |this, window, cx| match found {
+                Ok(mut item) if item.mod_type != ModType::Unknown => {
+                    log::info!("Opening the install page of {}", item.name);
+                    item.downloadable = true;
+                    this.open_details(item, None, link.file_id, window, cx);
+                }
+                found => {
+                    if let Err(error) = found {
+                        log::warn!("No mod {} at {:?}: {error:#}", link.id, link.source);
+                    }
+                    snackbar::show(cx, SnackbarKind::Error, t("unsupportedDownload"));
+                }
+            });
+        })
+        .detach();
     }
 
     /// Shows the first result not in the target pack as installing at
@@ -775,7 +810,7 @@ impl SearchPage {
         if let Loadable::Ready(results) = &self.results
             && let Some(first) = results.shown.first().cloned()
         {
-            self.open_details(first, None, window, cx);
+            self.open_details(first, None, None, window, cx);
         }
     }
 

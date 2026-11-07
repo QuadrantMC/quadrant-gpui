@@ -53,6 +53,9 @@ pub struct InstallRequest {
     /// A content location a pack goes to instead, from the "Install to"
     /// picker. Never set for a mod.
     pub content_location: Option<String>,
+    /// A specific file, from a link, instead of the newest for the version
+    /// and loader.
+    pub file_id: Option<String>,
 }
 
 impl InstallRequest {
@@ -68,6 +71,7 @@ impl InstallRequest {
             loader: target.mod_loader,
             modpack: Some(target.name.clone()),
             content_location: location.filter(|_| is_pack(item.mod_type)),
+            file_id: None,
         }
     }
 
@@ -79,7 +83,7 @@ impl InstallRequest {
             self.source,
             self.modpack,
             self.mod_type,
-            None,
+            self.file_id,
             self.content_location,
         )
         .await
@@ -196,6 +200,9 @@ type PickLoader = SelectState<SearchableVec<Choice<ModLoader>>>;
 pub struct ModInstallView {
     item: Mod,
     explicit_target: Option<String>,
+    /// The file a link named. The page then installs it and doesn't ask for
+    /// a version or loader, as `ModInstallPage`'s `fileId` does.
+    file_id: Option<String>,
     setup: Loadable<Setup>,
     owners: Loadable<Vec<String>>,
     deps: Loadable<Vec<Mod>>,
@@ -268,6 +275,7 @@ impl ModInstallView {
         explicit_target: Option<String>,
         opener_location: Option<String>,
         origin: Option<Bounds<Pixels>>,
+        file_id: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -307,6 +315,7 @@ impl ModInstallView {
         let mut view = Self {
             item,
             explicit_target,
+            file_id,
             setup: Loadable::Loading,
             owners: Loadable::Loading,
             deps: Loadable::Loading,
@@ -585,14 +594,22 @@ impl ModInstallView {
     }
 
     /// The install the form describes, or `None` while it can't be made:
-    /// still loading, no version, or a mod without a modpack.
+    /// still loading, no version where one is picked, or a mod without a
+    /// modpack.
     fn request(&self, cx: &App) -> Option<InstallRequest> {
         if !matches!(self.setup, Loadable::Ready(_)) {
             return None;
         }
-        let version = self.version.read(cx).selected_value()?.clone();
+        let version = self
+            .version
+            .read(cx)
+            .selected_value()
+            .cloned()
+            .unwrap_or_default();
         let modpack = self.modpack.read(cx).selected_value().cloned();
-        if version.is_empty() || (self.item.mod_type == ModType::Mod && modpack.is_none()) {
+        if (self.file_id.is_none() && version.is_empty())
+            || (self.item.mod_type == ModType::Mod && modpack.is_none())
+        {
             return None;
         }
         Some(InstallRequest {
@@ -614,6 +631,7 @@ impl ModInstallView {
                 .read(cx)
                 .selected(cx)
                 .filter(|_| is_pack(self.item.mod_type)),
+            file_id: self.file_id.clone(),
         })
     }
 
@@ -865,6 +883,7 @@ impl ModInstallView {
     fn render_form(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let item = &self.item;
         let is_mod = item.mod_type == ModType::Mod;
+        let picks_targets = self.file_id.is_none();
         let selected = self.selected_modpack(cx);
         let installed = installed_in(item, selected);
         let reinstall = installed.is_some();
@@ -906,13 +925,17 @@ impl ModInstallView {
             Loadable::Failed(error) => div().child(error.clone()).into_any_element(),
             Loadable::Ready(_) => v_flex()
                 .gap_3()
-                .child(field("chooseVersion", picker(Select::new(&self.version))))
-                .when(is_mod, |this| {
+                .when(picks_targets, |this| {
+                    this.child(field("chooseVersion", picker(Select::new(&self.version))))
+                })
+                .when(is_mod && picks_targets, |this| {
                     this.child(field(
                         "choosePreferredAPI",
                         picker(Select::new(&self.loader)),
                     ))
-                    .child(field("chooseModpack", picker(Select::new(&self.modpack))))
+                })
+                .when(is_mod, |this| {
+                    this.child(field("chooseModpack", picker(Select::new(&self.modpack))))
                 })
                 .children(
                     self.install_to

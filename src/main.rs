@@ -6,6 +6,7 @@ mod assets;
 mod backend;
 mod config;
 mod console;
+mod deep_link;
 mod events;
 mod i18n;
 mod loadable;
@@ -20,6 +21,7 @@ mod route;
 #[cfg(feature = "screenshot")]
 mod screenshot;
 mod session;
+mod single_instance;
 mod snackbar;
 mod text_cache;
 mod theme;
@@ -64,6 +66,11 @@ struct Args {
     no_updater: bool,
     /// `--debug` or `--log`: a console on Windows, and verbose logs.
     debug: bool,
+    /// `--autostart`, as the login item launches it: start in the tray.
+    autostart: bool,
+    /// Links to open, as the desktop app takes them: every argument that
+    /// isn't a flag.
+    urls: Vec<String>,
 }
 
 /// Who drives the window.
@@ -88,11 +95,20 @@ fn parse_args(
     let mut mc_folder = env("QUADRANT_GPUI_MC_FOLDER");
     let mut screenshot = None;
     let [mut perf, mut perf_out, mut perf_runs, mut perf_placement] = [None, None, None, None];
-    let [mut no_updater, mut debug] = [false; 2];
+    let [mut no_updater, mut debug, mut autostart] = [false; 3];
+    let mut urls = Vec::new();
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         if arg == "--noupdater" {
             no_updater = true;
+            continue;
+        }
+        if arg == "--autostart" {
+            autostart = true;
+            continue;
+        }
+        if !arg.to_string_lossy().starts_with('-') {
+            urls.push(arg.to_string_lossy().into_owned());
             continue;
         }
         if is_debug_flag(&arg) {
@@ -133,6 +149,8 @@ fn parse_args(
         },
         no_updater,
         debug,
+        autostart,
+        urls,
     };
     #[cfg(not(feature = "perf"))]
     let _ = (perf_out, perf_runs, perf_placement);
@@ -179,6 +197,16 @@ fn credentials(mode: &Mode) -> [&'static str; 3] {
     ]
 }
 
+/// The data folder in use: `--data-dir`, else the desktop app's.
+fn data_folder(custom: Option<&Path>) -> Result<PathBuf> {
+    match custom {
+        Some(dir) => Ok(std::path::absolute(dir)?),
+        None => Ok(dirs::data_dir()
+            .ok_or_else(|| anyhow!("no data folder on this system; pass --data-dir"))?
+            .join(APP_IDENTIFIER)),
+    }
+}
+
 fn build_host(
     data_dir: Option<PathBuf>,
     mc_folder: Option<PathBuf>,
@@ -187,9 +215,7 @@ fn build_host(
     let keyring_service = keyring_service(data_dir.as_deref());
     let data_dir = match data_dir {
         Some(data_dir) => data_dir,
-        None => dirs::data_dir()
-            .ok_or_else(|| anyhow!("no data folder on this system; pass --data-dir"))?
-            .join(APP_IDENTIFIER),
+        None => data_folder(None)?,
     };
     let mut options = QuadrantHostOptions::new(data_dir, client_id, client_secret, api_key);
     // The host persists this as the `mcFolder` setting in the data folder.
@@ -200,6 +226,45 @@ fn build_host(
     let host = QuadrantHost::new(options)?;
     host.init_config()?;
     Ok(host)
+}
+
+/// A launch that runs, rather than handing its links to a running one.
+struct Running {
+    backend: Backend,
+    args: Args,
+    /// Where later launches reach this one; `None` in screenshot and perf
+    /// runs, or when the socket failed.
+    primary: Option<single_instance::Primary>,
+}
+
+/// `None` when another instance took the links and this one is done.
+fn launch(raw_args: Vec<OsString>) -> Result<Option<Running>> {
+    let args = parse_args(raw_args, |key| std::env::var_os(key))?;
+    // Before the host starts, so a second launch leaves the config alone.
+    let claim = match args.mode {
+        Mode::Interactive => Some(data_folder(args.data_dir.as_deref()).and_then(|data_dir| {
+            let key = single_instance::key(dirs::home_dir().as_deref(), &data_dir);
+            single_instance::claim(&key, &args.urls)
+        })),
+        _ => None,
+    };
+    let primary = match claim {
+        Some(Ok(single_instance::Claim::Forwarded)) => return Ok(None),
+        Some(Ok(single_instance::Claim::Primary(primary))) => Ok(Some(primary)),
+        Some(Err(error)) => Err(error),
+        None => Ok(None),
+    };
+    let backend = start(&args)?;
+    // The host has set up logging by now.
+    let primary = primary.unwrap_or_else(|error| {
+        log::warn!("Later launches will start instances of their own: {error:#}");
+        None
+    });
+    Ok(Some(Running {
+        backend,
+        args,
+        primary,
+    }))
 }
 
 fn start(args: &Args) -> Result<Backend> {
@@ -229,8 +294,11 @@ fn background_window() -> bool {
 
 /// Screenshot mode's window never shows or takes focus, so the user's clicks
 /// can't reach it.
-fn open_main_window(mode: &Mode, cx: &mut App) -> Result<WindowHandle<Root>> {
-    let hidden = matches!(mode, Mode::Screenshot(_));
+///
+/// `--autostart` opens it hidden too, for the tray to show later; Wayland
+/// can't hide a window, so there the tray closes it instead.
+fn open_main_window(mode: &Mode, autostart: bool, cx: &mut App) -> Result<WindowHandle<Root>> {
+    let hidden = matches!(mode, Mode::Screenshot(_)) || (autostart && !cfg!(target_os = "linux"));
     let background = background_window();
     let bounds = Bounds::centered(None, size(px(1150.), px(720.)), cx);
     #[cfg_attr(not(feature = "perf"), expect(unused_mut))]
@@ -279,56 +347,86 @@ fn main() -> ExitCode {
     let raw_args: Vec<OsString> = std::env::args_os().skip(1).collect();
     // Before parsing, so a bad argument is reported in the console too.
     let console = console::Console::setup(raw_args.iter().any(|arg| is_debug_flag(arg)));
-    let started = parse_args(raw_args, |key| std::env::var_os(key))
-        .and_then(|args| Ok((start(&args)?, args)));
-    let (backend, args) = match started {
-        Ok(started) => started,
+    let (backend, args, primary) = match launch(raw_args) {
+        Ok(Some(Running {
+            backend,
+            args,
+            primary,
+        })) => (backend, args, primary),
+        Ok(None) => return ExitCode::SUCCESS,
         Err(error) => {
             console.fatal(&format!("{error:#}"));
             return ExitCode::FAILURE;
         }
     };
-    gpui::Application::with_platform(text_cache::platform(gpui_platform::current_platform(false)))
-        .with_assets(assets::Assets)
-        .run(move |cx| {
-            cx.set_app_identity(BUNDLE_IDENTIFIER, PRODUCT_NAME);
-            gpui_component::init(cx);
-            theme::install(cx);
-            cx.set_http_client(backend.http_client());
-            cx.set_global(backend);
-            snackbar::install(cx);
-            notifications::install(args.mode == Mode::Interactive, cx);
-            events::forward(cx);
-            #[cfg(feature = "updater")]
-            if args.mode == Mode::Interactive && !args.no_updater {
-                updater::Updater::start(cx);
-            }
-            let window = match open_main_window(&args.mode, cx) {
-                Ok(window) => window,
-                Err(error) => {
-                    console.fatal(&format!("failed to open the window: {error:#}"));
-                    std::process::exit(1);
-                }
-            };
-            if !background_window() {
-                cx.activate(true);
-            }
-            match args.mode {
-                Mode::Interactive => {
-                    // Test runs with a real window keep out of the user's tray.
-                    if !background_window() {
-                        tray::install(window, |cx| open_main_window(&Mode::Interactive, cx), cx);
-                    }
-                    tray::watch_close(window, cx);
-                }
-                #[cfg(feature = "screenshot")]
-                Mode::Screenshot(dir) => screenshot::run(window, dir, cx),
-                #[cfg(not(feature = "screenshot"))]
-                Mode::Screenshot(_) => {}
-                #[cfg(feature = "perf")]
-                Mode::Perf(plan) => perf::run(window, plan, cx),
-            }
+    // Links from this launch, from later launches and from macOS's open
+    // events, in the order they come.
+    let (links, inbox) = futures::channel::mpsc::unbounded::<Vec<String>>();
+    let app = gpui::Application::with_platform(text_cache::platform(
+        gpui_platform::current_platform(false),
+    ))
+    .with_assets(assets::Assets);
+    if args.mode == Mode::Interactive {
+        let links = links.clone();
+        app.on_open_urls(move |urls| {
+            let _ = links.unbounded_send(urls);
         });
+    }
+    app.run(move |cx| {
+        cx.set_app_identity(BUNDLE_IDENTIFIER, PRODUCT_NAME);
+        gpui_component::init(cx);
+        theme::install(cx);
+        cx.set_http_client(backend.http_client());
+        cx.set_global(backend);
+        snackbar::install(cx);
+        notifications::install(args.mode == Mode::Interactive, cx);
+        events::forward(cx);
+        #[cfg(feature = "updater")]
+        if args.mode == Mode::Interactive && !args.no_updater {
+            updater::Updater::start(cx);
+        }
+        let window = match open_main_window(&args.mode, args.autostart, cx) {
+            Ok(window) => window,
+            Err(error) => {
+                console.fatal(&format!("failed to open the window: {error:#}"));
+                std::process::exit(1);
+            }
+        };
+        if !background_window() && !args.autostart {
+            cx.activate(true);
+        }
+        match args.mode {
+            Mode::Interactive => {
+                // Test runs with a real window keep out of the user's tray.
+                if !background_window() {
+                    tray::install(
+                        window,
+                        |cx| open_main_window(&Mode::Interactive, false, cx),
+                        cx,
+                    );
+                }
+                tray::watch_close(window, cx);
+                if args.autostart {
+                    tray::start_hidden(window, cx);
+                }
+                if !args.urls.is_empty() {
+                    let _ = links.unbounded_send(args.urls.clone());
+                }
+                if let Some(primary) = primary {
+                    primary.serve(move |urls| {
+                        let _ = links.unbounded_send(urls);
+                    });
+                }
+                app::open_links(inbox, window, cx);
+            }
+            #[cfg(feature = "screenshot")]
+            Mode::Screenshot(dir) => screenshot::run(window, dir, cx),
+            #[cfg(not(feature = "screenshot"))]
+            Mode::Screenshot(_) => {}
+            #[cfg(feature = "perf")]
+            Mode::Perf(plan) => perf::run(window, plan, cx),
+        }
+    });
     ExitCode::SUCCESS
 }
 
@@ -353,8 +451,35 @@ mod tests {
                 mode: Mode::Interactive,
                 no_updater: false,
                 debug: false,
+                autostart: false,
+                urls: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn links_are_the_arguments_that_arent_flags() {
+        let parsed = parse_args(
+            args(&[
+                "--autostart",
+                "modrinth://mod/sodium",
+                "--data-dir",
+                "data",
+                "quadrantnext://modpack?code=1234567",
+            ]),
+            |_| None,
+        )
+        .unwrap();
+        assert!(parsed.autostart);
+        assert_eq!(parsed.data_dir, Some("data".into()));
+        assert_eq!(
+            parsed.urls,
+            [
+                "modrinth://mod/sodium",
+                "quadrantnext://modpack?code=1234567"
+            ]
+        );
+        assert!(!parse_args(args(&[]), |_| None).unwrap().autostart);
     }
 
     #[test]

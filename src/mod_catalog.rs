@@ -118,6 +118,17 @@ impl ModCatalog {
 /// The provider's record, with the flags `GetModArgs` sets left neutral;
 /// each view sets its own.
 async fn fetch(host: QuadrantHost, key: ModKey) -> (ModKey, Option<Mod>) {
+    match provider_record(&host, &key).await {
+        Ok(found) => (key, Some(found)),
+        Err(error) => {
+            log::debug!("no provider record for {}: {error:#}", key.id);
+            (key, None)
+        }
+    }
+}
+
+/// What the mod's provider says about it, as the desktop app's `getMod`.
+pub async fn provider_record(host: &QuadrantHost, key: &ModKey) -> anyhow::Result<Mod> {
     let args = GetModArgs {
         id: key.id.clone(),
         downloadable: false,
@@ -129,17 +140,10 @@ async fn fetch(host: QuadrantHost, key: ModKey) -> (ModKey, Option<Mod>) {
         selectable: false,
         select_url: None,
     };
-    let answer = if key.curseforge {
-        curseforge(&host, args).await
+    if key.curseforge {
+        curseforge(host, args).await
     } else {
         host.get_mod_modrinth(args).await
-    };
-    match answer {
-        Ok(found) => (key, Some(found)),
-        Err(error) => {
-            log::debug!("no provider record for {}: {error:#}", key.id);
-            (key, None)
-        }
     }
 }
 

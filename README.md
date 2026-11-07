@@ -37,6 +37,8 @@ The default build needs no credentials. Quadrant ID, Quadrant Share and telemetr
 | `--mc-folder <path>` | `QUADRANT_GPUI_MC_FOLDER` | the `mcFolder` setting, else the platform's `.minecraft` |
 | `--noupdater` | | the updater runs in installed release builds |
 | `--debug` or `--log` | | quiet: no console on Windows, info-level logs |
+| `--autostart` | | the window opens; with it the app starts in the tray, as its login item launches it |
+| a link, such as `modrinth://mod/sodium` | | open it (see "Single instance and links") |
 
 On Windows the exe is a GUI app, so starting it from the Start menu, the installer or Explorer opens no console window. Its output still reaches a parent that pipes or redirects it: `cargo run`, `Start-Process -RedirectStandardError`, or a PowerShell pipeline such as `& $exe ... 2>&1 | ForEach-Object { "$_" }`, which also waits for it and sets `$LASTEXITCODE`. A bare `& $exe ...` in PowerShell, or `cmd /c`, neither waits nor shows the output. `--debug` (or `--log`) attaches to the terminal it was started from, or opens a console of its own, and turns on debug logs for the app and the backend (unless `RUST_LOG` says otherwise); on Linux and macOS it only raises the log level. An error that stops the app before or while it opens its window goes to stderr, and on Windows also to a message box when nothing reads stderr. Set `QUADRANT_NATIVE_NO_DIALOG` to keep it out of a dialog, as tests and scripts should.
 
@@ -57,6 +59,12 @@ Screenshot mode starts with the title bar: its pictures, the bell's panel, mouse
 ## Tray
 
 As in the desktop app, closing the window keeps Quadrant-Native running in the tray, Quadrant ID's background work included; a left click on the icon brings the window back, and its menu has Show/Hide and Quit. Windows and macOS hide the window. On Linux the icon is a StatusNotifierItem (KDE, and GNOME with the AppIndicator extension); Wayland can't hide a window, so closing closes it and the tray opens a new one, with each page starting afresh. Where no tray is available, closing quits. Screenshot, perf and `QUADRANT_NATIVE_BACKGROUND` runs never add the icon.
+
+## Single instance and links
+
+As in the desktop app, one copy runs per data folder. A second launch hands its links to the running one over a local socket (a named pipe on Windows) and exits; the running one comes back from the tray, unminimized, centred (Windows only: gpui can't move a window on macOS, and Wayland leaves it to the compositor) and in front, then opens them. The socket's name hashes the home folder and the data folder, so a `--data-dir` sandbox runs beside the real app. Screenshot and perf runs don't take part.
+
+Links follow the desktop app's `deepLinks.ts` (`src/deep_link.rs`, with its tests): `modrinth://mod/<slug>` (also `resourcepack` and `shader`, and a wrapped `modrinth://https://modrinth.com/...`), `curseforge://install?addonId=<id>[&fileId=<id>]` and `quadrantnext://modrinth|curseforge?modId=<id>[&fileId=<id>]` open the mod's install page on Search, installing that file when there is a `fileId`; `quadrantnext://modpack?code=<code>` and `https://usequadrant.dev/modpack/<code>` open the Quadrant Share import on Apply; `quadrantnext://login` finishes a Quadrant ID sign-in whose state matches. They arrive as arguments at launch, from a second launch, and on macOS through the system's open events. The packages register the three schemes: the NSIS setup under `HKCU\Software\Classes`, the .app's `CFBundleURLTypes`, and the desktop file's `x-scheme-handler` MIME types. To try one without registering anything, pass it to a sandboxed run: `cargo run -- modrinth://mod/sodium --data-dir ... --mc-folder ...`.
 
 ## Updates
 

@@ -45,6 +45,8 @@ use crate::{
 };
 
 mod cloud;
+
+pub use cloud::parse_share_code;
 mod details;
 mod prism;
 
@@ -709,6 +711,12 @@ impl ModpacksPage {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Looks a share code up and shows its pack, as a Quadrant Share link
+    /// does.
+    pub fn import_share(&mut self, code: String, cx: &mut Context<Self>) {
+        self.run(Op::ResolveShare(code), cx);
     }
 
     fn clear(&mut self, cx: &mut Context<Self>) {

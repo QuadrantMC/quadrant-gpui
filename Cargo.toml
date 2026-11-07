@@ -34,6 +34,9 @@ futures = "0.3"
 getrandom = "0.4"
 # Already in the tree through gpui; decodes the tray icon.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# A named pipe on Windows, a Unix socket elsewhere: a second launch hands
+# its links to the running app.
+interprocess = { version = "2", default-features = false }
 gpui = { package = "gpui-pre", version = "=0.3.11" }
 gpui-component = "0.9.0"
 gpui-kit-assets = "0.9.0"
@@ -102,6 +105,13 @@ icons = [
   "packaging/icons/icon.ico",
 ]
 binaries = [{ path = "quadrant-native", main = true }]
+
+# The link schemes the desktop app registers (`plugins.deep-link` in its
+# tauri.conf.json): the NSIS setup writes them under HKCU\Software\Classes,
+# the .app's Info.plist lists them as CFBundleURLTypes, and the deb's desktop
+# file gets their x-scheme-handler MIME types.
+[[package.metadata.packager.deep-link-protocols]]
+schemes = ["quadrantnext", "curseforge", "modrinth"]
 
 [package.metadata.packager.nsis]
 installer-mode = "currentUser"

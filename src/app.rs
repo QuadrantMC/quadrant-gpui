@@ -1,20 +1,52 @@
 use std::collections::HashMap;
 
+use futures::{StreamExt as _, channel::mpsc::UnboundedReceiver};
 use gpui::{
-    AnyElement, AnyView, App, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
-    NavigationDirection, ParentElement as _, Render, Styled as _, Window, WindowControlArea, div,
-    prelude::FluentBuilder as _, px, rgb,
+    AnyElement, AnyView, App, AsyncApp, Context, Entity, InteractiveElement as _, IntoElement,
+    MouseButton, NavigationDirection, ParentElement as _, Render, Styled as _, Window,
+    WindowControlArea, WindowHandle, div, prelude::FluentBuilder as _, px, rgb,
 };
-use gpui_component::{h_flex, v_flex};
+use gpui_component::{Root, h_flex, v_flex};
 
 use crate::{
     assets::MdIcon,
-    motion, notifications, pages,
+    backend::Backend,
+    deep_link::{self, Action},
+    i18n::{describe, t},
+    motion, notifications, oauth,
+    pages::{self, ModpacksPage, SearchPage},
     route::{History, Route},
-    snackbar::{self, Snackbar},
+    snackbar::{self, Snackbar, SnackbarKind},
     theme::{self, Tone},
     tray,
 };
+
+/// Opens each batch of links `inbox` brings, from this launch, a later one
+/// or the platform, after bringing the main window back as the desktop
+/// app's single-instance handler does. `window` is the window `main` opened.
+pub fn open_links(
+    mut inbox: UnboundedReceiver<Vec<String>>,
+    window: WindowHandle<Root>,
+    cx: &mut App,
+) {
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        while let Some(urls) = inbox.next().await {
+            cx.update(|cx| {
+                log::info!("Opening {urls:?}");
+                let Some(window) = tray::reveal(window, cx) else {
+                    return;
+                };
+                let actions = deep_link::plan(&urls);
+                let _ = window.update(cx, |root, window, cx| {
+                    if let Ok(app) = root.view().clone().downcast::<QuadrantApp>() {
+                        app.update(cx, |app, cx| app.follow(actions, window, cx));
+                    }
+                });
+            });
+        }
+    })
+    .detach();
+}
 
 /// The window's content: the page rail, the title bar and the open page.
 pub struct QuadrantApp {
@@ -108,6 +140,52 @@ impl QuadrantApp {
     pub fn navigate(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
         if self.history.navigate(route) {
             self.entered(window, cx);
+        }
+    }
+
+    /// Carries out what links ask, as `App.tsx`'s `onOpenUrl` does: a mod's
+    /// install page on Search, a share code's import on Apply, the end of a
+    /// Quadrant ID sign-in.
+    fn follow(&mut self, actions: Vec<Action>, window: &mut Window, cx: &mut Context<Self>) {
+        for action in actions {
+            log::info!("Following {action:?}");
+            match action {
+                Action::Ignore => {}
+                Action::Unsupported => {
+                    snackbar::show(cx, SnackbarKind::Error, t("unsupportedDownload"))
+                }
+                Action::InstallMod(link) => {
+                    self.navigate(Route::Search, window, cx);
+                    let page = self.page(Route::Search, window, cx);
+                    if let Ok(page) = page.downcast::<SearchPage>() {
+                        page.update(cx, |page, cx| page.open_link(link, window, cx));
+                    }
+                }
+                Action::ImportModpack(code) => {
+                    self.navigate(Route::Modpacks, window, cx);
+                    let page = self.page(Route::Modpacks, window, cx);
+                    if let Ok(page) = page.downcast::<ModpacksPage>() {
+                        page.update(cx, |page, cx| page.import_share(code, cx));
+                    }
+                }
+                Action::OauthLogin {
+                    state,
+                    code,
+                    redirect_uri,
+                } => {
+                    let task = Backend::global(cx).run(cx, move |host| {
+                        oauth::finish_redirect(host, state, code, redirect_uri)
+                    });
+                    cx.spawn(async move |_, cx| {
+                        if let Err(error) = task.await {
+                            cx.update(|cx| {
+                                snackbar::show(cx, SnackbarKind::Error, describe(error))
+                            });
+                        }
+                    })
+                    .detach();
+                }
+            }
         }
     }
 
