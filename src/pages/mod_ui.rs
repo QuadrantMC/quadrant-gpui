@@ -10,7 +10,7 @@ use std::{
 use gpui::{
     AnyElement, Bounds, Context, Div, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, SharedString, Stateful, StatefulInteractiveElement as _,
-    Styled as _, Window, canvas, div, prelude::FluentBuilder as _, px, rgb,
+    Styled as _, Window, canvas, div, prelude::FluentBuilder as _, px, rems, rgb,
 };
 use gpui_component::{Icon, h_flex, select::SelectItem, v_flex};
 use quadrant_core::{
@@ -20,8 +20,9 @@ use quadrant_core::{
 
 use crate::{
     assets::MdIcon,
-    i18n::t,
-    pages::{mod_grid::CardSlot, search::logic::compact_count},
+    i18n::{compact_count, t},
+    pages::mod_grid::CardSlot,
+    prefs::Prefs,
     theme::{self, Tone},
 };
 
@@ -29,6 +30,9 @@ use crate::{
 #[derive(Clone)]
 pub struct Choice<V> {
     pub title: SharedString,
+    /// A string key to show instead of `title`, looked up as it is shown,
+    /// so a fixed choice follows a language change.
+    key: Option<&'static str>,
     pub value: V,
 }
 
@@ -36,6 +40,16 @@ impl<V> Choice<V> {
     pub fn new(title: impl Into<SharedString>, value: V) -> Self {
         Self {
             title: title.into(),
+            key: None,
+            value,
+        }
+    }
+
+    /// A choice labelled by the string `key`.
+    pub fn translated(key: &'static str, value: V) -> Self {
+        Self {
+            title: SharedString::default(),
+            key: Some(key),
             value,
         }
     }
@@ -45,7 +59,7 @@ impl<V: Clone + PartialEq> SelectItem for Choice<V> {
     type Value = V;
 
     fn title(&self) -> SharedString {
-        self.title.clone()
+        self.key.map_or_else(|| self.title.clone(), t)
     }
 
     fn value(&self) -> &V {
@@ -268,7 +282,8 @@ pub fn mod_card<P: 'static>(
                 .child(theme::mod_icon(
                     &item.mod_icon_url,
                     &item.name,
-                    px(3.5 * theme::FONT_SIZE),
+                    rems(3.5),
+                    Prefs::global(cx).clip_icons,
                 ))
                 .child(
                     v_flex()
@@ -292,7 +307,7 @@ pub fn mod_card<P: 'static>(
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(rgb(theme::TEXT_MUTED))
-                                .child(Icon::new(MdIcon::Download).size(px(13.6)))
+                                .child(Icon::new(MdIcon::Download).size(rems(0.8125)))
                                 .child(compact_count(item.download_count))
                                 .when(!source.is_empty(), |this| {
                                     this.child(dotted(theme::source_pill(
@@ -308,7 +323,7 @@ pub fn mod_card<P: 'static>(
                             div()
                                 .h_9()
                                 .text_xs()
-                                .line_height(px(18.9))
+                                .line_height(rems(1.125))
                                 .text_color(rgb(theme::TEXT_MUTED))
                                 .line_clamp(2)
                                 .text_ellipsis()

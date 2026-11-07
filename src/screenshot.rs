@@ -24,12 +24,14 @@ use quadrant_core::{
 use crate::{
     app::QuadrantApp,
     backend::Backend,
+    i18n::Locale,
     i18n::{t, t_with},
     notifications,
     pages::{
         AccountPage, ContentType, CurrentModpackPage, InstalledContentPage, ModpacksPage,
         SearchPage,
     },
+    prefs::Prefs,
     route::Route,
     session::Session,
     snackbar::{self, SnackbarKind},
@@ -127,6 +129,7 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     // A taller window shows the whole page in one picture.
     resize(window, cx, 2300.)?;
     capture(window, &dir.join("settings-full.png"), cx).await?;
+    capture_prefs(window, dir, cx).await?;
 
     show(window, cx, Route::InstalledContent)?;
     resize(window, cx, 720.)?;
@@ -1247,6 +1250,39 @@ const NETWORK_SETTLE: Duration = Duration::from_secs(8);
 /// The Search, mod install and Current modpack pages, against the live
 /// Modrinth API. Nothing here installs: a download would also land in the
 /// host's shared download cache, outside the sandbox.
+/// The settings that change the whole window: each language, the UI scale
+/// at both ends of its range and square mod icons. Shown, not saved.
+async fn capture_prefs(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
+    let shots = dir.join("prefs");
+    std::fs::create_dir_all(&shots)?;
+    let base = cx.update(|cx| Prefs::global(cx));
+    let with = |prefs: Prefs, cx: &mut AsyncApp| cx.update(|cx| prefs.apply(cx));
+    for (locale, name) in [(Locale::Turkish, "tr"), (Locale::Ukrainian, "uk")] {
+        with(Prefs { locale, ..base }, cx);
+        show(window, cx, Route::Settings)?;
+        capture(window, &shots.join(format!("settings-{name}.png")), cx).await?;
+        show(window, cx, Route::Search)?;
+        capture(window, &shots.join(format!("search-{name}.png")), cx).await?;
+    }
+    for ui_scale in [50, 150, 200] {
+        with(Prefs { ui_scale, ..base }, cx);
+        show(window, cx, Route::Settings)?;
+        capture(window, &shots.join(format!("settings-{ui_scale}.png")), cx).await?;
+        show(window, cx, Route::Search)?;
+        capture(window, &shots.join(format!("search-{ui_scale}.png")), cx).await?;
+    }
+    with(
+        Prefs {
+            clip_icons: false,
+            ..base
+        },
+        cx,
+    );
+    capture(window, &shots.join("search-square-icons.png"), cx).await?;
+    with(base, cx);
+    Ok(())
+}
+
 async fn capture_mod_pages(
     window: WindowHandle<Root>,
     dir: &Path,

@@ -6,11 +6,14 @@
 //! makes it the window's rem size, so gpui's Tailwind-named helpers (`h_10`,
 //! `px_4`, `text_2xl`, ...) measure the same as the Tailwind classes they mirror.
 
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use gpui::{
     App, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    Rgba, SharedString, Styled, div, prelude::FluentBuilder as _, px, rgb, rgba,
+    Rgba, SharedString, Styled, div, prelude::FluentBuilder as _, px, rems, rgb, rgba,
 };
 use gpui_component::{
     Icon, Theme, ThemeMode,
@@ -21,7 +24,31 @@ use gpui_component::{
 use crate::{assets::MdIcon, motion, route::Route, snackbar::SnackbarKind};
 
 pub const FONT_FAMILY: &str = "Inter";
+/// The root font size at 100% UI scale.
 pub const FONT_SIZE: f32 = 16.8;
+
+/// The UI scale in percent, as [`set_ui_scale`] last set it.
+static UI_SCALE: AtomicU32 = AtomicU32::new(100);
+
+/// The window's rem: [`FONT_SIZE`] at the UI scale. For lengths that are
+/// computed rather than styled; a style takes `rems` as it is.
+pub fn rem() -> gpui::Pixels {
+    px(FONT_SIZE * UI_SCALE.load(Ordering::Relaxed) as f32 / 100.)
+}
+
+/// Scales the whole UI, as the desktop app's `applyUiScale` sets the root
+/// font size every rem derives from. gpui-component's `Root` makes the
+/// theme's font size the window's rem size.
+pub fn set_ui_scale(percent: u32, cx: &mut App) {
+    UI_SCALE.store(percent, Ordering::Relaxed);
+    let rem = rem();
+    Theme::update(cx, |theme| {
+        theme.font_size = rem;
+        theme.radius = rem;
+        theme.radius_lg = rem * 2.;
+    });
+    cx.refresh_windows();
+}
 
 /// slate-900: the window background.
 pub const PAGE: u32 = 0x0f172a;
@@ -60,8 +87,8 @@ const ALERT_HOVER: u32 = 0xdc2626;
 const SCRIM_HOVER: u32 = 0x0f172ab3;
 
 /// Tailwind's `rounded-4xl`, the desktop app's card radius.
-pub fn radius_card() -> gpui::Pixels {
-    px(2. * FONT_SIZE)
+pub fn radius_card() -> gpui::Rems {
+    rems(2.)
 }
 
 /// Loads Inter and points gpui-component's theme at the palette above.
@@ -73,9 +100,9 @@ pub fn install(cx: &mut App) {
     Theme::change(ThemeMode::Dark, None, cx);
     Theme::update(cx, |theme| {
         theme.font_family = FONT_FAMILY.into();
-        theme.font_size = px(FONT_SIZE);
-        theme.radius = px(FONT_SIZE);
-        theme.radius_lg = radius_card();
+        theme.font_size = rem();
+        theme.radius = rem();
+        theme.radius_lg = rem() * 2.;
         theme.shadow = false;
         let colors = &mut theme.colors;
         colors.background = rgb(PAGE).into();
@@ -183,6 +210,15 @@ pub fn toolbar_button(id: impl Into<ElementId>, tone: Tone, icon: MdIcon, cx: &A
     let (color, hover) = tone.colors();
     filled(id, color, hover, cx)
         .size_10()
+        .child(Icon::new(icon).size_5())
+}
+
+/// The desktop app's `Button` around a `w-5 h-5` icon: `p-2`, round, as
+/// the settings' UI scale steps are drawn.
+pub fn icon_button(id: impl Into<ElementId>, tone: Tone, icon: MdIcon, cx: &App) -> Button {
+    let (color, hover) = tone.colors();
+    filled(id, color, hover, cx)
+        .size_9()
         .child(Icon::new(icon).size_5())
 }
 
@@ -359,7 +395,7 @@ pub fn search_button(id: impl Into<ElementId>, label: impl Into<SharedString>, c
                 .gap_2()
                 .items_center()
                 .text_sm()
-                .child(Icon::new(MdIcon::Search).size(px(18.9)))
+                .child(Icon::new(MdIcon::Search).size(rems(1.125)))
                 .child(label.into()),
         )
 }
@@ -432,7 +468,7 @@ pub fn source_toggle(
     let base = div()
         .id(id)
         .flex_1()
-        .h(px(2.625 * FONT_SIZE))
+        .h(rems(2.625))
         .flex()
         .items_center()
         .justify_center()
@@ -502,7 +538,7 @@ pub fn check_box(picked: bool, disabled: bool) -> impl IntoElement {
 pub fn switch(on: bool) -> impl IntoElement {
     div()
         .flex_none()
-        .w(px(2.625 * FONT_SIZE))
+        .w(rems(2.625))
         .h_6()
         .p_0p5()
         .rounded_full()
@@ -618,6 +654,9 @@ pub fn card_button(
 pub fn card_icon_button(id: impl Into<ElementId>, icon: MdIcon, cx: &App) -> Button {
     filled(id, rgb(SURFACE), rgb(CONTROL), cx)
         .size(px(38.))
+        // A fixed `w-[38px]`; the button's own rem padding would squeeze
+        // the icon out of it at a larger UI scale.
+        .p_0()
         .text_color(rgb(TEXT_SOFT))
         .child(Icon::new(icon).size_4())
 }
@@ -646,9 +685,17 @@ pub fn wide_button(
         )
 }
 
-/// A mod's icon, round, over the desktop app's gradient letter tile, which
-/// also stands in while it loads and when it has none.
-pub fn mod_icon(url: &str, name: &str, size: gpui::Pixels) -> gpui::AnyElement {
+/// A mod's icon over the desktop app's gradient letter tile, which also
+/// stands in while it loads and when it has none: round with the
+/// `clipIcons` setting on, a `rounded-2xl` square with it off.
+pub fn mod_icon(url: &str, name: &str, size: gpui::Rems, round: bool) -> gpui::AnyElement {
+    fn corners<E: Styled>(this: E, round: bool) -> E {
+        if round {
+            this.rounded_full()
+        } else {
+            this.rounded_2xl()
+        }
+    }
     let letter: SharedString = name
         .trim()
         .chars()
@@ -659,10 +706,9 @@ pub fn mod_icon(url: &str, name: &str, size: gpui::Pixels) -> gpui::AnyElement {
         .chars()
         .fold(0u32, |hue, char| (hue * 31 + char as u32) % 360) as f32;
     let tile = move || {
-        div()
+        corners(div(), round)
             .size(size)
             .flex_none()
-            .rounded_full()
             .flex()
             .items_center()
             .justify_center()
@@ -684,10 +730,9 @@ pub fn mod_icon(url: &str, name: &str, size: gpui::Pixels) -> gpui::AnyElement {
     }
     let loading = tile.clone();
     use gpui::StyledImage as _;
-    gpui::img(SharedString::from(url.to_string()))
+    corners(gpui::img(SharedString::from(url.to_string())), round)
         .size(size)
         .flex_none()
-        .rounded_full()
         .object_fit(gpui::ObjectFit::Cover)
         .with_loading(loading)
         .with_fallback(tile)
@@ -704,7 +749,7 @@ pub fn progress_bar(percent: i32) -> impl IntoElement {
             .rounded_full()
             .bg(rgb(if percent == 0 { SURFACE } else { PRIMARY }))
             .text_xs()
-            .line_height(px(12.6))
+            .line_height(rems(0.75))
             .font_weight(FontWeight::MEDIUM)
             .text_center()
             .child(format!("{percent}%")),
@@ -724,7 +769,8 @@ const PROGRESS_ARC: u32 = CONTROL;
 pub fn circular_progress(id: impl Into<ElementId>) -> impl IntoElement {
     use gpui::{Animation, AnimationExt as _, Transformation, svg};
     let id = id.into();
-    let size = px(8. * 2. + 2. * 4. * FONT_SIZE);
+    // `border-8` on each side of `p-16`: px around rems.
+    let size = px(8. * 2.) + rems(2. * 4.).to_pixels(rem());
     let ring = div()
         .size(size)
         .rounded_full()

@@ -632,25 +632,6 @@ pub fn page_count(count: usize) -> usize {
     count.div_ceil(PAGE_SIZE).max(1)
 }
 
-/// A download count the way `Intl.NumberFormat` writes it compactly in
-/// English: "999", "1.5K", "174.2M".
-pub fn compact_count(count: i64) -> String {
-    const UNITS: [(f64, &str); 4] = [(1., ""), (1e3, "K"), (1e6, "M"), (1e9, "B")];
-    let value = count as f64;
-    let mut unit = UNITS
-        .iter()
-        .rposition(|(scale, _)| value.abs() >= *scale)
-        .unwrap_or(0);
-    let tenths = |unit: usize| (value / UNITS[unit].0 * 10.).round() / 10.;
-    // 999,960 rounds to 1000K, which reads as the next unit up.
-    if unit > 0 && unit + 1 < UNITS.len() && tenths(unit).abs() >= 1000. {
-        unit += 1;
-    }
-    let shown = if unit == 0 { value } else { tenths(unit) };
-    let digits = if shown.fract() == 0. { 0 } else { 1 };
-    format!("{shown:.digits$}{}", UNITS[unit].1)
-}
-
 /// Whether `modpack` already has `item`, matched by id or, across
 /// providers, by slug. Keep in step with `InstalledMod::is_same_mod`.
 pub fn installed_in(item: &Mod, modpack: Option<&LocalModpack>) -> Option<ModSource> {
@@ -902,13 +883,7 @@ pub mod tests {
     }
 
     #[test]
-    fn counts_read_like_the_desktop_app() {
-        assert_eq!(compact_count(999), "999");
-        assert_eq!(compact_count(1000), "1K");
-        assert_eq!(compact_count(90_312), "90.3K");
-        assert_eq!(compact_count(174_200_000), "174.2M");
-        assert_eq!(compact_count(999_960), "1M");
-        assert_eq!(compact_count(2_000_000_000), "2B");
+    fn page_counts_round_up() {
         assert_eq!(page_count(0), 1);
         assert_eq!(page_count(26), 2);
     }

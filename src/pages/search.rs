@@ -7,9 +7,9 @@ use std::{collections::HashMap, rc::Rc, time::Instant};
 
 use gpui::{
     Animation, AnimationExt as _, AnyElement, App, AppContext as _, Bounds, Context, Entity,
-    FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render,
+    FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Rems, Render,
     ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
-    Window, div, point, prelude::FluentBuilder as _, px, rgb,
+    Window, div, point, prelude::FluentBuilder as _, px, rems, rgb,
 };
 use gpui_component::{
     Disableable as _, Icon, h_flex,
@@ -45,6 +45,7 @@ use crate::{
         mod_install::{InstallRequest, InstallViewEvent, ModInstallView, remember},
         mod_ui::{CardPress, CardStatus, Choice, OnCardPress, Primary, card_key, mod_card},
     },
+    prefs::Prefs,
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
 };
@@ -154,7 +155,7 @@ impl SearchPage {
             SelectState::new(SearchableVec::new(vec![any_version()]), None, window, cx)
                 .searchable(true)
         });
-        let sorts = Sort::ALL.map(|sort| Choice::new(t(sort.label_key()), sort));
+        let sorts = Sort::ALL.map(|sort| Choice::translated(sort.label_key(), sort));
         let sort_picker =
             cx.new(|cx| SelectState::new(SearchableVec::new(sorts.to_vec()), None, window, cx));
         let subscriptions = vec![
@@ -182,6 +183,13 @@ impl SearchPage {
                 this.change(window, cx, |filters| {
                     filters.set_version(version, target.as_ref())
                 });
+            }),
+            // The query's placeholder follows a language change.
+            cx.observe_global_in::<Prefs>(window, |this, window, cx| {
+                let content = this.filters.content;
+                this.query.update(cx, |query, cx| {
+                    query.set_placeholder(placeholder(content), window, cx)
+                })
             }),
             cx.subscribe_in(&sort_picker, window, |this, _, event, window, cx| {
                 let SelectEvent::Confirm(Some(sort)) = event else {
@@ -867,7 +875,7 @@ impl SearchPage {
                     .items_center()
                     .child(
                         Icon::new(MdIcon::FilterAlt)
-                            .size(px(18.9))
+                            .size(rems(1.125))
                             .text_color(rgb(theme::TEXT_BADGE)),
                     )
                     .child(
@@ -1121,7 +1129,7 @@ impl SearchPage {
                             )
                             .child(
                                 Icon::new(MdIcon::ExpandMore)
-                                    .size(px(17.85))
+                                    .size(rems(1.0625))
                                     .text_color(rgb(theme::TEXT_MUTED))
                                     .when(folded, |icon| {
                                         icon.rotate(gpui::radians(std::f32::consts::PI))
@@ -1270,13 +1278,13 @@ impl SearchPage {
                         .bg(rgb(theme::SURFACE))
                         .text_color(rgb(theme::TEXT_BADGE))
                         .cursor_pointer()
-                        .child(Icon::new(MdIcon::FilterAlt).size(px(18.9)))
+                        .child(Icon::new(MdIcon::FilterAlt).size(rems(1.125)))
                         .when(!chips.is_empty(), |this| {
                             this.child(
                                 div()
                                     .absolute()
-                                    .top(px(-4.))
-                                    .right(px(-4.))
+                                    .top(rems(-0.25))
+                                    .right(rems(-0.25))
                                     .child(count_badge(chips.len())),
                             )
                         })
@@ -1308,7 +1316,7 @@ impl SearchPage {
                     .child(
                         Select::new(&self.sort_picker)
                             .appearance(false)
-                            .w(px(11. * 16.8))
+                            .w(rems(11.))
                             .h_9()
                             .px_2()
                             .rounded_full()
@@ -1628,18 +1636,18 @@ impl<V> InstallPages<V> {
 }
 
 /// `w-79`: the filters panel, and its sidebar when open.
-const FILTERS_WIDTH: Pixels = px(19.75 * theme::FONT_SIZE);
+const FILTERS_WIDTH: Rems = rems(19.75);
 
 /// The results panel's padding on each side.
-const RESULTS_PADDING: Pixels = px(18.9);
+const RESULTS_PADDING: Rems = rems(1.125);
 
 /// `grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3` in a results
 /// panel `panel_width` wide.
 fn result_columns(panel_width: Pixels) -> usize {
     mod_grid::auto_fill_columns(
-        panel_width - RESULTS_PADDING * 2.,
+        panel_width - RESULTS_PADDING.to_pixels(theme::rem()) * 2.,
         mod_grid::SEARCH_CARD_MIN,
-        px(0.75 * theme::FONT_SIZE),
+        theme::rem() * 0.75,
     )
 }
 
@@ -1749,17 +1757,17 @@ fn placeholder(content: ContentType) -> SharedString {
 }
 
 fn no_target() -> Choice<Option<String>> {
-    Choice::new(t("noTargetModpack"), None)
+    Choice::translated("noTargetModpack", None)
 }
 
 fn any_version() -> Choice<Option<String>> {
-    Choice::new(t("anyVersion"), None)
+    Choice::translated("anyVersion", None)
 }
 
 /// A sidebar select: an `h-11` pill.
 fn picker<E: gpui::Styled>(select: E) -> E {
     select
-        .h(px(2.75 * 16.8))
+        .h(rems(2.75))
         .px_2()
         .rounded_full()
         .text_sm()
@@ -1768,9 +1776,9 @@ fn picker<E: gpui::Styled>(select: E) -> E {
 
 fn count_badge(count: usize) -> impl IntoElement {
     div()
-        .min_w(px(22.))
-        .h(px(22.))
-        .px(px(7.))
+        .min_w(rems(1.375))
+        .h(rems(1.375))
+        .px(rems(0.4375))
         .flex()
         .items_center()
         .justify_center()
@@ -1807,7 +1815,7 @@ fn empty_state(
     cx: &mut Context<SearchPage>,
 ) -> AnyElement {
     v_flex()
-        .py(px(73.5))
+        .py(rems(4.375))
         .px_5()
         .items_center()
         .justify_center()
@@ -1825,7 +1833,7 @@ fn empty_state(
         .child(
             div()
                 .mt_1p5()
-                .max_w(px(22.5 * 16.8))
+                .max_w(rems(22.5))
                 .text_size(px(13.5))
                 .child(hint),
         )
@@ -1916,7 +1924,7 @@ impl SearchPage {
                     .flex_none()
                     .h_full()
                     .overflow_hidden()
-                    .w(FILTERS_WIDTH * width)
+                    .w(FILTERS_WIDTH.to_pixels(theme::rem()) * width)
                     .when(opacity > 0., |this| {
                         this.child(self.render_filters(chips.len(), cx).opacity(opacity))
                     })

@@ -44,6 +44,7 @@ md_icons! {
     Minimize => "minimize",
     Notifications => "notifications",
     Refresh => "refresh",
+    Remove => "remove",
     Search => "search",
     Settings => "settings",
     Share => "share",

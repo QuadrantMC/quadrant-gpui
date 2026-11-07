@@ -28,6 +28,7 @@ const icons = {
   minimize: "MdMinimize",
   notifications: "MdNotifications",
   refresh: "MdRefresh",
+  remove: "MdRemove",
   search: "MdSearch",
   settings: "MdSettings",
   share: "MdShare",

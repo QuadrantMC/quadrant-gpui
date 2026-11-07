@@ -7,7 +7,7 @@ use gpui::{
     App, AppContext as _, Bounds, Context, Entity, EventEmitter, FontWeight,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollHandle,
     SharedString, StatefulInteractiveElement as _, Styled as _, StyledImage as _, Subscription,
-    Task, Window, div, prelude::FluentBuilder as _, px, rgb,
+    Task, Window, div, prelude::FluentBuilder as _, px, rems, rgb,
 };
 use gpui_component::{
     Disableable as _, Icon, h_flex,
@@ -25,15 +25,16 @@ use crate::{
     backend::Backend,
     config,
     events::{ModProgress, ModStage, watch_mod_progress},
-    i18n::{describe, t, t_with},
+    i18n::{compact_count, describe, t, t_with},
     loadable::Loadable,
     motion::{self, CardEntrance, HeroFrame},
     pages::{
         install_location::{self, LocationPicker, initial_location, is_pack},
         mod_grid,
         mod_ui::{CardPress, CardStatus, Choice, OnCardPress, mod_card, source_label},
-        search::logic::{Provider, compact_count, installed_in, loader_options},
+        search::logic::{Provider, installed_in, loader_options},
     },
+    prefs::Prefs,
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
 };
@@ -686,7 +687,12 @@ impl ModInstallView {
 
     /// The details panel; without its background while `revealed`, when
     /// the reveal paints it.
-    fn render_details(&self, window_width: Pixels, revealed: bool) -> impl IntoElement {
+    fn render_details(
+        &self,
+        window_width: Pixels,
+        revealed: bool,
+        round_icon: bool,
+    ) -> impl IntoElement {
         let item = &self.item;
         let source = source_label(&item.source);
         let type_key = match item.mod_type {
@@ -709,7 +715,8 @@ impl ModInstallView {
                     .child(theme::mod_icon(
                         &item.mod_icon_url,
                         &item.name,
-                        px(4. * theme::FONT_SIZE),
+                        rems(4.),
+                        round_icon,
                     ))
                     .child(
                         v_flex()
@@ -1031,7 +1038,8 @@ impl Render for ModInstallView {
             .hero
             .as_mut()
             .and_then(|hero| Some((hero.origin, hero.frame(window)?)));
-        let details = self.render_details(window_width, hero.is_some());
+        let details =
+            self.render_details(window_width, hero.is_some(), Prefs::global(cx).clip_icons);
         let details = match hero {
             Some((origin, frame)) => motion::reveal(
                 details,
@@ -1090,7 +1098,7 @@ impl Render for ModInstallView {
                     )
                     .child(rest(
                         div()
-                            .when(wide, |this| this.w(px(22. * theme::FONT_SIZE)).flex_none())
+                            .when(wide, |this| this.w(rems(22.)).flex_none())
                             .child(self.render_form(cx)),
                     )),
             )

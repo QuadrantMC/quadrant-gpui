@@ -2,9 +2,10 @@ use std::{collections::HashMap, time::Duration};
 
 use futures::{StreamExt as _, channel::mpsc::UnboundedReceiver};
 use gpui::{
-    AnyElement, AnyView, App, AsyncApp, Context, Entity, Global, InteractiveElement as _,
-    IntoElement, MouseButton, NavigationDirection, ParentElement as _, Render, Styled as _, Window,
-    WindowControlArea, WindowHandle, div, prelude::FluentBuilder as _, px, rgb,
+    AnyElement, AnyView, App, AsyncApp, Context, Decorations, DispatchPhase, Entity, Global,
+    InteractiveElement as _, IntoElement, KeyBinding, MouseButton, NavigationDirection,
+    ParentElement as _, Render, ScrollDelta, ScrollEvent, Styled as _, Window, WindowControlArea,
+    WindowHandle, actions, canvas, div, prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{Root, h_flex, v_flex};
 
@@ -16,6 +17,7 @@ use crate::{
     i18n::{describe, t},
     motion, notifications, oauth,
     pages::{self, ModpacksPage, SearchPage},
+    prefs::Prefs,
     route::{History, Route},
     snackbar::{self, Snackbar, SnackbarKind},
     theme::{self, Tone},
@@ -93,6 +95,33 @@ pub fn open_links(
     .detach();
 }
 
+actions!(quadrant, [ZoomIn, ZoomOut, ResetZoom]);
+
+/// The desktop app's zoom shortcuts: Ctrl (or Cmd) with `+`, `-` and `0`.
+/// Ctrl with the wheel is [`QuadrantApp::zoom_wheel`].
+pub fn bind_zoom_keys(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("ctrl-=", ZoomIn, None),
+        KeyBinding::new("ctrl-+", ZoomIn, None),
+        KeyBinding::new("ctrl--", ZoomOut, None),
+        KeyBinding::new("ctrl-_", ZoomOut, None),
+        KeyBinding::new("ctrl-0", ResetZoom, None),
+    ]);
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        KeyBinding::new("cmd-=", ZoomIn, None),
+        KeyBinding::new("cmd-+", ZoomIn, None),
+        KeyBinding::new("cmd--", ZoomOut, None),
+        KeyBinding::new("cmd-_", ZoomOut, None),
+        KeyBinding::new("cmd-0", ResetZoom, None),
+    ]);
+    cx.on_action(|_: &ZoomIn, cx| Prefs::zoom(1, cx));
+    cx.on_action(|_: &ZoomOut, cx| Prefs::zoom(-1, cx));
+    cx.on_action(|_: &ResetZoom, cx| {
+        Prefs::set_ui_scale(crate::prefs::DEFAULT_UI_SCALE.into(), cx)
+    });
+}
+
 /// The window's content: the page rail, the title bar and the open page.
 pub struct QuadrantApp {
     history: History,
@@ -105,6 +134,9 @@ pub struct QuadrantApp {
     snackbar: Entity<Snackbar>,
     /// The open page's entrance, replayed whenever another page opens.
     entrance: Entrance,
+    /// Whether the window opened with the OS title bar. Outside Linux it
+    /// keeps what it opened with.
+    native_decorations: bool,
     /// Where the title bar's parts were laid out in the last frame.
     #[cfg(feature = "screenshot")]
     title_bar_layout: std::rc::Rc<std::cell::RefCell<TitleBarLayout>>,
@@ -168,6 +200,7 @@ impl QuadrantApp {
             pressed_title_bar: false,
             snackbar: snackbar::view(cx),
             entrance: Entrance { id: 0, first: true },
+            native_decorations: Prefs::global(cx).native_decorations,
             #[cfg(feature = "screenshot")]
             title_bar_layout: Default::default(),
         }
@@ -336,7 +369,53 @@ impl QuadrantApp {
             .child(div().w(px(4.)).h_full().bg(rgb(theme::CONTROL)))
     }
 
-    fn render_title_bar(&self, page: &AnyView, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Whether the app draws the window buttons, which it doesn't where the
+    /// OS draws them: always on macOS, with `nativeDecorations` elsewhere,
+    /// unless a Wayland compositor won't draw them.
+    fn draws_window_buttons(&self, window: &Window) -> bool {
+        if cfg!(target_os = "macos") {
+            false
+        } else if cfg!(target_os = "linux") {
+            matches!(window.window_decorations(), Decorations::Client { .. })
+        } else {
+            !self.native_decorations
+        }
+    }
+
+    /// Ctrl with the wheel zooms, a step per event, as in the desktop app.
+    /// Registered for the capture phase, so the page under the pointer
+    /// doesn't scroll as well.
+    fn zoom_wheel() -> impl IntoElement {
+        canvas(
+            |_, _, _| {},
+            |_, _, window, _| {
+                window.on_mouse_event(|event: &ScrollEvent, phase, _, cx| {
+                    if phase != DispatchPhase::Capture || !event.modifiers.control {
+                        return;
+                    }
+                    cx.stop_propagation();
+                    let y = match event.delta {
+                        ScrollDelta::Pixels(delta) => f32::from(delta.y),
+                        ScrollDelta::Lines(delta) => delta.y,
+                    };
+                    // gpui's positive y is the wheel turned away, the DOM's
+                    // negative deltaY.
+                    if y != 0. {
+                        Prefs::zoom(if y > 0. { 1 } else { -1 }, cx);
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_full()
+    }
+
+    fn render_title_bar(
+        &self,
+        page: &AnyView,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let title = pages::title(page, cx).unwrap_or_else(|| self.history.current().label());
         self.record_layout(h_flex(), LayoutSlot::Bar)
             .id("title-bar")
@@ -369,19 +448,18 @@ impl QuadrantApp {
                 self.record_layout(h_flex(), LayoutSlot::Cluster)
                     .gap_4()
                     .children(update_button(cx).map(|button| clickable(div().child(button))))
-                    .child(self.render_window_controls(cx)),
+                    .child(self.render_window_controls(window, cx)),
             )
     }
 
-    fn render_window_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_window_controls(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         clickable(self.record_layout(h_flex(), LayoutSlot::Controls))
             .p_2()
             .gap_2()
             .children(notifications::view(cx))
-            // macOS draws its own window buttons, as the desktop app's
-            // native decorations, on by default there, do; the bell then
-            // stands alone.
-            .when(!cfg!(target_os = "macos"), |this| {
+            // Where the OS draws the window buttons the bell stands alone,
+            // without the buttons' rounded container.
+            .when(self.draws_window_buttons(window), |this| {
                 this.rounded_full()
                     .bg(rgb(theme::SURFACE))
                     .child(
@@ -447,7 +525,7 @@ impl Render for QuadrantApp {
                     .flex_1()
                     .h_full()
                     .overflow_hidden()
-                    .child(self.render_title_bar(&page, cx))
+                    .child(self.render_title_bar(&page, window, cx))
                     .child(
                         div()
                             .flex_1()
@@ -455,7 +533,8 @@ impl Render for QuadrantApp {
                             .child(self.render_page(page)),
                     ),
             )
-            .child(self.snackbar.clone());
+            .child(self.snackbar.clone())
+            .child(Self::zoom_wheel());
         #[cfg(feature = "perf")]
         let root = root.child(crate::perf::paint_marker());
         root

@@ -1,27 +1,33 @@
 //! The Settings page, after `SettingsPage` in the desktop app.
 //!
 //! The update channel shows while the self-updater runs (feature `updater`).
-//! Left out, because they configure the Tauri shell rather than Quadrant: the
-//! UI scale (webview zoom) and native window decorations. The language picker
-//! is left out too: this app ships only the English strings.
+//! The language, UI scale, icon shape and window decorations are
+//! [`Prefs`], which apply to the whole window at once.
 
 use std::path::PathBuf;
 
 use gpui::{
-    App, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
-    div, prelude::FluentBuilder as _, rgb,
+    App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, rems, rgb,
 };
-use gpui_component::{h_flex, scroll::ScrollableElement as _, v_flex};
+use gpui_component::{
+    IndexPath, h_flex,
+    scroll::ScrollableElement as _,
+    select::{Select, SelectEvent, SelectItem, SelectState},
+    v_flex,
+};
 use quadrant_host::QuadrantHost;
 use serde_json::Value;
 
 use crate::{
+    assets::MdIcon,
     autostart::Autostart,
     backend::Backend,
     config, events,
-    i18n::{describe, t, t_with},
+    i18n::{Locale, describe, t, t_with},
     loadable::Loadable,
+    prefs::{self, Prefs},
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
 };
@@ -37,6 +43,7 @@ pub enum Toggle {
     ClipIcons,
     CurseForge,
     Modrinth,
+    NativeDecorations,
     AutoQuadrantSync,
     ModpackUpdateNotifications,
     SyncSettings,
@@ -46,11 +53,12 @@ pub enum Toggle {
 }
 
 impl Toggle {
-    pub const ALL: [Toggle; 10] = [
+    pub const ALL: [Toggle; 11] = [
         Toggle::CollectData,
         Toggle::ClipIcons,
         Toggle::CurseForge,
         Toggle::Modrinth,
+        Toggle::NativeDecorations,
         Toggle::AutoQuadrantSync,
         Toggle::ModpackUpdateNotifications,
         Toggle::SyncSettings,
@@ -66,6 +74,7 @@ impl Toggle {
             Toggle::ClipIcons => "clipIcons",
             Toggle::CurseForge => "curseforge",
             Toggle::Modrinth => "modrinth",
+            Toggle::NativeDecorations => "nativeDecorations",
             Toggle::AutoQuadrantSync => "autoQuadrantSync",
             Toggle::ModpackUpdateNotifications => "showModpackUpdateNotifications",
             Toggle::SyncSettings => "syncSettings",
@@ -98,12 +107,12 @@ pub struct Settings {
     /// `None` while Quadrant finds the Prism Launcher folder itself.
     pub prism_folder: Option<String>,
     /// One per [`Toggle::ALL`], in that order.
-    pub toggles: [bool; 10],
+    pub toggles: [bool; Toggle::ALL.len()],
 }
 
 impl Settings {
     pub fn read(host: &QuadrantHost) -> anyhow::Result<Self> {
-        let mut toggles = [false; 10];
+        let mut toggles = [false; Toggle::ALL.len()];
         for (slot, toggle) in toggles.iter_mut().zip(Toggle::ALL) {
             *slot = host
                 .get_config_value(toggle.key())?
@@ -173,16 +182,38 @@ pub struct SettingsPage {
     /// Whether the login item is registered, read from the OS; `None`
     /// where this platform has none.
     autostart: Option<bool>,
+    /// The language picker, made on the first render, which has the window.
+    language: Option<Entity<SelectState<Vec<LanguageItem>>>>,
+    _language_picked: Option<Subscription>,
+}
+
+#[derive(Clone)]
+struct LanguageItem(Locale);
+
+impl SelectItem for LanguageItem {
+    type Value = Locale;
+
+    fn title(&self) -> SharedString {
+        self.0.native_name().into()
+    }
+
+    fn value(&self) -> &Locale {
+        &self.0
+    }
 }
 
 impl SettingsPage {
     pub fn new(cx: &mut Context<Self>) -> Self {
         // Settings sync can change keys behind the page's back.
         events::listen(&["configChanged"], cx, |this, _, cx| this.reload(cx));
+        // The UI scale changes from the zoom shortcuts too.
+        cx.observe_global::<Prefs>(|_, cx| cx.notify()).detach();
         let mut page = Self {
             settings: Loadable::Idle,
             running: None,
             autostart: Autostart::global(cx).map(Autostart::is_enabled),
+            language: None,
+            _language_picked: None,
         };
         page.reload(cx);
         page
@@ -221,6 +252,8 @@ impl SettingsPage {
                 if let Err(error) = result {
                     snackbar::show(cx, SnackbarKind::Error, describe(error));
                 }
+                // The icon shape and window decorations apply app-wide.
+                Prefs::reload(cx);
                 this.reload(cx);
             });
         })
@@ -293,6 +326,96 @@ impl SettingsPage {
             .child(div().ml_4().child(t("launchAtLogin")))
     }
 
+    fn language_select(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<SelectState<Vec<LanguageItem>>> {
+        let current = Prefs::global(cx).locale;
+        if let Some(select) = self.language.clone() {
+            // Kept in step with a language set elsewhere.
+            if select.read(cx).selected_value() != Some(&current) {
+                select.update(cx, |select, cx| {
+                    select.set_selected_value(&current, window, cx)
+                });
+            }
+            return select;
+        }
+        let row = Locale::ALL.iter().position(|each| *each == current);
+        let select = cx.new(|cx| {
+            SelectState::new(
+                Locale::ALL.map(LanguageItem).to_vec(),
+                row.map(|row| IndexPath::default().row(row)),
+                window,
+                cx,
+            )
+        });
+        self._language_picked = Some(cx.subscribe(
+            &select,
+            |_, _, event: &SelectEvent<Vec<LanguageItem>>, cx| {
+                if let SelectEvent::Confirm(Some(locale)) = event {
+                    Prefs::set_locale(*locale, cx);
+                }
+            },
+        ));
+        self.language = Some(select.clone());
+        select
+    }
+
+    /// The language picker, as the desktop app's: a bold label over a
+    /// `max-w-xs` select.
+    fn render_language(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let select = self.language_select(window, cx);
+        v_flex()
+            .my_4()
+            .font_weight(FontWeight::BOLD)
+            .child(t("language"))
+            .child(
+                div().my_4().w_full().max_w(rems(20.)).child(
+                    Select::new(&select)
+                        .appearance(false)
+                        .h_10()
+                        .rounded_full()
+                        .bg(rgb(theme::CONTROL)),
+                ),
+            )
+    }
+
+    /// The UI scale: a bold label over minus, the percent and plus.
+    fn render_ui_scale(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let scale = i64::from(Prefs::global(cx).ui_scale);
+        let step = i64::from(prefs::UI_SCALE_STEP);
+        v_flex()
+            .my_4()
+            .font_weight(FontWeight::BOLD)
+            .child(t("uiScale"))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .items_center()
+                    .my_4()
+                    .gap_2()
+                    .child(
+                        theme::icon_button("ui-scale-down", Tone::Control, MdIcon::Remove, cx)
+                            .on_click(move |_, _, cx| Prefs::set_ui_scale(scale - step, cx)),
+                    )
+                    .child(
+                        div()
+                            .w_20()
+                            .px_4()
+                            .py_2()
+                            .bg(rgb(theme::SURFACE))
+                            .rounded(theme::radius_card())
+                            .text_center()
+                            .child(format!("{scale}%")),
+                    )
+                    .child(
+                        theme::icon_button("ui-scale-up", Tone::Control, MdIcon::Add, cx)
+                            .on_click(move |_, _, cx| Prefs::set_ui_scale(scale + step, cx)),
+                    ),
+            )
+    }
+
     fn render_toggle(&self, toggle: Toggle, on: bool, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .my_4()
@@ -307,7 +430,7 @@ impl SettingsPage {
     }
 
     fn render_settings(
-        &self,
+        &mut self,
         settings: &Settings,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -329,6 +452,8 @@ impl SettingsPage {
                 ],
             )))
             .children(update_channel(window, cx))
+            .child(self.render_language(window, cx))
+            .child(self.render_ui_scale(cx))
             .child(
                 panel(settings.mc_folder.clone()).mt_4().child(
                     h_flex()
@@ -409,6 +534,7 @@ impl SettingsPage {
                     Toggle::ClipIcons,
                     Toggle::CurseForge,
                     Toggle::Modrinth,
+                    Toggle::NativeDecorations,
                     Toggle::AutoQuadrantSync,
                     Toggle::ModpackUpdateNotifications,
                     Toggle::SyncSettings,
@@ -530,9 +656,11 @@ impl Render for SettingsPage {
                 .text_color(rgb(theme::TEXT_MUTED))
                 .child(error.clone())
                 .into_any_element(),
-            Loadable::Ready(settings) => self
-                .render_settings(settings, window, cx)
-                .into_any_element(),
+            Loadable::Ready(settings) => {
+                let settings = settings.clone();
+                self.render_settings(&settings, window, cx)
+                    .into_any_element()
+            }
         };
         div()
             .id("settings")

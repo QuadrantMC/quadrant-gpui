@@ -18,6 +18,7 @@ mod oauth;
 mod pages;
 #[cfg(feature = "perf")]
 mod perf;
+mod prefs;
 mod route;
 #[cfg(feature = "screenshot")]
 mod screenshot;
@@ -39,13 +40,13 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use gpui::{
-    App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowDecorations, WindowHandle,
-    WindowOptions, point, px, size,
+    App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions,
+    point, px, size,
 };
 use gpui_component::Root;
 use quadrant_host::{QuadrantHost, QuadrantHostOptions};
 
-use crate::{app::QuadrantApp, backend::Backend};
+use crate::{app::QuadrantApp, backend::Backend, prefs::Prefs};
 
 /// The desktop app's Tauri identifier, whose data folder this app shares.
 const APP_IDENTIFIER: &str = "dev.mrquantumoff.mcmodpackmanager";
@@ -273,6 +274,7 @@ fn build_host(
 /// A launch that runs, rather than handing its links to a running one.
 struct Running {
     backend: Backend,
+    prefs: Prefs,
     args: Args,
     /// Where later launches reach this one; `None` in screenshot and perf
     /// runs, or when the socket failed.
@@ -294,7 +296,7 @@ fn launch(raw_args: Vec<OsString>) -> Result<Option<Running>> {
         Some(Err(error)) => Err(error),
         None => Ok(None),
     };
-    let backend = start(&args)?;
+    let (backend, prefs) = start(&args)?;
     // The host has set up logging by now.
     let primary = primary.unwrap_or_else(|error| {
         log::warn!("Later launches will start instances of their own: {error:#}");
@@ -314,13 +316,14 @@ fn launch(raw_args: Vec<OsString>) -> Result<Option<Running>> {
         .ok();
     Ok(Some(Running {
         backend,
+        prefs,
         args,
         primary,
         autostart,
     }))
 }
 
-fn start(args: &Args) -> Result<Backend> {
+fn start(args: &Args) -> Result<(Backend, Prefs)> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -334,7 +337,8 @@ fn start(args: &Args) -> Result<Backend> {
         "Quadrant-Native {} started with {args:?}",
         env!("CARGO_PKG_VERSION")
     );
-    Ok(Backend::new(host, runtime))
+    let prefs = Prefs::read(&host);
+    Ok((Backend::new(host, runtime), prefs))
 }
 
 /// Debug builds only: `QUADRANT_NATIVE_BACKGROUND` opens the window without
@@ -354,16 +358,19 @@ fn open_main_window(mode: &Mode, autostart: bool, cx: &mut App) -> Result<Window
     let hidden = matches!(mode, Mode::Screenshot(_)) || (autostart && !cfg!(target_os = "linux"));
     let background = background_window();
     let bounds = Bounds::centered(None, size(px(1150.), px(720.)), cx);
+    // With `nativeDecorations` the OS draws the title bar; macOS keeps its
+    // traffic lights either way. Only Linux can change this later.
+    let native = Prefs::global(cx).native_decorations;
     #[cfg_attr(not(feature = "perf"), expect(unused_mut))]
     let mut options = WindowOptions {
-        // The title bar is drawn by the app; the title still names the window
-        // for the taskbar and window switchers.
+        // Unless the OS draws it, the title bar is drawn by the app; the
+        // title still names the window for the taskbar and window switchers.
         titlebar: Some(TitlebarOptions {
             title: Some(PRODUCT_NAME.into()),
-            appears_transparent: true,
-            traffic_light_position: Some(point(px(12.), px(12.))),
+            appears_transparent: !native,
+            traffic_light_position: (!native).then(|| point(px(12.), px(12.))),
         }),
-        window_decorations: Some(WindowDecorations::Client),
+        window_decorations: Some(prefs::window_decorations(Prefs::global(cx))),
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(800.), px(500.))),
         show: !hidden,
@@ -400,13 +407,14 @@ fn main() -> ExitCode {
     let raw_args: Vec<OsString> = std::env::args_os().skip(1).collect();
     // Before parsing, so a bad argument is reported in the console too.
     let console = console::Console::setup(raw_args.iter().any(|arg| is_debug_flag(arg)));
-    let (backend, args, primary, autostart) = match launch(raw_args) {
+    let (backend, prefs, args, primary, autostart) = match launch(raw_args) {
         Ok(Some(Running {
             backend,
+            prefs,
             args,
             primary,
             autostart,
-        })) => (backend, args, primary, autostart),
+        })) => (backend, prefs, args, primary, autostart),
         Ok(None) => return ExitCode::SUCCESS,
         Err(error) => {
             console.fatal(&format!("{error:#}"));
@@ -435,6 +443,8 @@ fn main() -> ExitCode {
         if let Some(autostart) = autostart {
             cx.set_global(autostart);
         }
+        prefs.install(cx);
+        app::bind_zoom_keys(cx);
         snackbar::install(cx);
         notifications::install(args.mode == Mode::Interactive, cx);
         events::forward(cx);

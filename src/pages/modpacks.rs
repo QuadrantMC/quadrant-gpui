@@ -39,6 +39,7 @@ use crate::{
         mod_grid::HintedList,
         modpack_view::{ModpackView, ModpackViewEvent, catalog_keys},
     },
+    prefs::Prefs,
     session::Session,
     snackbar::{self, SnackbarKind},
     taskbar::{self, Job},
@@ -536,6 +537,13 @@ impl ModpacksPage {
                 cx.notify();
             }
         });
+        // The search field's placeholder follows a language change.
+        cx.observe_global_in::<Prefs>(window, |this, window, cx| {
+            this.search.update(cx, |search, cx| {
+                search.set_placeholder(t("searchModpacksPlaceholder"), window, cx)
+            })
+        })
+        .detach();
         let prism = cx.new(prism::PrismMenus::new);
         let prism_changed =
             cx.subscribe(&prism, |this, _, _: &prism::Changed, cx| this.refresh(cx));
