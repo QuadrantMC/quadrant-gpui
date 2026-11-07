@@ -295,5 +295,6 @@
   "installedContentDeleteSelected": "Seçilenleri sil",
   "installedContentDeleteSelectedConfirm": "{{amount}} tanesi silinsin mi?",
   "errorContentMissing": "O paket artık o klasörde değil.",
-  "launchAtLogin": "Oturum açılışında tepside başlat"
+  "launchAtLogin": "Oturum açılışında tepside başlat",
+  "allModsUpToDate": "Tüm modlar güncel."
 }

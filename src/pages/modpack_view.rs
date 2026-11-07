@@ -426,7 +426,7 @@ impl ModpackView {
             let _ = this.update(cx, |this, cx| {
                 if matches!(&result, Ok(updates) if updates.is_empty()) {
                     this.mode = Mode::Mods;
-                    snackbar::show(cx, SnackbarKind::Neutral, "Every mod is up to date.");
+                    snackbar::show(cx, SnackbarKind::Neutral, t("allModsUpToDate"));
                 }
                 this.updates = Loadable::from_result(result);
                 this.entrance.restart();

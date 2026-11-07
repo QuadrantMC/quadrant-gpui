@@ -34,7 +34,7 @@ use crate::{
 
 const PUBLIC_USAGE_URL: &str = "https://mrquantumoff.dev/projects/quadrant/analytics";
 /// The runtime the version line names, as the desktop app names Tauri's.
-const RUNTIME: (&str, &str) = ("GPUI", "0.3.9");
+const RUNTIME: (&str, &str) = ("GPUI", "0.3.11");
 
 /// An on/off setting, in the order the page lists them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -691,6 +691,25 @@ impl Render for SettingsPage {
 mod tests {
     use super::*;
     use quadrant_host::QuadrantHostOptions;
+
+    #[test]
+    fn runtime_names_the_locked_gpui() {
+        let lock = include_str!("../../Cargo.lock");
+        let version = lock
+            .split("[[package]]")
+            .find(|entry| {
+                entry
+                    .lines()
+                    .any(|line| line.trim_end() == r#"name = "gpui-pre""#)
+            })
+            .and_then(|entry| {
+                entry
+                    .lines()
+                    .find_map(|line| line.strip_prefix("version = "))
+            })
+            .expect("gpui-pre in Cargo.lock");
+        assert_eq!(version.trim_matches('"'), RUNTIME.1);
+    }
 
     fn sandbox_host(root: &std::path::Path) -> QuadrantHost {
         let mut options = QuadrantHostOptions::new(root.join("data"), "", "", "");

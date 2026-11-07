@@ -295,5 +295,6 @@
   "installedContentDeleteSelected": "Delete selected",
   "installedContentDeleteSelectedConfirm": "Delete {{amount}}?",
   "errorContentMissing": "That pack is no longer in that folder.",
-  "launchAtLogin": "Launch at login, in the tray"
+  "launchAtLogin": "Launch at login, in the tray",
+  "allModsUpToDate": "Every mod is up to date."
 }

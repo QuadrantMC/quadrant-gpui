@@ -301,5 +301,6 @@
   "installedContentDeleteSelected": "Видалити вибране",
   "installedContentDeleteSelectedConfirm": "Видалити {{amount}}?",
   "errorContentMissing": "Цього набору більше немає в тій теці.",
-  "launchAtLogin": "Запускати під час входу, у треї"
+  "launchAtLogin": "Запускати під час входу, у треї",
+  "allModsUpToDate": "Усі моди оновлені."
 }
