@@ -6086,7 +6086,7 @@ dependencies = [
 [[package]]
 name = "quadrant-core"
 version = "26.11.0-stable"
-source = "git+https://github.com/QuadrantMC/quadrant?rev=e4c92d873ffbc1d48a025cfc251adbd29fa02b21#e4c92d873ffbc1d48a025cfc251adbd29fa02b21"
+source = "git+https://github.com/QuadrantMC/quadrant?rev=72ce92949ee1113dddc0de7b5ea761a2a3006712#72ce92949ee1113dddc0de7b5ea761a2a3006712"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6112,16 +6112,21 @@ dependencies = [
 [[package]]
 name = "quadrant-host"
 version = "26.11.0-stable"
-source = "git+https://github.com/QuadrantMC/quadrant?rev=e4c92d873ffbc1d48a025cfc251adbd29fa02b21#e4c92d873ffbc1d48a025cfc251adbd29fa02b21"
+source = "git+https://github.com/QuadrantMC/quadrant?rev=72ce92949ee1113dddc0de7b5ea761a2a3006712#72ce92949ee1113dddc0de7b5ea761a2a3006712"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
+ "base64 0.22.1",
  "colog",
  "dbus-secret-service-keyring-store",
+ "dirs 7.0.0",
  "futures",
+ "interprocess",
  "keyring-core",
  "log",
+ "minisign-verify",
  "quadrant-core",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -6129,15 +6134,15 @@ dependencies = [
  "url",
  "uuid",
  "windows-native-keyring-store",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "quadrant-native"
-version = "26.11.0-alpha"
+version = "26.11.1-gpui-preview.1"
 dependencies = [
  "anyhow",
  "auto-launch",
- "base64 0.22.1",
  "chrono",
  "dirs 6.0.0",
  "embed-resource",
@@ -6148,16 +6153,13 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
  "image",
- "interprocess",
  "ksni",
  "log",
- "minisign-verify",
  "notify",
  "quadrant-core",
  "quadrant-host",
  "raw-window-handle",
  "reqwest",
- "serde",
  "serde_json",
  "smallvec",
  "tempfile",

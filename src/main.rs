@@ -23,7 +23,6 @@ mod route;
 #[cfg(feature = "screenshot")]
 mod screenshot;
 mod session;
-mod single_instance;
 mod snackbar;
 mod taskbar;
 mod text_cache;
@@ -44,7 +43,12 @@ use gpui::{
     point, px, size,
 };
 use gpui_component::Root;
-use quadrant_host::{QuadrantHost, QuadrantHostOptions};
+use quadrant_host::{
+    QuadrantHost, QuadrantHostOptions,
+    app_paths::{self, Launch},
+    single_instance::{self, Claim, Serving},
+    updates,
+};
 
 use crate::{app::QuadrantApp, backend::Backend, prefs::Prefs};
 
@@ -271,6 +275,16 @@ fn build_host(
     Ok(host)
 }
 
+/// This app, of the two sharing the data folder.
+const RUNNING: updates::App = updates::App::QuadrantNative;
+
+/// Whether this launch follows the `channel` setting to Quadrant when it
+/// names Quadrant: an interactive run of an installed copy that updates
+/// itself, on the shared data folder.
+fn follows_channel(args: &Args, installed: bool) -> bool {
+    installed && args.mode == Mode::Interactive && args.data_dir.is_none() && !args.no_updater
+}
+
 /// A launch that runs, rather than handing its links to a running one.
 struct Running {
     backend: Backend,
@@ -283,16 +297,34 @@ struct Running {
     autostart: Option<autostart::Autostart>,
 }
 
-/// `None` when another instance took the links and this one is done.
-fn launch(raw_args: Vec<OsString>) -> Result<Option<Running>> {
-    let args = parse_args(raw_args, |key| std::env::var_os(key))?;
+/// This instance's hold on the single instance socket, which the updater
+/// releases before it starts the installed app.
+pub struct SingleInstance(pub Serving);
+
+impl gpui::Global for SingleInstance {}
+
+/// `None` when Quadrant or another instance took the launch and this one is
+/// done.
+fn launch(raw_args: Vec<OsString>, launched: Launch) -> Result<Option<Running>> {
+    let args = parse_args(raw_args.clone(), |key| std::env::var_os(key))?;
     let data_dir = data_folder(args.data_dir.as_deref())?;
-    let key = single_instance::key(dirs::home_dir().as_deref(), &data_dir);
-    // Before the host starts, so a second launch leaves the config alone.
-    let claim = (args.mode == Mode::Interactive).then(|| single_instance::claim(&key, &args.urls));
+    // Before the host starts, so a launch handed on leaves the config alone.
+    #[cfg(feature = "updater")]
+    let installed = updater::installed();
+    #[cfg(not(feature = "updater"))]
+    let installed = false;
+    if follows_channel(&args, installed)
+        && app_paths::redirect(&data_dir, RUNNING, &raw_args, launched)
+    {
+        return Ok(None);
+    }
+    let key = single_instance::key(&data_dir);
+    let handoff = launched == Launch::Handoff;
+    let claim = (args.mode == Mode::Interactive)
+        .then(|| single_instance::claim(&data_dir, &args.urls, handoff));
     let primary = match claim {
-        Some(Ok(single_instance::Claim::Forwarded)) => return Ok(None),
-        Some(Ok(single_instance::Claim::Primary(primary))) => Ok(Some(primary)),
+        Some(Ok(Claim::Forwarded)) => return Ok(None),
+        Some(Ok(Claim::Primary(primary))) => Ok(Some(primary)),
         Some(Err(error)) => Err(error),
         None => Ok(None),
     };
@@ -404,10 +436,12 @@ fn open_main_window(mode: &Mode, autostart: bool, cx: &mut App) -> Result<Window
 }
 
 fn main() -> ExitCode {
+    // Before any thread starts: it edits the environment.
+    let launched = Launch::take();
     let raw_args: Vec<OsString> = std::env::args_os().skip(1).collect();
     // Before parsing, so a bad argument is reported in the console too.
     let console = console::Console::setup(raw_args.iter().any(|arg| is_debug_flag(arg)));
-    let (backend, prefs, args, primary, autostart) = match launch(raw_args) {
+    let (backend, prefs, args, primary, autostart) = match launch(raw_args, launched) {
         Ok(Some(Running {
             backend,
             prefs,
@@ -483,9 +517,10 @@ fn main() -> ExitCode {
                     let _ = links.unbounded_send(args.urls.clone());
                 }
                 if let Some(primary) = primary {
-                    primary.serve(move |urls| {
+                    let serving = primary.serve(move |urls| {
                         let _ = links.unbounded_send(urls);
                     });
+                    cx.set_global(SingleInstance(serving));
                 }
                 app::open_links(inbox, window, cx);
             }
@@ -665,6 +700,17 @@ mod tests {
             assert_eq!(parsed.data_dir, Some("data".into()));
         }
         assert!(!parse_args(args(&[]), |_| None).unwrap().debug);
+    }
+
+    #[test]
+    fn only_installed_interactive_runs_on_the_shared_folder_follow_the_channel() {
+        let parse = |flags: &[&str]| parse_args(args(flags), |_| None).unwrap();
+        assert!(follows_channel(&parse(&["modrinth://mod/sodium"]), true));
+        assert!(!follows_channel(&parse(&[]), false));
+        assert!(!follows_channel(&parse(&["--noupdater"]), true));
+        assert!(!follows_channel(&parse(&["--data-dir", "sandbox"]), true));
+        #[cfg(feature = "screenshot")]
+        assert!(!follows_channel(&parse(&["--screenshot", "out"]), true));
     }
 
     #[test]

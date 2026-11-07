@@ -2,7 +2,7 @@
 name = "quadrant-native"
 # YY.MM.REVISION with the release channel as the pre-release, like Quadrant.
 # The release tag is `v` plus this version.
-version = "26.11.0-alpha"
+version = "26.11.1-gpui-preview.1"
 edition = "2024"
 description = "Manage your mods and modpacks with ease."
 authors = ["MrQuantumOFF (Demir Yerli) <me@mrquantumoff.dev>"]
@@ -17,16 +17,16 @@ curseforge = ["quadrant-host/curseforge"]
 screenshot = ["gpui/test-support", "gpui_platform/test-support"]
 # Adds `--perf <scenario|all>`, which drives the window and records its frame times.
 perf = []
-# The self-updater: checks Quadrant's update server for quadrant-native and
-# installs signed releases. Release CI turns it on; dev builds leave it off.
-updater = ["dep:base64", "dep:minisign-verify", "dep:serde"]
+# The self-updater: follows the shared `channel` setting on Quadrant's update
+# server, updating this app or switching to Quadrant, and installs signed
+# releases. Release CI turns it on; dev builds leave it off.
+updater = ["quadrant-host/updates"]
 # Perf mode plus gpui's profiler, which adds where each run's time went to its
 # JSON. For diagnosis only: the profiler's overhead skews the frame times.
 perf-profile = ["perf", "gpui/profiler"]
 
 [dependencies]
 anyhow = "1"
-base64 = { version = "0.22", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "6"
 # Already in the tree through gpui; runs the mod catalog's requests side by side.
@@ -34,22 +34,18 @@ futures = "0.3"
 getrandom = "0.4"
 # Already in the tree through gpui; decodes the tray icon.
 image = { version = "0.25", default-features = false, features = ["png"] }
-# A named pipe on Windows, a Unix socket elsewhere: a second launch hands
-# its links to the running app.
-interprocess = { version = "2", default-features = false }
 gpui = { package = "gpui-pre", version = "=0.3.11" }
 gpui-component = "0.9.0"
 gpui-kit-assets = "0.9.0"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", features = ["font-kit", "wayland"] }
 log = "0.4"
-minisign-verify = { version = "0.3", optional = true }
 # Watches the Minecraft folder while the Apply page is shown.
 notify = "8"
-quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "e4c92d873ffbc1d48a025cfc251adbd29fa02b21" }
-quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "e4c92d873ffbc1d48a025cfc251adbd29fa02b21" }
+quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "72ce92949ee1113dddc0de7b5ea761a2a3006712" }
+# `single-instance`: one running app per data folder, shared with Quadrant.
+quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "72ce92949ee1113dddc0de7b5ea761a2a3006712", features = ["single-instance"] }
 # Already in the tree through quadrant-core; fetches remote images for `img(url)`.
 reqwest = { version = "0.13", default-features = false }
-serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"
 # Already in the tree through gpui; a type in gpui's platform interface.
 smallvec = "1"

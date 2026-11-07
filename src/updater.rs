@@ -1,29 +1,31 @@
-//! The self-updater (feature `updater`), after the desktop app's: it asks
-//! Quadrant's update server for `quadrant-native` on the chosen channel,
-//! downloads the release in the background and checks its minisign
-//! signature. The title bar then offers to install it, which replaces this
-//! copy and starts the new one.
+//! The self-updater (feature `updater`), after the desktop app's. The
+//! `channel` setting, shared with the desktop app, names an app as well as a
+//! release line (quadrant-host's `updates`): on a Quadrant-Native channel it
+//! downloads this app's newest release; on a Quadrant channel it downloads
+//! Quadrant's, to switch to it. Either is checked against its minisign
+//! signature in the background, and the title bar then offers to install
+//! it, which starts the installed app and quits this one.
 
-mod install;
-mod protocol;
+use std::sync::Arc;
 
-use std::{sync::Arc, time::Duration};
-
-use anyhow::{Result, anyhow};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FontWeight, Global, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, Subscription, Task, Window, div, rems, rgb,
 };
 use gpui_component::{
     IndexPath,
+    button::Button,
     select::{Select, SelectEvent, SelectItem, SelectState},
     v_flex,
 };
-use quadrant_host::QuadrantHost;
-use reqwest::StatusCode;
+use quadrant_host::{
+    app_paths,
+    updates::{self, App as AppKind, Channel, Update},
+};
 use tokio::sync::watch;
 
 use crate::{
+    RUNNING, SingleInstance,
     assets::MdIcon,
     backend::Backend,
     config,
@@ -32,12 +34,10 @@ use crate::{
     taskbar::{self, Job},
     theme::{self, Tone},
 };
-use protocol::{Bundle, Release};
 
-use protocol::DEFAULT_CHANNEL;
-
-const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const USER_AGENT: &str = concat!("QuadrantMC/quadrant-native/v", env!("CARGO_PKG_VERSION"));
+/// The package name the Linux packages install under.
+const PACKAGE: &str = "quadrant-native";
 /// Debug builds only: an update server to ask instead of Quadrant's, for
 /// testing the whole update against a local one. Plain http is allowed then.
 const ENDPOINT_OVERRIDE: &str = "QUADRANT_NATIVE_UPDATE_ENDPOINT";
@@ -49,44 +49,38 @@ pub enum Status {
     /// Downloading, `0.0..=1.0` done.
     Downloading(f32),
     Ready(Arc<Update>),
-    Installing,
+    Installing(Arc<Update>),
 }
 
-/// The channels the settings offer, as in the desktop app.
-const CHANNELS: [&str; 2] = ["stable", "preview"];
+/// Whether this copy is an install that can replace itself, rather than a
+/// build in `target/` or a package a package manager updates.
+pub fn installed() -> bool {
+    updates::detect(PACKAGE).is_some()
+}
 
 #[derive(Clone)]
-struct ChannelItem(&'static str);
+struct ChannelItem(Channel);
 
 impl SelectItem for ChannelItem {
-    type Value = &'static str;
+    type Value = Channel;
 
     fn title(&self) -> SharedString {
-        t(self.0)
+        t(self.0.label_key())
     }
 
-    fn value(&self) -> &&'static str {
+    fn value(&self) -> &Channel {
         &self.0
     }
 }
 
 type ChannelSelect = SelectState<Vec<ChannelItem>>;
 
-/// A downloaded release whose signature checked out.
-pub struct Update {
-    pub version: String,
-    bytes: Vec<u8>,
-}
-
 pub struct Updater {
-    bundle: Bundle,
-    /// The update server, without the `/api/...` path.
-    server: String,
-    allow_http: bool,
+    check: Arc<updates::Updater>,
     status: Status,
     work: Task<()>,
-    /// The `channel` setting, shared with the desktop app; `None` until read.
-    channel: Option<String>,
+    /// The `channel` setting; `None` until read.
+    channel: Option<Channel>,
     /// The settings page's picker, built on its first render.
     channel_select: Option<Entity<ChannelSelect>>,
     _channel_picked: Option<Subscription>,
@@ -98,31 +92,47 @@ impl Global for GlobalUpdater {}
 
 impl Updater {
     /// Starts checking for updates when this copy is an install that can
-    /// replace itself. `main` skips it for `--noupdater`.
+    /// replace itself, and records where it lives so Quadrant can start it.
+    /// `main` skips it for `--noupdater`.
     pub fn start(cx: &mut App) {
-        let Some(bundle) = install::detect() else {
+        let Some(bundle) = updates::detect(PACKAGE) else {
             log::info!("Not an installed copy; the updater stays off");
             return;
         };
         let override_server = cfg!(debug_assertions)
             .then(|| std::env::var(ENDPOINT_OVERRIDE).ok())
             .flatten();
+        let check = updates::Updater {
+            allow_http: override_server.is_some(),
+            server: override_server.unwrap_or_else(|| updates::API_BASE.to_string()),
+            ..check_for(bundle)
+        };
+        Backend::global(cx)
+            .run(cx, |host| async move {
+                if let Some(path) = app_paths::current_executable() {
+                    app_paths::record(&host, RUNNING, &path)?;
+                }
+                Ok(())
+            })
+            .detach();
         let updater = cx.new(|cx| {
-            let mut updater = Self {
-                bundle,
-                allow_http: override_server.is_some(),
-                server: override_server.unwrap_or_else(|| protocol::API_BASE.to_string()),
-                status: Status::Idle,
-                work: Task::ready(()),
-                channel: None,
-                channel_select: None,
-                _channel_picked: None,
-            };
+            let mut updater = Self::new(check, Status::Idle);
             updater.load_channel(cx);
             updater.check(cx);
             updater
         });
         cx.set_global(GlobalUpdater(updater));
+    }
+
+    fn new(check: updates::Updater, status: Status) -> Self {
+        Self {
+            check: Arc::new(check),
+            status,
+            work: Task::ready(()),
+            channel: None,
+            channel_select: None,
+            _channel_picked: None,
+        }
     }
 
     /// The running updater, when there is one.
@@ -135,45 +145,22 @@ impl Updater {
         &self.status
     }
 
-    /// Looks for a release on the channel in the settings and downloads it.
-    /// Does nothing while a download or an install is under way.
+    /// Looks for a release on the channel in the settings, of this app or
+    /// of the one the channel switches to, and downloads it. Does nothing
+    /// while a download or an install is under way.
     pub fn check(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.status, Status::Downloading(_) | Status::Installing) {
+        if matches!(self.status, Status::Downloading(_) | Status::Installing(_)) {
             return;
         }
         let (progress, mut progress_seen) = watch::channel(None::<f32>);
-        let (server, bundle, allow_http) = (self.server.clone(), self.bundle, self.allow_http);
+        let check = self.check.clone();
         let job = Backend::global(cx).run(cx, move |host| async move {
-            let channel = read_channel(&host)?;
-            let urls = protocol::endpoints(&server, &channel, bundle, CURRENT_VERSION);
-            let client = reqwest::Client::builder()
-                .user_agent(USER_AGENT)
-                .connect_timeout(Duration::from_secs(30))
-                .build()?;
-            let Some(release) = fetch_release(&client, &urls).await? else {
-                log::info!("No releases on the update server");
-                return Ok(None);
-            };
-            if !release.is_update_for(CURRENT_VERSION) {
-                log::info!("Quadrant-Native {CURRENT_VERSION} is up to date");
-                return Ok(None);
-            }
-            release.check_url(allow_http)?;
-            log::info!(
-                "Downloading Quadrant-Native {} from {}",
-                release.version,
-                release.url
-            );
-            let bytes = download(&client, &release.url, &progress).await?;
-            protocol::verify(&bytes, &release.signature, protocol::PUBKEY)?;
-            log::info!(
-                "Quadrant-Native {} is downloaded and its signature checks out",
-                release.version
-            );
-            Ok(Some(Update {
-                version: release.version,
-                bytes,
-            }))
+            let channel = Channel::read(&host);
+            check
+                .check(channel, |done| {
+                    progress.send_replace(Some(done));
+                })
+                .await
         });
         self.work = cx.spawn(async move |this, cx| {
             // The job owns the sender, so this ends when the job does.
@@ -210,7 +197,7 @@ impl Updater {
     }
 
     fn load_channel(&mut self, cx: &mut Context<Self>) {
-        let task = Backend::global(cx).run(cx, |host| async move { read_channel(&host) });
+        let task = Backend::global(cx).run(cx, |host| async move { Ok(Channel::read(&host)) });
         cx.spawn(async move |this, cx| {
             if let Ok(channel) = task.await {
                 let _ = this.update(cx, |this, cx| {
@@ -223,10 +210,10 @@ impl Updater {
     }
 
     /// Saves the channel and checks it for a release, as the desktop app does.
-    fn set_channel(&mut self, channel: &'static str, cx: &mut Context<Self>) {
-        self.channel = Some(channel.to_string());
+    fn set_channel(&mut self, channel: Channel, cx: &mut Context<Self>) {
+        self.channel = Some(channel);
         let task = Backend::global(cx).run(cx, move |host| async move {
-            config::set(&host, "channel", channel.into())
+            config::set(&host, updates::CHANNEL_KEY, channel.as_str().into())
         });
         cx.spawn(async move |this, cx| match task.await {
             Ok(()) => {
@@ -245,10 +232,10 @@ impl Updater {
         if let Some(select) = &self.channel_select {
             return Some(select.clone());
         }
-        let channel = self.channel.as_deref()?;
-        let row = CHANNELS.iter().position(|each| *each == channel);
+        let channel = self.channel?;
+        let row = Channel::ALL.iter().position(|each| *each == channel);
         let select = cx.new(|cx| {
-            let items = CHANNELS.map(ChannelItem).to_vec();
+            let items = Channel::ALL.map(ChannelItem).to_vec();
             SelectState::new(
                 items,
                 row.map(|row| IndexPath::default().row(row)),
@@ -260,7 +247,7 @@ impl Updater {
             &select,
             |this, _, event: &SelectEvent<Vec<ChannelItem>>, cx| {
                 if let SelectEvent::Confirm(Some(channel)) = event {
-                    this.set_channel(channel, cx);
+                    this.set_channel(*channel, cx);
                 }
             },
         ));
@@ -268,21 +255,31 @@ impl Updater {
         Some(select)
     }
 
-    /// Installs the downloaded update and quits; the new version starts in
-    /// this one's place.
+    /// Installs the downloaded release and quits; the installed app starts
+    /// in this one's place.
     pub fn install(&mut self, cx: &mut Context<Self>) {
         let Status::Ready(update) = &self.status else {
             return;
         };
         let update = update.clone();
-        let bundle = self.bundle;
-        self.status = Status::Installing;
+        self.status = Status::Installing(update.clone());
         cx.notify();
-        log::info!("Installing Quadrant-Native {}", update.version);
+        log::info!("Installing {} {}", update.app.name(), update.version);
+        // The installed app claims the single instance socket as it starts.
+        let serving = cx
+            .try_global::<SingleInstance>()
+            .map(|single| single.0.clone());
         let job = Backend::global(cx).run(cx, {
             let update = update.clone();
             move |_| async move {
-                tokio::task::spawn_blocking(move || install::apply(bundle, &update.bytes)).await?
+                tokio::task::spawn_blocking(move || {
+                    update.install(|| {
+                        if let Some(serving) = serving {
+                            serving.release();
+                        }
+                    })
+                })
+                .await?
             }
         });
         self.work = cx.spawn(async move |this, cx| match job.await {
@@ -302,29 +299,45 @@ impl Updater {
     #[cfg(feature = "screenshot")]
     pub fn preview(status: Status, cx: &mut App) {
         let updater = cx.new(|_| Self {
-            bundle: Bundle::Nsis,
-            server: String::new(),
-            allow_http: false,
-            status,
-            work: Task::ready(()),
-            channel: Some(DEFAULT_CHANNEL.to_string()),
-            channel_select: None,
-            _channel_picked: None,
+            channel: Some(Channel::GpuiPreview),
+            ..Self::new(check_for(updates::Bundle::Nsis), status)
         });
         cx.set_global(GlobalUpdater(updater));
     }
 
+    /// A ready release of `app`, for screenshots.
     #[cfg(feature = "screenshot")]
-    pub fn preview_update(version: &str) -> Arc<Update> {
-        Arc::new(Update {
-            version: version.to_string(),
-            bytes: Vec::new(),
-        })
+    pub fn preview_update(app: AppKind, version: &str) -> Arc<Update> {
+        Arc::new(Update::preview(app, RUNNING, version))
+    }
+}
+
+/// Checks against Quadrant's update server for this copy.
+fn check_for(bundle: updates::Bundle) -> updates::Updater {
+    updates::Updater {
+        running: RUNNING,
+        current_version: env!("CARGO_PKG_VERSION").to_string(),
+        bundle,
+        server: updates::API_BASE.to_string(),
+        allow_http: false,
+        user_agent: USER_AGENT.to_string(),
+        pubkey: updates::PUBKEY.to_string(),
+    }
+}
+
+/// The ready button's label: an update of this app, or the app it switches
+/// to.
+fn install_label(update: &Update) -> SharedString {
+    match update.switches_to() {
+        None => t("appUpdate"),
+        Some(AppKind::Quadrant) => t("switchToQuadrant"),
+        Some(AppKind::QuadrantNative) => t("switchToQuadrantNative"),
     }
 }
 
 /// The title bar's update button, as in the desktop app: the download's
-/// progress, then "Install an update" once it is ready.
+/// progress, then "Install an update" (or "Switch to Quadrant") once it is
+/// ready.
 pub fn title_bar_button(cx: &App) -> Option<AnyElement> {
     let updater = Updater::global(cx)?;
     let button = match updater.read(cx).status() {
@@ -336,19 +349,23 @@ pub fn title_bar_button(cx: &App) -> Option<AnyElement> {
             None,
             cx,
         ),
-        status @ (Status::Ready(_) | Status::Installing) => theme::pill_button(
-            "app-update",
-            Tone::Positive,
-            t("appUpdate"),
-            Some(MdIcon::InstallDesktop),
-            cx,
-        )
-        // The label is a child element, so screen readers need the name.
-        .accessibility_label(t("appUpdate"))
-        .loading(matches!(status, Status::Installing))
-        .on_click(move |_, _, cx| updater.update(cx, |updater, cx| updater.install(cx))),
+        Status::Installing(update) => ready_button(install_label(update), cx).loading(true),
+        Status::Ready(update) => ready_button(install_label(update), cx)
+            .on_click(move |_, _, cx| updater.update(cx, |updater, cx| updater.install(cx))),
     };
     Some(button.into_any_element())
+}
+
+fn ready_button(label: SharedString, cx: &App) -> Button {
+    theme::pill_button(
+        "app-update",
+        Tone::Positive,
+        label.clone(),
+        Some(MdIcon::InstallDesktop),
+        cx,
+    )
+    // The label is a child element, so screen readers need the name.
+    .accessibility_label(label)
 }
 
 /// The settings page's update channel field, shown while the updater runs,
@@ -370,59 +387,4 @@ pub fn channel_setting(window: &mut Window, cx: &mut App) -> Option<AnyElement> 
             ),
         );
     Some(field.into_any_element())
-}
-
-fn read_channel(host: &QuadrantHost) -> Result<String> {
-    Ok(host
-        .get_config_value("channel")?
-        .and_then(|value| value.as_str().map(str::to_string))
-        .unwrap_or_else(|| DEFAULT_CHANNEL.to_string()))
-}
-
-/// The first endpoint's answer, falling back to the next on failure, as
-/// Tauri's updater does. 204 and 404 mean there is nothing to install.
-async fn fetch_release(client: &reqwest::Client, urls: &[String]) -> Result<Option<Release>> {
-    let mut failure = anyhow!("no update endpoints");
-    for url in urls {
-        log::info!("Checking for updates at {url}");
-        match client
-            .get(url)
-            .timeout(Duration::from_secs(30))
-            .send()
-            .await
-        {
-            Ok(response)
-                if matches!(
-                    response.status(),
-                    StatusCode::NO_CONTENT | StatusCode::NOT_FOUND
-                ) =>
-            {
-                return Ok(None);
-            }
-            Ok(response) if response.status().is_success() => {
-                return Release::parse(&response.bytes().await?).map(Some);
-            }
-            Ok(response) => failure = anyhow!("{url} answered {}", response.status()),
-            Err(error) => failure = error.into(),
-        }
-    }
-    Err(failure)
-}
-
-async fn download(
-    client: &reqwest::Client,
-    url: &str,
-    progress: &watch::Sender<Option<f32>>,
-) -> Result<Vec<u8>> {
-    let mut response = client.get(url).send().await?.error_for_status()?;
-    let total = response.content_length().filter(|total| *total > 0);
-    let mut bytes = Vec::with_capacity(total.unwrap_or_default() as usize);
-    progress.send_replace(Some(0.));
-    while let Some(chunk) = response.chunk().await? {
-        bytes.extend_from_slice(&chunk);
-        if let Some(total) = total {
-            progress.send_replace(Some(bytes.len() as f32 / total as f32));
-        }
-    }
-    Ok(bytes)
 }

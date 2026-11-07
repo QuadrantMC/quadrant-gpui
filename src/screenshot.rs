@@ -875,12 +875,16 @@ async fn capture_install_to(
 #[cfg(feature = "updater")]
 async fn capture_updater(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
     use crate::updater::{Status, Updater};
+    use quadrant_host::updates::App;
     show(window, cx, Route::Settings)?;
     cx.update(|cx| Updater::preview(Status::Downloading(0.42), cx));
     capture(window, &dir.join("update-downloading.png"), cx).await?;
-    let update = Updater::preview_update("26.10.1-stable");
+    let update = Updater::preview_update(App::QuadrantNative, "26.11.2-gpui-preview.1");
     cx.update(|cx| Updater::preview(Status::Ready(update), cx));
-    capture(window, &dir.join("update-ready.png"), cx).await
+    capture(window, &dir.join("update-ready.png"), cx).await?;
+    let switch = Updater::preview_update(App::Quadrant, "26.11.0-stable");
+    cx.update(|cx| Updater::preview(Status::Ready(switch), cx));
+    capture(window, &dir.join("update-switch.png"), cx).await
 }
 
 #[cfg(not(feature = "updater"))]
