@@ -3,6 +3,7 @@
 
 mod app;
 mod assets;
+mod autostart;
 mod backend;
 mod config;
 mod console;
@@ -235,19 +236,17 @@ struct Running {
     /// Where later launches reach this one; `None` in screenshot and perf
     /// runs, or when the socket failed.
     primary: Option<single_instance::Primary>,
+    /// The login item for this data folder, if the platform has one.
+    autostart: Option<autostart::Autostart>,
 }
 
 /// `None` when another instance took the links and this one is done.
 fn launch(raw_args: Vec<OsString>) -> Result<Option<Running>> {
     let args = parse_args(raw_args, |key| std::env::var_os(key))?;
+    let data_dir = data_folder(args.data_dir.as_deref())?;
+    let key = single_instance::key(dirs::home_dir().as_deref(), &data_dir);
     // Before the host starts, so a second launch leaves the config alone.
-    let claim = match args.mode {
-        Mode::Interactive => Some(data_folder(args.data_dir.as_deref()).and_then(|data_dir| {
-            let key = single_instance::key(dirs::home_dir().as_deref(), &data_dir);
-            single_instance::claim(&key, &args.urls)
-        })),
-        _ => None,
-    };
+    let claim = (args.mode == Mode::Interactive).then(|| single_instance::claim(&key, &args.urls));
     let primary = match claim {
         Some(Ok(single_instance::Claim::Forwarded)) => return Ok(None),
         Some(Ok(single_instance::Claim::Primary(primary))) => Ok(Some(primary)),
@@ -260,10 +259,23 @@ fn launch(raw_args: Vec<OsString>) -> Result<Option<Running>> {
         log::warn!("Later launches will start instances of their own: {error:#}");
         None
     });
+    let mc_folder = args
+        .mc_folder
+        .as_deref()
+        .map(std::path::absolute)
+        .transpose()?;
+    let sandbox =
+        args.data_dir
+            .is_some()
+            .then_some((key.as_str(), data_dir.as_path(), mc_folder.as_deref()));
+    let autostart = autostart::Autostart::new(sandbox)
+        .inspect_err(|error| log::warn!("No launch at login: {error:#}"))
+        .ok();
     Ok(Some(Running {
         backend,
         args,
         primary,
+        autostart,
     }))
 }
 
@@ -347,12 +359,13 @@ fn main() -> ExitCode {
     let raw_args: Vec<OsString> = std::env::args_os().skip(1).collect();
     // Before parsing, so a bad argument is reported in the console too.
     let console = console::Console::setup(raw_args.iter().any(|arg| is_debug_flag(arg)));
-    let (backend, args, primary) = match launch(raw_args) {
+    let (backend, args, primary, autostart) = match launch(raw_args) {
         Ok(Some(Running {
             backend,
             args,
             primary,
-        })) => (backend, args, primary),
+            autostart,
+        })) => (backend, args, primary, autostart),
         Ok(None) => return ExitCode::SUCCESS,
         Err(error) => {
             console.fatal(&format!("{error:#}"));
@@ -378,6 +391,9 @@ fn main() -> ExitCode {
         theme::install(cx);
         cx.set_http_client(backend.http_client());
         cx.set_global(backend);
+        if let Some(autostart) = autostart {
+            cx.set_global(autostart);
+        }
         snackbar::install(cx);
         notifications::install(args.mode == Mode::Interactive, cx);
         events::forward(cx);

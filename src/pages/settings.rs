@@ -17,6 +17,7 @@ use quadrant_host::QuadrantHost;
 use serde_json::Value;
 
 use crate::{
+    autostart::Autostart,
     backend::Backend,
     config, events,
     i18n::{describe, t, t_with},
@@ -169,6 +170,9 @@ impl Op {
 pub struct SettingsPage {
     settings: Loadable<Settings>,
     running: Option<Op>,
+    /// Whether the login item is registered, read from the OS; `None`
+    /// where this platform has none.
+    autostart: Option<bool>,
 }
 
 impl SettingsPage {
@@ -178,6 +182,7 @@ impl SettingsPage {
         let mut page = Self {
             settings: Loadable::Idle,
             running: None,
+            autostart: Autostart::global(cx).map(Autostart::is_enabled),
         };
         page.reload(cx);
         page
@@ -261,6 +266,31 @@ impl SettingsPage {
             }
         })
         .detach();
+    }
+
+    /// Registers or removes the login item, then shows what the OS says.
+    fn set_autostart(&mut self, on: bool, cx: &mut Context<Self>) {
+        let Some(autostart) = Autostart::global(cx) else {
+            return;
+        };
+        let result = autostart.set(on);
+        self.autostart = Some(autostart.is_enabled());
+        if let Err(error) = result {
+            snackbar::show(cx, SnackbarKind::Error, describe(error));
+        }
+        cx.notify();
+    }
+
+    fn render_autostart(&self, on: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .my_4()
+            .items_center()
+            .font_weight(FontWeight::BOLD)
+            .child(
+                theme::setting_switch("launchAtLogin", on)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_autostart(!on, cx))),
+            )
+            .child(div().ml_4().child(t("launchAtLogin")))
     }
 
     fn render_toggle(&self, toggle: Toggle, on: bool, cx: &mut Context<Self>) -> impl IntoElement {
@@ -390,6 +420,7 @@ impl SettingsPage {
             .when(settings.get(Toggle::ExperimentalFeatures), |this| {
                 this.child(self.render_prism_folder(settings, cx))
             })
+            .children(self.autostart.map(|on| self.render_autostart(on, cx)))
             .child(toggle(self, Toggle::DevMode, cx))
     }
 

@@ -294,5 +294,6 @@
   "installedContentCopySelectedLabel": "Copy the selected packs somewhere else",
   "installedContentDeleteSelected": "Delete selected",
   "installedContentDeleteSelectedConfirm": "Delete {{amount}}?",
-  "errorContentMissing": "That pack is no longer in that folder."
+  "errorContentMissing": "That pack is no longer in that folder.",
+  "launchAtLogin": "Launch at login, in the tray"
 }

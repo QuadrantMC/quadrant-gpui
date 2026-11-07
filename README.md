@@ -66,6 +66,10 @@ As in the desktop app, one copy runs per data folder. A second launch hands its 
 
 Links follow the desktop app's `deepLinks.ts` (`src/deep_link.rs`, with its tests): `modrinth://mod/<slug>` (also `resourcepack` and `shader`, and a wrapped `modrinth://https://modrinth.com/...`), `curseforge://install?addonId=<id>[&fileId=<id>]` and `quadrantnext://modrinth|curseforge?modId=<id>[&fileId=<id>]` open the mod's install page on Search, installing that file when there is a `fileId`; `quadrantnext://modpack?code=<code>` and `https://usequadrant.dev/modpack/<code>` open the Quadrant Share import on Apply; `quadrantnext://login` finishes a Quadrant ID sign-in whose state matches. They arrive as arguments at launch, from a second launch, and on macOS through the system's open events. The packages register the three schemes: the NSIS setup under `HKCU\Software\Classes`, the .app's `CFBundleURLTypes`, and the desktop file's `x-scheme-handler` MIME types. To try one without registering anything, pass it to a sandboxed run: `cargo run -- modrinth://mod/sodium --data-dir ... --mc-folder ...`.
 
+## Launch at login
+
+Settings' "Launch at login" registers the app the way the desktop app's autostart plugin does, through the same `auto-launch` crate: a `Run` value under HKCU on Windows, a LaunchAgent on macOS, an XDG autostart desktop file on Linux, each starting it with `--autostart`, which opens it in the tray. The switch shows what the OS has, not a setting, and turning it off on Windows also removes Task Manager's `StartupApproved` note. A `--data-dir` run registers as `Quadrant-Native-<key>` with its own folders, so a sandbox never replaces the real entry; `cargo test autostart -- --ignored` registers and removes a test entry.
+
 ## Updates
 
 With the `updater` feature, an installed copy updates itself the way the Tauri app does, through the same update server. At launch, and whenever the update channel changes in Settings, it asks
