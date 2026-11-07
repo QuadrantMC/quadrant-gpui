@@ -6152,6 +6152,7 @@ dependencies = [
  "ksni",
  "log",
  "minisign-verify",
+ "notify",
  "quadrant-core",
  "quadrant-host",
  "raw-window-handle",

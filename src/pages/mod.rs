@@ -64,6 +64,13 @@ pub fn shown(page: &AnyView, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// `page`'s route is no longer shown.
+pub fn hidden(page: &AnyView, cx: &mut App) {
+    if let Ok(page) = page.clone().downcast::<ModpacksPage>() {
+        page.update(cx, |page, _| page.hidden());
+    }
+}
+
 /// Builds the view for `route`. Called once per route; the app keeps the
 /// view alive across navigation.
 pub fn build(route: Route, window: &mut Window, cx: &mut App) -> AnyView {

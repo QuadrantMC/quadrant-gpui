@@ -43,6 +43,8 @@ gpui-kit-assets = "0.9.0"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", features = ["font-kit", "wayland"] }
 log = "0.4"
 minisign-verify = { version = "0.3", optional = true }
+# Watches the Minecraft folder while the Apply page is shown.
+notify = "8"
 quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "e4c92d873ffbc1d48a025cfc251adbd29fa02b21" }
 quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "e4c92d873ffbc1d48a025cfc251adbd29fa02b21" }
 # Already in the tree through quadrant-core; fetches remote images for `img(url)`.

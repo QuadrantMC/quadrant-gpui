@@ -50,6 +50,7 @@ mod cloud;
 pub use cloud::parse_share_code;
 mod details;
 mod prism;
+mod watch;
 
 /// About one modpack card, for the scrollbar until cards are measured.
 const CARD_HINT: gpui::Pixels = px(260.);
@@ -351,6 +352,14 @@ pub fn sort_modpacks(mut modpacks: Vec<LocalModpack>) -> Vec<LocalModpack> {
     modpacks
 }
 
+/// A digest of a listing, which changes whenever anything shown would.
+fn digest(modpacks: &[LocalModpack]) -> anyhow::Result<u64> {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(modpacks)?.hash(&mut hasher);
+    Ok(hasher.finish())
+}
+
 /// "1.21.1 | Fabric | 3 Mod(s)", plus the local sync date once there is one.
 pub fn metadata_line(modpack: &LocalModpack) -> String {
     let mut line = format!(
@@ -447,6 +456,12 @@ pub struct ModpacksPage {
     search: Entity<InputState>,
     /// The newest listing request; replacing it drops a stale one's answer.
     listing: Reload,
+    /// The digest of the listing `modpacks` holds, to tell a fresh answer
+    /// from a repeat.
+    listed: Option<u64>,
+    /// Apply.tsx's watch on the Minecraft folder and `modpacks/`, while the
+    /// page is shown.
+    folders: Option<Task<()>>,
     session: Entity<Session>,
     /// The signed-in account's Quadrant Sync packs; `Idle` while signed out.
     synced: Loadable<Vec<SyncedModpack>>,
@@ -531,6 +546,8 @@ impl ModpacksPage {
             running: Vec::new(),
             search,
             listing: Reload::default(),
+            listed: None,
+            folders: None,
             session,
             synced: Loadable::Idle,
             synced_listing: Reload::default(),
@@ -549,6 +566,7 @@ impl ModpacksPage {
             rows: Vec::new(),
         };
         page.refresh(cx);
+        page.folders = Some(watch::folders(cx, Self::folder_changed));
         page.load_versions(cx);
         page.load_synced(cx);
         page
@@ -587,27 +605,58 @@ impl ModpacksPage {
     }
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        // A loaded list stays on screen while it reloads, so acting on a card
-        // doesn't blank the page.
-        self.modpacks.reload();
         self.prism.update(cx, |prism, cx| prism.refresh(cx));
-        let task = Backend::global(cx).run(cx, |host| async move { host.get_modpacks(true).await });
+        self.list_modpacks(cx);
+    }
+
+    /// Reads the modpacks again. A loaded list stays on screen while it
+    /// reloads, so acting on a card doesn't blank the page, and an answer
+    /// that matches it changes nothing and draws nothing.
+    fn list_modpacks(&mut self, cx: &mut Context<Self>) {
+        let shown = matches!(self.modpacks, Loadable::Ready(_));
+        self.modpacks.reload();
+        let task = Backend::global(cx).run(cx, |host| async move {
+            let modpacks = sort_modpacks(host.get_modpacks(true).await?);
+            let digest = digest(&modpacks)?;
+            Ok((modpacks, digest))
+        });
         self.listing.start(cx.spawn(async move |this, cx| {
-            let result = task.await.map(sort_modpacks);
+            let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.modpacks = Loadable::from_result(result);
-                this.refresh_details(cx);
+                let digest = result.as_ref().ok().map(|(_, digest)| *digest);
+                let unchanged = digest.is_some()
+                    && digest == this.listed
+                    && matches!(this.modpacks, Loadable::Ready(_));
+                log::debug!(
+                    "Modpack listing {}",
+                    if unchanged { "unchanged" } else { "changed" }
+                );
+                if !unchanged {
+                    this.listed = digest;
+                    this.modpacks = Loadable::from_result(result.map(|(modpacks, _)| modpacks));
+                    this.refresh_details(cx);
+                    cx.notify();
+                }
                 if this.listing.landed() {
                     this.refresh(cx);
                 }
-                cx.notify();
             });
         }));
-        cx.notify();
+        if !shown {
+            cx.notify();
+        }
+    }
+
+    /// Something changed in the Minecraft folder or under `modpacks/`.
+    fn folder_changed(&mut self, cx: &mut Context<Self>) {
+        if self.listing.ask() {
+            self.list_modpacks(cx);
+        }
     }
 
     /// Lists the modpacks, their Prism Launcher instances and the Sync packs
-    /// again as the page is shown again.
+    /// again as the page is shown again, and watches the folders while it
+    /// is.
     pub fn revalidate(&mut self, cx: &mut Context<Self>) {
         if self.listing.ask() {
             self.refresh(cx);
@@ -615,6 +664,12 @@ impl ModpacksPage {
         if self.synced_listing.ask() {
             self.load_synced(cx);
         }
+        self.folders = Some(watch::folders(cx, Self::folder_changed));
+    }
+
+    /// The page is no longer shown: it stops watching the folders.
+    pub fn hidden(&mut self) {
+        self.folders = None;
     }
 
     /// Hands an open Details view its pack's re-read manifest.
@@ -682,6 +737,7 @@ impl ModpacksPage {
                     Op::Export { .. } => taskbar::clear(cx, Job::Export),
                     _ => {}
                 }
+                cx.notify();
                 match result {
                     Ok(outcome) => {
                         match outcome {

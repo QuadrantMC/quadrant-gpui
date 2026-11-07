@@ -186,8 +186,9 @@ impl QuadrantApp {
     }
 
     pub fn navigate(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
+        let left = self.history.current();
         if self.history.navigate(route) {
-            self.entered(window, cx);
+            self.entered(left, window, cx);
         }
     }
 
@@ -250,19 +251,23 @@ impl QuadrantApp {
             cx.notify();
             return;
         }
+        let left = self.history.current();
         let moved = match direction {
             NavigationDirection::Back => self.history.back(),
             NavigationDirection::Forward => self.history.forward(),
         };
         if moved.is_some() {
-            self.entered(window, cx);
+            self.entered(left, window, cx);
         }
     }
 
-    /// Another page is open: it plays its entrance and, if it was open
-    /// before, re-reads its host data.
-    fn entered(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Another page is open in place of `left`: it plays its entrance and,
+    /// if it was open before, re-reads its host data.
+    fn entered(&mut self, left: Route, window: &mut Window, cx: &mut Context<Self>) {
         self.entrance = self.entrance.next();
+        if let Some(page) = self.pages.get(&left) {
+            pages::hidden(page, cx);
+        }
         if let Some(page) = self.pages.get(&self.history.current()) {
             pages::shown(page, window, cx);
         }
