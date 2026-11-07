@@ -977,6 +977,22 @@ impl ModpacksPage {
 
     /// Shows `name` as exporting, or nothing running with `None`, for
     /// screenshots. Nothing is exported.
+    /// Opens `synced` as a Quadrant Sync download whose mods are still being
+    /// asked about, for screenshots. Nothing is asked of the providers.
+    #[cfg(feature = "screenshot")]
+    pub fn preview_shared(&mut self, synced: &SyncedModpack, cx: &mut Context<Self>) {
+        let modpack = cloud::installable(synced, &synced.name);
+        let keys = catalog_keys(&details::cards(&modpack));
+        ModCatalog::global(cx).update(cx, |catalog, _| catalog.preview_pending(keys));
+        self.show(
+            View::Shared {
+                modpack: Box::new(modpack),
+                sync: Some(SyncTarget::of(synced)),
+            },
+            cx,
+        );
+    }
+
     #[cfg(feature = "screenshot")]
     pub fn preview_exporting(&mut self, name: Option<&str>, cx: &mut Context<Self>) {
         self.running = name

@@ -761,6 +761,41 @@ pub fn circular_progress(id: impl Into<ElementId>) -> impl IntoElement {
         )
 }
 
+/// slate-600 and emerald-400: the small spinner's ring and its top.
+const SPINNER_RING: u32 = 0x475569;
+const SPINNER_ARC: u32 = 0x34d399;
+
+/// `SharedModpackView`'s loading spinner: a `size-6` slate-600 `border-2`
+/// ring whose emerald-400 top turns under Tailwind's `animate-spin`.
+pub fn spinner(id: impl Into<ElementId>) -> impl IntoElement {
+    use gpui::{Animation, AnimationExt as _, Transformation, svg};
+    div()
+        .relative()
+        .size_6()
+        .flex_shrink_0()
+        .rounded_full()
+        .border_2()
+        .border_color(rgb(SPINNER_RING))
+        .child(
+            svg()
+                .path(crate::assets::SPINNER_ARC)
+                .absolute()
+                .top(px(-2.))
+                .left(px(-2.))
+                .size_6()
+                .text_color(rgb(SPINNER_ARC))
+                .with_animation(
+                    id,
+                    Animation::new(motion::QUICK_SPIN).repeat(),
+                    |arc, turn| {
+                        arc.with_transformation(Transformation::rotate(gpui::radians(
+                            turn * std::f32::consts::TAU,
+                        )))
+                    },
+                ),
+        )
+}
+
 /// `rounded-[28px]`: a panel's corners.
 pub const PANEL_RADIUS: gpui::Pixels = px(28.);
 

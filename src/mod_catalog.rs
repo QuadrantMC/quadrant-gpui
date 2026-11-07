@@ -42,10 +42,24 @@ impl ModKey {
     }
 }
 
+/// Where the catalog stands on one mod it was asked about.
+enum Answer {
+    Pending,
+    Found(Box<Mod>),
+    /// The provider had no record, or couldn't be reached.
+    Missing,
+}
+
+/// How far the catalog got with a set of mods, for `loadingMods`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Tally {
+    pub found: usize,
+    pub pending: usize,
+}
+
 pub struct ModCatalog {
-    /// Every mod asked about: `None` while the answer is pending or when the
-    /// provider had none.
-    known: HashMap<ModKey, Option<Mod>>,
+    /// Every mod asked about.
+    known: HashMap<ModKey, Answer>,
     queue: VecDeque<ModKey>,
     fetching: Option<Task<()>>,
 }
@@ -70,19 +84,45 @@ impl ModCatalog {
 
     /// The provider's record of a mod, once it has answered.
     pub fn get(&self, source: &ModSource, id: &str) -> Option<&Mod> {
-        self.known.get(&ModKey::new(source, id)?)?.as_ref()
+        match self.known.get(&ModKey::new(source, id)?)? {
+            Answer::Found(found) => Some(found.as_ref()),
+            Answer::Pending | Answer::Missing => None,
+        }
+    }
+
+    /// How many of `keys` have a record and how many are still being asked
+    /// about. A key never asked about counts as neither.
+    pub fn tally<'a>(&self, keys: impl IntoIterator<Item = &'a ModKey>) -> Tally {
+        keys.into_iter().fold(Tally::default(), |mut tally, key| {
+            match self.known.get(key) {
+                Some(Answer::Found(_)) => tally.found += 1,
+                Some(Answer::Pending) => tally.pending += 1,
+                Some(Answer::Missing) | None => {}
+            }
+            tally
+        })
     }
 
     /// Asks about every mod not asked about yet. Observers are notified when
-    /// answers arrive; a mod the provider doesn't know changes nothing.
+    /// records arrive and once the queue runs dry; a mod the provider doesn't
+    /// know changes nothing before then.
     pub fn want(&mut self, mods: impl IntoIterator<Item = ModKey>, cx: &mut Context<Self>) {
         for key in mods {
             if !self.known.contains_key(&key) {
-                self.known.insert(key.clone(), None);
+                self.known.insert(key.clone(), Answer::Pending);
                 self.queue.push_back(key);
             }
         }
         self.pump(cx);
+    }
+
+    /// Marks `mods` as asked about without asking, so a screenshot shows them
+    /// loading for as long as it likes.
+    #[cfg(feature = "screenshot")]
+    pub fn preview_pending(&mut self, mods: impl IntoIterator<Item = ModKey>) {
+        for key in mods {
+            self.known.insert(key, Answer::Pending);
+        }
     }
 
     fn pump(&mut self, cx: &mut Context<Self>) {
@@ -90,6 +130,7 @@ impl ModCatalog {
             return;
         }
         let batch: Vec<ModKey> = self.queue.drain(..self.queue.len().min(BATCH)).collect();
+        let asked = batch.clone();
         let task = Backend::global(cx).run(cx, move |host| async move {
             Ok(futures::stream::iter(batch)
                 .map(|key| fetch(host.clone(), key))
@@ -98,15 +139,20 @@ impl ModCatalog {
                 .await)
         });
         self.fetching = Some(cx.spawn(async move |this, cx| {
-            let answers = task.await.unwrap_or_default();
+            let answers = task
+                .await
+                .unwrap_or_else(|_| asked.into_iter().map(|key| (key, None)).collect());
             let _ = this.update(cx, |this, cx| {
                 this.fetching = None;
                 let mut found = false;
                 for (key, answer) in answers {
                     found |= answer.is_some();
-                    this.known.insert(key, answer);
+                    this.known.insert(
+                        key,
+                        answer.map_or(Answer::Missing, |found| Answer::Found(Box::new(found))),
+                    );
                 }
-                if found {
+                if found || this.queue.is_empty() {
                     cx.notify();
                 }
                 this.pump(cx);

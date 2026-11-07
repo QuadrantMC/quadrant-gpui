@@ -14,13 +14,13 @@ use quadrant_core::{mc_mod::Mod, models::InstalledModpack};
 
 use super::{ModpacksPage, View};
 use crate::{
-    i18n::t,
+    i18n::{t, t_with},
     mod_catalog::ModCatalog,
     motion,
     pages::{
         mod_grid::{self, Rows},
         mod_ui::{CardStatus, OnCardPress, mod_card},
-        modpack_view::{installed_card, with_record},
+        modpack_view::{catalog_keys, installed_card, with_record},
     },
     theme,
 };
@@ -53,6 +53,7 @@ pub fn render(
     );
     let on_press: OnCardPress<ModpacksPage> = Rc::new(|_, _, _, _, _, _| {});
     let catalog = ModCatalog::global(cx);
+    let tally = catalog.read(cx).tally(&catalog_keys(cards));
     let grid: Vec<AnyElement> = (0..rows.len())
         .map(|row| {
             let elements = rows
@@ -80,27 +81,33 @@ pub fn render(
     v_flex()
         .p_4()
         .child(
-            h_flex()
+            v_flex()
                 .mt_2()
                 .mb_5()
                 .p_4()
-                .items_center()
                 .rounded(theme::radius_card())
                 .bg(rgb(theme::CONTROL))
                 .font_weight(FontWeight::BOLD)
                 .child(
-                    theme::cancel_button("back", t("cancel"), cx)
-                        .on_click(cx.listener(|this, _, _, cx| this.show(View::List, cx))),
-                )
-                .child(
                     h_flex()
-                        .flex_1()
-                        .justify_center()
                         .items_center()
-                        .gap_4()
-                        .child(div().text_center().child(summary))
-                        .child(action),
-                ),
+                        .child(
+                            theme::cancel_button("back", t("cancel"), cx)
+                                .on_click(cx.listener(|this, _, _, cx| this.show(View::List, cx))),
+                        )
+                        .child(
+                            h_flex()
+                                .flex_1()
+                                .justify_center()
+                                .items_center()
+                                .gap_4()
+                                .child(div().text_center().child(summary))
+                                .child(action),
+                        ),
+                )
+                .when(tally.pending > 0, |this| {
+                    this.child(loading_status(tally.found, cards.len()))
+                }),
         )
         .when_some((!grid.is_empty()).then_some(grid), |this, grid| {
             this.child(
@@ -115,4 +122,24 @@ pub fn render(
                     .children(grid),
             )
         })
+}
+
+/// "Loading mods… 3 / 12" under the header while providers are still being
+/// asked, as `SharedModpackView` shows it.
+fn loading_status(loaded: usize, total: usize) -> impl IntoElement {
+    h_flex()
+        .mt_4()
+        .justify_center()
+        .items_center()
+        .gap_3()
+        .text_sm()
+        .text_color(rgb(theme::TEXT_SOFT))
+        .child(theme::spinner("loading-mods"))
+        .child(t_with(
+            "loadingMods",
+            &[
+                ("loaded", &loaded.to_string()),
+                ("total", &total.to_string()),
+            ],
+        ))
 }

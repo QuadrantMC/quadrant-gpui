@@ -58,6 +58,9 @@ pub const CARD_ENTER: Duration = Duration::from_millis(1100);
 pub const SPIN: Duration = Duration::from_secs(15);
 pub const SPIN_DEGREES: f32 = 3840.;
 
+/// Tailwind's `animate-spin`: a full turn a second, linear.
+pub const QUICK_SPIN: Duration = Duration::from_secs(1);
+
 /// Its slide in on mount: from `x: 100` over 0.1s, linear.
 pub const SPINNER_SLIDE: Duration = Duration::from_millis(100);
 pub const SPINNER_SLIDE_FROM: Pixels = px(100.);

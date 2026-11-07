@@ -187,6 +187,21 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
         },
     )?;
     capture(window, &dir.join("share-code.png"), cx).await?;
+    let mut shared = sample_synced().remove(1);
+    shared.mods = r#"[{"id":"fixture-sodium","name":"Sodium","source":"ModSource.modRinth","downloadUrl":"https://cdn.modrinth.com/data/fixture/sodium.jar"},{"id":"fixture-lithium","name":"Lithium","source":"ModSource.modRinth","downloadUrl":"https://cdn.modrinth.com/data/fixture/lithium.jar"},{"id":"fixture-iris","name":"Iris Shaders","source":"ModSource.modRinth","downloadUrl":"https://cdn.modrinth.com/data/fixture/iris.jar"}]"#.into();
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        move |page: &mut ModpacksPage, _, cx| page.preview_shared(&shared, cx),
+    )?;
+    capture(window, &dir.join("shared-loading.png"), cx).await?;
+    with_page(
+        window,
+        cx,
+        Route::Modpacks,
+        |page: &mut ModpacksPage, window, cx| page.preview(None, false, window, cx),
+    )?;
     capture_motion(window, dir, cx).await?;
     capture_updater(window, dir, cx).await?;
     capture_revalidate(window, dir, cx).await

@@ -83,10 +83,20 @@ md_icons! {
 /// browser joins the borders.
 pub const PROGRESS_ARC: &str = "shapes/progress-arc.svg";
 
-const SHAPE_FILES: &[(&str, &[u8])] = &[(
-    PROGRESS_ARC,
-    include_bytes!("../assets/shapes/progress-arc.svg"),
-)];
+/// The emerald-400 `border-t` of the 1.5rem, `border-2` spinner beside
+/// `SharedModpackView`'s "Loading mods…", cut the same way.
+pub const SPINNER_ARC: &str = "shapes/spinner-arc.svg";
+
+const SHAPE_FILES: &[(&str, &[u8])] = &[
+    (
+        PROGRESS_ARC,
+        include_bytes!("../assets/shapes/progress-arc.svg"),
+    ),
+    (
+        SPINNER_ARC,
+        include_bytes!("../assets/shapes/spinner-arc.svg"),
+    ),
+];
 
 /// The app's own icons, falling back to gpui-component's for its widgets.
 pub struct Assets;
