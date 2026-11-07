@@ -531,10 +531,13 @@ impl InstalledContentPage {
     /// A "copy to…" button with a menu of the targets. Without `label` it is
     /// the compact per-file control; with one it is a bulk control and each
     /// entry counts what would be copied there.
+    /// The copy control; `title` is its tooltip and screen-reader name, as
+    /// the desktop app's `title` and `aria-label`.
     fn copy_menu(
         &self,
         control: Control,
         label: Option<SharedString>,
+        title: SharedString,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let busy = self.running.is_some();
@@ -551,6 +554,8 @@ impl InstalledContentPage {
                 theme::toolbar_button(control.id("copy"), Tone::Control, MdIcon::ContentCopy, cx)
             }
         }
+        .tooltip(title.clone())
+        .accessibility_label(title)
         .loading(self.running.as_ref().map(Op::control) == Some(&control))
         .disabled(busy);
         let page = cx.entity();
@@ -587,11 +592,16 @@ impl InstalledContentPage {
     }
 
     /// The delete control: icon-only per file until armed, labelled in bulk.
+    /// `title` and, once armed, `armed_title` are its tooltip and
+    /// screen-reader name.
+    #[expect(clippy::too_many_arguments, reason = "the desktop app's props")]
     fn delete_button(
         &self,
         control: Control,
         text: Option<SharedString>,
         armed_text: SharedString,
+        title: SharedString,
+        armed_title: SharedString,
         groups: Vec<SectionFiles>,
         cx: &mut Context<Self>,
     ) -> Button {
@@ -607,7 +617,10 @@ impl InstalledContentPage {
             (false, None) => theme::toolbar_button(id, Tone::Destructive, MdIcon::Delete, cx),
         };
         let loading = self.running.as_ref().map(Op::control) == Some(&control);
+        let title = if armed { armed_title } else { title };
         button
+            .tooltip(title.clone())
+            .accessibility_label(title)
             .loading(loading)
             .disabled(self.running.is_some())
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -657,19 +670,25 @@ impl InstalledContentPage {
                 this.child(self.copy_menu(
                     Control::Selection,
                     Some(t("installedContentCopySelected")),
+                    t("installedContentCopySelectedLabel"),
                     cx,
                 ))
             })
-            .child(self.delete_button(
-                Control::Selection,
-                Some(t("installedContentDeleteSelected")),
-                t_with(
+            .child({
+                let confirm = t_with(
                     "installedContentDeleteSelectedConfirm",
                     &[("amount", &count.to_string())],
-                ),
-                groups,
-                cx,
-            ))
+                );
+                self.delete_button(
+                    Control::Selection,
+                    Some(t("installedContentDeleteSelected")),
+                    confirm.clone(),
+                    t("installedContentDeleteSelected"),
+                    confirm,
+                    groups,
+                    cx,
+                )
+            })
     }
 
     fn render_file(
@@ -720,12 +739,25 @@ impl InstalledContentPage {
                     ),
             )
             .when(locations.len() > 1, |this| {
-                this.child(self.copy_menu(control.clone(), None, cx))
+                this.child(self.copy_menu(
+                    control.clone(),
+                    None,
+                    t_with(
+                        "installedContentCopyFileLabel",
+                        &[("file", &file.file_name)],
+                    ),
+                    cx,
+                ))
             })
             .child(self.delete_button(
                 control,
                 None,
                 t("installedContentDeleteConfirm"),
+                t_with("installedContentDeleteLabel", &[("file", &file.file_name)]),
+                t_with(
+                    "installedContentDeleteConfirmLabel",
+                    &[("file", &file.file_name)],
+                ),
                 vec![SectionFiles {
                     section: section.clone(),
                     file_names: vec![file.file_name.clone()],
@@ -778,6 +810,13 @@ impl InstalledContentPage {
                 this.child(self.copy_menu(
                     Control::CopyAll(section.clone()),
                     Some(t("installedContentCopyAll")),
+                    t_with(
+                        "installedContentCopyAllLabel",
+                        &[
+                            ("section", &section_title(section.mod_type)),
+                            ("name", &location_title(location)),
+                        ],
+                    ),
                     cx,
                 ))
             })
@@ -789,7 +828,7 @@ impl InstalledContentPage {
                     Some(MdIcon::Folder),
                     cx,
                 )
-                .tooltip(t_with(
+                .accessibility_label(t_with(
                     "installedContentOpenFolderLabel",
                     &[
                         ("section", &section_title(section.mod_type)),
@@ -823,6 +862,13 @@ impl InstalledContentPage {
                                 None,
                                 cx,
                             )
+                            .accessibility_label(t_with(
+                                "installedContentSelectAllLabel",
+                                &[
+                                    ("section", &section_title(section.mod_type)),
+                                    ("name", &location_title(location)),
+                                ],
+                            ))
                             .disabled(self.running.is_some())
                             .on_click(cx.listener({
                                 let section = section.clone();

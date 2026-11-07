@@ -194,8 +194,8 @@ pub fn compact_count(count: i64) -> String {
 }
 
 /// The text for a failed host call, mirroring `describeError` in the
-/// desktop app: classified failures arrive as i18n keys, anything else is shown
-/// as it came.
+/// desktop app: classified failures arrive as i18n keys, anything else is
+/// shown as it came inside `errorUnknown`.
 pub fn describe(error: anyhow::Error) -> SharedString {
     let raw = format!("{:#}", quadrant_host::user_facing(error));
     describe_raw(raw.trim()).into()
@@ -211,7 +211,7 @@ fn describe_raw(raw: &str) -> String {
     {
         return text.to_string();
     }
-    raw.to_string()
+    t_with("errorUnknown", &[("details", raw)]).to_string()
 }
 
 #[cfg(test)]
@@ -247,7 +247,7 @@ pub mod tests {
         in_locale(Locale::English, || {
             assert_eq!(
                 describe(anyhow::anyhow!("failed to parse config.json")),
-                "failed to parse config.json"
+                "Something went wrong: failed to parse config.json"
             );
             assert_eq!(describe_raw(""), "Something went wrong. Please try again.");
         });

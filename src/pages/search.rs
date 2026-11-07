@@ -16,6 +16,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     scroll::ScrollableElement as _,
     select::{SearchableVec, Select, SelectEvent, SelectState},
+    tooltip::Tooltip,
     v_flex,
 };
 use quadrant_core::{
@@ -908,6 +909,9 @@ impl SearchPage {
                     .child(
                         div()
                             .id("collapse-filters")
+                            .tooltip(|window, cx| {
+                                Tooltip::new(t("collapseFilters")).build(window, cx)
+                            })
                             .text_color(rgb(theme::TEXT_MUTED))
                             .cursor_pointer()
                             .hover(|this| this.text_color(rgb(theme::TEXT_BRIGHT)))
@@ -1268,6 +1272,7 @@ impl SearchPage {
                 this.child(
                     div()
                         .id("expand-filters")
+                        .tooltip(|window, cx| Tooltip::new(t("expandFilters")).build(window, cx))
                         .relative()
                         .flex_none()
                         .size_9()
@@ -1480,6 +1485,7 @@ impl SearchPage {
             cells.push(
                 div()
                     .id("search-further")
+                    .tooltip(|window, cx| Tooltip::new(t("searchFurther")).build(window, cx))
                     .min_h_32()
                     .flex()
                     .items_center()
