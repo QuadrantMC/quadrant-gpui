@@ -66,7 +66,7 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
         |page: &mut ModpacksPage, window, cx| page.open_create_dialog(window, cx),
     )?;
     capture(window, &dir.join("create-dialog.png"), cx).await?;
-    close_dialogs(window, cx)?;
+    close_dialogs(window, cx).await?;
 
     with_page(
         window,
@@ -75,7 +75,7 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
         |page: &mut ModpacksPage, window, cx| page.confirm_delete("Beta Pack".into(), window, cx),
     )?;
     capture(window, &dir.join("delete-confirm.png"), cx).await?;
-    close_dialogs(window, cx)?;
+    close_dialogs(window, cx).await?;
 
     with_page(
         window,
@@ -84,7 +84,7 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
         |page: &mut ModpacksPage, window, cx| page.preview(Some("Alpha Pack"), true, window, cx),
     )?;
     capture(window, &dir.join("update-dialog.png"), cx).await?;
-    close_dialogs(window, cx)?;
+    close_dialogs(window, cx).await?;
     with_page(
         window,
         cx,
@@ -177,7 +177,7 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     // The page opens the dialog after the frame that sees the refusal.
     draw(window, cx)?;
     capture(window, &dir.join("sync-conflict.png"), cx).await?;
-    close_dialogs(window, cx)?;
+    close_dialogs(window, cx).await?;
     with_page(
         window,
         cx,
@@ -1128,10 +1128,19 @@ fn wheel(window: WindowHandle<Root>, cx: &mut AsyncApp, dy: f32) -> Result<()> {
     })
 }
 
-fn close_dialogs(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
+/// Closes every dialog and draws it out of gpui-component's stack: a dialog
+/// still leaving stays there and pushes the next one down. The hidden window
+/// draws only when asked, so one frame starts the exit transition and one
+/// after it unmounts the dialog.
+async fn close_dialogs(window: WindowHandle<Root>, cx: &mut AsyncApp) -> Result<()> {
     window.update(cx, |_, window, cx| {
         window.defer(cx, |window, cx| window.close_all_dialogs(cx))
-    })
+    })?;
+    draw(window, cx)?;
+    cx.background_executor()
+        .timer(Duration::from_millis(500))
+        .await;
+    draw(window, cx)
 }
 
 fn app(root: &Root) -> Result<Entity<QuadrantApp>> {
