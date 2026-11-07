@@ -79,13 +79,15 @@ jobs:
           PUBLIC_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN || secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
           VERSION: ${{ steps.version.outputs.version }}
+          CHANNEL: ${{ steps.version.outputs.channel }}
         run: |
           create() {
             if GH_TOKEN="$1" gh release view "$TAG" --repo "$2" >/dev/null 2>&1; then
               return
             fi
-            # Both channels are pre-releases.
-            flags=(--prerelease)
+            # gpui-preview is Quadrant-Native's stable line, so it is a full
+            # release (and the latest); gpui-experimental is a pre-release.
+            if [ "$CHANNEL" = gpui-experimental ]; then flags=(--prerelease); else flags=(--latest); fi
             GH_TOKEN="$1" gh release create "$TAG" --repo "$2" --target "$GITHUB_SHA" \
               --title "Quadrant-Native v$VERSION" \
               --notes "See the assets to download this version and install. Check out the [changelog on my blog](https://blog.mrquantumoff.dev)" \
