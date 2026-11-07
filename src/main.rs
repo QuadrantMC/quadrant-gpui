@@ -199,6 +199,46 @@ fn credentials(mode: &Mode) -> [&'static str; 3] {
     ]
 }
 
+/// Whether startup reports usage, as the desktop app's setup does (the host
+/// sends nothing unless data collection is on): never from a screenshot,
+/// perf or test run, a sandbox's `--data-dir`, or a build without the API
+/// key.
+fn reports_usage(args: &Args, background: bool) -> bool {
+    args.mode == Mode::Interactive
+        && args.data_dir.is_none()
+        && !background
+        && !credentials(&args.mode)[2].is_empty()
+}
+
+/// What the desktop app's setup starts in the background (`lib.rs`): the
+/// usage report and a refresh of the Minecraft version list, which the
+/// pages then read from the host's cache.
+fn start_background_jobs(args: &Args, cx: &mut App) {
+    if args.mode != Mode::Interactive {
+        return;
+    }
+    let backend = Backend::global(cx);
+    if reports_usage(args, background_window()) {
+        backend
+            .run(cx, |host| async move {
+                if let Err(error) = host.send_telemetry().await {
+                    log::warn!("Failed to send telemetry: {error:#}");
+                }
+                Ok(())
+            })
+            .detach();
+    }
+    backend
+        .run(cx, |host| async move {
+            match host.get_versions().await {
+                Ok(versions) => log::debug!("Refreshed {} Minecraft versions", versions.len()),
+                Err(error) => log::error!("Failed to update Minecraft versions: {error:#}"),
+            }
+            Ok(())
+        })
+        .detach();
+}
+
 /// The data folder in use: `--data-dir`, else the desktop app's.
 fn data_folder(custom: Option<&Path>) -> Result<PathBuf> {
     match custom {
@@ -402,6 +442,7 @@ fn main() -> ExitCode {
         if args.mode == Mode::Interactive && !args.no_updater {
             updater::Updater::start(cx);
         }
+        start_background_jobs(&args, cx);
         app::restore_last_page(args.mode == Mode::Interactive, cx);
         let window = match open_main_window(&args.mode, args.autostart, cx) {
             Ok(window) => window,
@@ -526,6 +567,24 @@ mod tests {
         let sandbox = keyring_service(Some(Path::new("sandbox"))).unwrap();
         assert_ne!(sandbox, quadrant_core::account::KEYRING_SERVICE);
         assert_ne!(Some(sandbox), keyring_service(Some(Path::new("other"))));
+    }
+
+    #[test]
+    fn only_a_real_interactive_run_reports_usage() {
+        let real = Args::default();
+        let has_key = !credentials(&Mode::Interactive)[2].is_empty();
+        assert_eq!(reports_usage(&real, false), has_key);
+        assert!(!reports_usage(&real, true));
+        let sandbox = Args {
+            data_dir: Some("sandbox".into()),
+            ..Args::default()
+        };
+        assert!(!reports_usage(&sandbox, false));
+        let screenshot = Args {
+            mode: Mode::Screenshot("shots".into()),
+            ..Args::default()
+        };
+        assert!(!reports_usage(&screenshot, false));
     }
 
     #[test]

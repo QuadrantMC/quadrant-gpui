@@ -20,6 +20,8 @@ cargo test
 
 The default build needs no credentials. Quadrant ID, Quadrant Share and telemetry pick up `QUADRANT_OAUTH2_CLIENT_ID`, `QUADRANT_OAUTH2_CLIENT_SECRET` and `QUADRANT_API_KEY` at compile time when they are set, as the Quadrant CLI does.
 
+At startup the app refreshes the Minecraft version list in the background and, when data collection is on in Settings, sends the usage report, as the desktop app does. Only an interactive run on the desktop app's data folder with `QUADRANT_API_KEY` built in reports usage: a `--data-dir` sandbox, screenshot, perf and `QUADRANT_NATIVE_BACKGROUND` runs never do.
+
 ### Features
 
 | Feature | What it adds |
