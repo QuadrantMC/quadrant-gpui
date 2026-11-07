@@ -24,7 +24,7 @@ use crate::{
 
 const ACCOUNT_URL: &str = "https://mrquantumoff.dev/account";
 const REGISTER_URL: &str = "https://mrquantumoff.dev/account/register";
-const PRIVACY_URL: &str = "https://github.com/QuadrantMC/quadrant/blob/next/PRIVACY_POLICY.md";
+const TERMS_URL: &str = "https://usequadrant.dev/terms";
 
 /// A change to the sign-in. At most one runs at a time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -276,7 +276,7 @@ impl AccountPage {
                         Some(MdIcon::OpenInBrowser),
                     )
                     .text_lg()
-                    .on_click(|_, _, cx| cx.open_url(PRIVACY_URL)),
+                    .on_click(|_, _, cx| cx.open_url(TERMS_URL)),
                 ),
             )
     }
