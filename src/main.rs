@@ -24,6 +24,7 @@ mod screenshot;
 mod session;
 mod single_instance;
 mod snackbar;
+mod taskbar;
 mod text_cache;
 mod theme;
 mod tray;
@@ -413,6 +414,7 @@ fn main() -> ExitCode {
         }
         match args.mode {
             Mode::Interactive => {
+                taskbar::install(window, cx);
                 // Test runs with a real window keep out of the user's tray.
                 if !background_window() {
                     tray::install(

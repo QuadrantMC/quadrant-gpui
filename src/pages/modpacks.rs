@@ -41,6 +41,7 @@ use crate::{
     },
     session::Session,
     snackbar::{self, SnackbarKind},
+    taskbar::{self, Job},
     theme::{self, Tone},
 };
 
@@ -673,8 +674,13 @@ impl ModpacksPage {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.running.retain(|running| !running.conflicts(&op));
-                if matches!(op, Op::Install { .. }) {
-                    this.install_progress = None;
+                match &op {
+                    Op::Install { .. } => {
+                        this.install_progress = None;
+                        taskbar::clear(cx, Job::ModpackDownload);
+                    }
+                    Op::Export { .. } => taskbar::clear(cx, Job::Export),
+                    _ => {}
                 }
                 match result {
                     Ok(outcome) => {

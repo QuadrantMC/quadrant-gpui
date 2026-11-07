@@ -70,6 +70,10 @@ Links follow the desktop app's `deepLinks.ts` (`src/deep_link.rs`, with its test
 
 Settings' "Launch at login" registers the app the way the desktop app's autostart plugin does, through the same `auto-launch` crate: a `Run` value under HKCU on Windows, a LaunchAgent on macOS, an XDG autostart desktop file on Linux, each starting it with `--autostart`, which opens it in the tray. The switch shows what the OS has, not a setting, and turning it off on Windows also removes Task Manager's `StartupApproved` note. A `--data-dir` run registers as `Quadrant-Native-<key>` with its own folders, so a sandbox never replaces the real entry; `cargo test autostart -- --ignored` registers and removes a test entry.
 
+## Taskbar progress
+
+An update download, an export and a modpack download show their progress on the app's taskbar button, as the desktop app's do. Windows draws it through `ITaskbarList3`. On Linux the app sends Unity's `com.canonical.Unity.LauncherEntry` signal for `quadrant-native.desktop`, which KDE's task manager and GNOME's Dash to Dock read. macOS shows none yet: Tauri draws its own view into the dock tile, and this app doesn't. Screenshot and perf runs leave the taskbar alone.
+
 ## Updates
 
 With the `updater` feature, an installed copy updates itself the way the Tauri app does, through the same update server. At launch, and whenever the update channel changes in Settings, it asks

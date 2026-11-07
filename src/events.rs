@@ -8,6 +8,7 @@ use crate::{
     backend::Backend,
     i18n::t_with,
     snackbar::{self, Message, Snack, SnackbarKind},
+    taskbar::{self, Job},
 };
 
 /// Shows host events in the snackbar for as long as the app runs.
@@ -20,10 +21,18 @@ pub fn forward(cx: &mut App) {
                 Err(RecvError::Lagged(_)) => continue,
                 Err(RecvError::Closed) => break,
             };
+            let done = event.payload.as_f64();
             if event.event == "quadrantExportProgress"
-                && let Some(done) = event.payload.as_f64()
+                && let Some(done) = done
             {
-                cx.update(|cx| snackbar::present(cx, export_snack(done)));
+                cx.update(|cx| {
+                    taskbar::progress(cx, Job::Export, done);
+                    snackbar::present(cx, export_snack(done));
+                });
+            } else if event.event == "modpackDownloadProgress"
+                && let Some(done) = done
+            {
+                cx.update(|cx| taskbar::progress(cx, Job::ModpackDownload, done));
             } else if let Some(text) = snackbar_text(&event) {
                 cx.update(|cx| snackbar::show(cx, SnackbarKind::Neutral, text));
             }

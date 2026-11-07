@@ -61,7 +61,7 @@ auto-launch = "0.6"
 # its handle, perf mode times frames from the window procedure; `console`
 # attaches a console for --debug and shows fatal errors.
 raw-window-handle = "0.6"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # The tray icon the window hides into: Windows' notification area and the
 # macOS menu bar.
@@ -71,6 +71,8 @@ tray-icon = { version = "0.26", default-features = false }
 # A StatusNotifierItem over D-Bus for Linux trays, Wayland included; no GTK.
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3", default-features = false, features = ["async-io", "blocking"] }
+# Already in the tree through ksni; sends the launcher's progress signal.
+zbus = { version = "5", default-features = false, features = ["async-io"] }
 
 [dev-dependencies]
 # gpui's test window, for tests that draw, resize and scroll real lists.

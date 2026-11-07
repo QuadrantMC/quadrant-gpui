@@ -29,6 +29,7 @@ use crate::{
     config,
     i18n::{describe, t},
     snackbar::{self, SnackbarKind},
+    taskbar::{self, Job},
     theme::{self, Tone},
 };
 use protocol::{Bundle, Release};
@@ -181,6 +182,7 @@ impl Updater {
                     continue;
                 };
                 let _ = this.update(cx, |this, cx| {
+                    taskbar::progress(cx, Job::Update, done.into());
                     let shown = match this.status {
                         Status::Downloading(shown) => (shown * 100.).round(),
                         _ => -1.,
@@ -193,6 +195,7 @@ impl Updater {
             }
             let result = job.await;
             let _ = this.update(cx, |this, cx| {
+                taskbar::clear(cx, Job::Update);
                 this.status = match result {
                     Ok(Some(update)) => Status::Ready(Arc::new(update)),
                     Ok(None) => Status::Idle,
