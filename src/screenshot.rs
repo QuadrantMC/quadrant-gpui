@@ -103,6 +103,10 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     std::fs::create_dir_all(&snackbars)?;
     cx.update(|cx| snackbar::show(cx, SnackbarKind::Success, t("setModpackSuccess")));
     capture(window, &snackbars.join("success.png"), cx).await?;
+    for (done, name) in [(0.42, "export-running.png"), (1., "export-done.png")] {
+        cx.update(|cx| crate::events::preview_export(cx, done));
+        capture(window, &snackbars.join(name), cx).await?;
+    }
     cx.update(|cx| {
         let reason = "The process cannot access the file because it is being used by another process. (os error 32)";
         snackbar::show(

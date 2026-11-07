@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use gpui::{App, Context, SharedString, Task};
 use quadrant_host::HostEventEnvelope;
 use tokio::sync::broadcast::error::RecvError;
@@ -5,7 +7,7 @@ use tokio::sync::broadcast::error::RecvError;
 use crate::{
     backend::Backend,
     i18n::t_with,
-    snackbar::{self, SnackbarKind},
+    snackbar::{self, Message, Snack, SnackbarKind},
 };
 
 /// Shows host events in the snackbar for as long as the app runs.
@@ -18,12 +20,40 @@ pub fn forward(cx: &mut App) {
                 Err(RecvError::Lagged(_)) => continue,
                 Err(RecvError::Closed) => break,
             };
-            if let Some(text) = snackbar_text(&event) {
+            if event.event == "quadrantExportProgress"
+                && let Some(done) = event.payload.as_f64()
+            {
+                cx.update(|cx| snackbar::present(cx, export_snack(done)));
+            } else if let Some(text) = snackbar_text(&event) {
                 cx.update(|cx| snackbar::show(cx, SnackbarKind::Neutral, text));
             }
         }
     })
     .detach();
+}
+
+/// The export's snackbar, as `App.tsx` puts it up for each
+/// `quadrantExportProgress`: a slate one that stays while the export runs and
+/// isn't kept in the history, then an emerald one at 100%.
+fn export_snack(done: f64) -> Snack {
+    let percent = (done * 100.).round().clamp(0., 100.) as u8;
+    let finished = done >= 1.;
+    Snack {
+        kind: if finished {
+            SnackbarKind::Success
+        } else {
+            SnackbarKind::Neutral
+        },
+        message: Message::Export { percent },
+        timeout: Duration::from_millis(if finished { 15_000 } else { 500_000 }),
+        remember: finished,
+    }
+}
+
+/// Puts up the snackbar an export `done` of the way through shows.
+#[cfg(feature = "screenshot")]
+pub fn preview_export(cx: &mut App, done: f64) {
+    snackbar::present(cx, export_snack(done));
 }
 
 /// Events a view reacts to through [`listen`] instead of a snackbar.
@@ -186,6 +216,21 @@ mod tests {
             snackbar_text(&event("somethingNew")).as_deref(),
             Some("somethingNew")
         );
+    }
+
+    #[test]
+    fn an_export_counts_up_then_settles_in_emerald() {
+        let running = export_snack(0.426);
+        assert_eq!(running.message, Message::Export { percent: 43 });
+        assert_eq!(running.kind, SnackbarKind::Neutral);
+        assert!(!running.remember);
+        assert_eq!(running.timeout, Duration::from_millis(500_000));
+        let done = export_snack(1.);
+        assert_eq!(done.message, Message::Export { percent: 100 });
+        assert_eq!(done.kind, SnackbarKind::Success);
+        assert!(done.remember);
+        assert_eq!(done.timeout, Duration::from_millis(15_000));
+        assert_eq!(export_snack(0.999).kind, SnackbarKind::Neutral);
     }
 
     #[test]

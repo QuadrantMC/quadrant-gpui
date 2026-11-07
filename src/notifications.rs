@@ -13,7 +13,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, Window, anchored, deferred, div,
     prelude::FluentBuilder as _, rems, rgb, rgba,
 };
-use gpui_component::{Icon, h_flex, v_flex};
+use gpui_component::{h_flex, v_flex};
 use quadrant_core::{
     account::id::{AccountInfo, Notification},
     models::Article,
@@ -29,7 +29,7 @@ use crate::{
     loadable::Loadable,
     motion,
     session::Session,
-    snackbar::SnackbarKind,
+    snackbar::{self, Message, SnackbarKind},
     theme::{self, Tone},
 };
 
@@ -44,7 +44,7 @@ pub const HISTORY_LIMIT: usize = 5;
 pub struct HistoryEntry {
     pub id: u64,
     pub kind: SnackbarKind,
-    pub message: SharedString,
+    pub message: Message,
     pub count: usize,
 }
 
@@ -58,7 +58,7 @@ pub struct History {
 }
 
 impl History {
-    pub fn record(&mut self, kind: SnackbarKind, message: SharedString) {
+    pub fn record(&mut self, kind: SnackbarKind, message: Message) {
         let repeat = self
             .entries
             .iter()
@@ -384,7 +384,7 @@ pub fn view(cx: &App) -> Option<Entity<Notifications>> {
 }
 
 /// Adds a snackbar to the history.
-pub fn record(cx: &mut App, kind: SnackbarKind, message: SharedString) {
+pub fn record(cx: &mut App, kind: SnackbarKind, message: Message) {
     if let Some(notifications) = view(cx) {
         notifications.update(cx, |this, cx| {
             this.history.record(kind, message);
@@ -538,7 +538,7 @@ impl Notifications {
         self.history.clear();
         for (kind, message) in snackbars {
             self.history
-                .record(*kind, SharedString::from(message.to_string()));
+                .record(*kind, Message::from(message.to_string()));
         }
         self.account = newest_first(account);
         self.news = news;
@@ -800,15 +800,7 @@ fn history_entry(entry: &HistoryEntry) -> gpui::Div {
         .flex()
         .items_center()
         .justify_between()
-        .child(
-            div()
-                .flex()
-                .min_w_0()
-                .when_some(entry.kind.icon(), |this, icon| {
-                    this.child(Icon::new(icon).size_5().mx_2().flex_shrink_0())
-                })
-                .child(div().min_w_0().child(entry.message.clone())),
-        )
+        .child(snackbar::content(entry.kind, &entry.message))
         .when(entry.count > 1, |this| {
             this.child(
                 div()
@@ -931,9 +923,9 @@ mod tests {
         let messages: Vec<_> = history
             .entries()
             .iter()
-            .map(|e| e.message.as_ref())
+            .map(|e| e.message.clone())
             .collect();
-        assert_eq!(messages, ["b", "a"]);
+        assert_eq!(messages, [Message::from("b"), Message::from("a")]);
         assert_eq!(history.entries()[1].count, 2);
         assert_eq!(history.entries()[1].id, a);
     }
@@ -955,7 +947,7 @@ mod tests {
         assert_eq!(history.entries().len(), HISTORY_LIMIT);
         assert_eq!(
             history.entries().last().unwrap().message,
-            format!("m{}", HISTORY_LIMIT + 2)
+            Message::from(format!("m{}", HISTORY_LIMIT + 2))
         );
         history.clear();
         assert!(history.entries().is_empty());

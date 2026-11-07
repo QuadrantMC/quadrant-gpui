@@ -249,7 +249,8 @@ impl Op {
     }
 
     /// What the snackbar says once it worked, if anything. A share announces
-    /// itself through the host's `quadrantShareSubmission` event.
+    /// itself through the host's `quadrantShareSubmission` event, an export
+    /// through its last `quadrantExportProgress`.
     fn done_text(&self) -> Option<SharedString> {
         Some(match self {
             Op::Apply(_) => t("setModpackSuccess"),
@@ -258,12 +259,15 @@ impl Op {
             Op::Clear(_) => "Cleared the applied modpack".into(),
             // The desktop app's own summary of the saved details.
             Op::Update { to, .. } => format!("{} | {} | {}", to.name, to.version, to.loader).into(),
-            Op::Export { name, .. } => format!("Exported \"{name}\"").into(),
             Op::Sync { .. } => t("modpackUpdated"),
             Op::Install { .. } => t("downloadSuccess"),
             Op::Invite { .. } => t("invite"),
             Op::DeleteSynced(_) => t("delete"),
-            Op::Share(_) | Op::ShareRaw(_) | Op::Kick { .. } | Op::ResolveShare(_) => return None,
+            Op::Export { .. }
+            | Op::Share(_)
+            | Op::ShareRaw(_)
+            | Op::Kick { .. }
+            | Op::ResolveShare(_) => return None,
         })
     }
 
