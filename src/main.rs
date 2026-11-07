@@ -402,6 +402,7 @@ fn main() -> ExitCode {
         if args.mode == Mode::Interactive && !args.no_updater {
             updater::Updater::start(cx);
         }
+        app::restore_last_page(args.mode == Mode::Interactive, cx);
         let window = match open_main_window(&args.mode, args.autostart, cx) {
             Ok(window) => window,
             Err(error) => {

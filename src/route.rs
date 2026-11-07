@@ -23,16 +23,26 @@ impl Route {
         Route::Settings,
     ];
 
-    /// The page title, from the desktop app's strings.
-    pub fn label(self) -> SharedString {
-        t(match self {
+    /// The desktop app's name for the page, as `lastPageName` keeps it. It
+    /// is also the key of the page's title.
+    pub fn name(self) -> &'static str {
+        match self {
             Route::Modpacks => "apply",
             Route::CurrentModpack => "currentModpack",
             Route::Search => "search",
             Route::InstalledContent => "installedContent",
             Route::Account => "account",
             Route::Settings => "settings",
-        })
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Route> {
+        Route::ALL.into_iter().find(|route| route.name() == name)
+    }
+
+    /// The page title, from the desktop app's strings.
+    pub fn label(self) -> SharedString {
+        t(self.name())
     }
 
     pub fn icon(self) -> MdIcon {
@@ -99,6 +109,19 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_names_round_trip_as_the_desktop_app_writes_them() {
+        for route in Route::ALL {
+            assert_eq!(Route::from_name(route.name()), Some(route));
+        }
+        assert_eq!(
+            Route::from_name("currentModpack"),
+            Some(Route::CurrentModpack)
+        );
+        // A legacy numeric `lastPage` matches no name.
+        assert_eq!(Route::from_name("2"), None);
+    }
 
     #[test]
     fn back_and_forward_walk_the_visited_pages() {

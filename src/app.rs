@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use futures::{StreamExt as _, channel::mpsc::UnboundedReceiver};
 use gpui::{
-    AnyElement, AnyView, App, AsyncApp, Context, Entity, InteractiveElement as _, IntoElement,
-    MouseButton, NavigationDirection, ParentElement as _, Render, Styled as _, Window,
+    AnyElement, AnyView, App, AsyncApp, Context, Entity, Global, InteractiveElement as _,
+    IntoElement, MouseButton, NavigationDirection, ParentElement as _, Render, Styled as _, Window,
     WindowControlArea, WindowHandle, div, prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::{Root, h_flex, v_flex};
@@ -11,6 +11,7 @@ use gpui_component::{Root, h_flex, v_flex};
 use crate::{
     assets::MdIcon,
     backend::Backend,
+    config,
     deep_link::{self, Action},
     i18n::{describe, t},
     motion, notifications, oauth,
@@ -20,6 +21,50 @@ use crate::{
     theme::{self, Tone},
     tray,
 };
+
+/// The config key the desktop app keeps the rail's last page under.
+const LAST_PAGE: &str = "lastPageName";
+
+/// The page a window opens on: the one last picked in the rail.
+struct LastPage(Route);
+
+impl Global for LastPage {}
+
+/// Reads the page the rail last opened, so the window opens on it as the
+/// desktop app's does. Screenshot and perf runs, and anything unreadable,
+/// start on Apply. Call before opening the window.
+pub fn restore_last_page(interactive: bool, cx: &mut App) {
+    let route = if interactive {
+        let read =
+            Backend::global(cx).run(cx, |host| async move { host.get_config_value(LAST_PAGE) });
+        // A read of the config file the host already holds in memory.
+        cx.foreground_executor()
+            .block_with_timeout(Duration::from_millis(500), read)
+            .ok()
+            .and_then(Result::ok)
+            .flatten()
+            .and_then(|name| name.as_str().and_then(Route::from_name))
+    } else {
+        None
+    };
+    let route = route.unwrap_or(Route::Modpacks);
+    log::debug!("Opening on the {} page", route.name());
+    cx.set_global(LastPage(route));
+}
+
+/// Saves `route` as the page to open next time, as the rail does.
+fn remember_page(route: Route, cx: &mut App) {
+    cx.set_global(LastPage(route));
+    let task = Backend::global(cx).run(cx, move |host| async move {
+        config::set(&host, LAST_PAGE, route.name().into())
+    });
+    cx.spawn(async move |_| {
+        if let Err(error) = task.await {
+            log::warn!("Couldn't save the last page: {error:#}");
+        }
+    })
+    .detach();
+}
 
 /// Opens each batch of links `inbox` brings, from this launch, a later one
 /// or the platform, after bringing the main window back as the desktop
@@ -115,7 +160,10 @@ impl QuadrantApp {
             cx.observe(&updater, |_, _, cx| cx.notify()).detach();
         }
         Self {
-            history: History::new(Route::Modpacks),
+            history: History::new(
+                cx.try_global::<LastPage>()
+                    .map_or(Route::Modpacks, |last| last.0),
+            ),
             pages: HashMap::new(),
             pressed_title_bar: false,
             snackbar: snackbar::view(cx),
@@ -275,6 +323,7 @@ impl QuadrantApp {
                         theme::rail_button(route, route == current, cx)
                             .tooltip(route.label())
                             .on_click(cx.listener(move |this, _, window, cx| {
+                                remember_page(route, cx);
                                 this.navigate(route, window, cx)
                             }))
                     })),
