@@ -330,7 +330,7 @@ pub fn dialog_surface(dialog: Dialog) -> Dialog {
 fn snackbar_color(kind: SnackbarKind) -> u32 {
     match kind {
         SnackbarKind::Neutral => CONTROL,
-        SnackbarKind::Success => POSITIVE,
+        SnackbarKind::Success | SnackbarKind::Saved | SnackbarKind::Deleted => POSITIVE,
         SnackbarKind::Error => DESTRUCTIVE_HOVER,
     }
 }

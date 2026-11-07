@@ -85,27 +85,25 @@ pub struct NewModpack {
 }
 
 impl NewModpack {
-    /// Checks what the backend can't: that every field was filled in. Whether
-    /// the name is usable is the backend's call.
-    pub fn parse(
-        name: &str,
-        version: &str,
-        loader: Option<ModLoader>,
-    ) -> Result<Self, &'static str> {
+    /// The dialog's fields, trimmed. The desktop app's create closes the
+    /// dialog without making anything when the name is blank or no loader
+    /// is picked; anything else is the backend's call, and a refusal reads
+    /// "Invalid data".
+    pub fn parse(name: &str, version: &str, loader: Option<ModLoader>) -> Option<Self> {
         let name = name.trim();
-        let version = version.trim();
         if name.is_empty() {
-            return Err("Give the modpack a name.");
+            return None;
         }
-        if version.is_empty() {
-            return Err("Choose a Minecraft version.");
-        }
-        let loader = loader.ok_or("Choose a mod loader.")?;
-        Ok(Self {
+        Some(Self {
             name: name.to_string(),
-            version: version.to_string(),
-            loader,
+            version: version.trim().to_string(),
+            loader: loader?,
         })
+    }
+
+    /// The desktop app's confirmation of a saved modpack.
+    fn summary(&self) -> SharedString {
+        format!("{} | {} | {}", self.name, self.version, self.loader).into()
     }
 }
 
@@ -251,27 +249,29 @@ impl Op {
         Ok(Outcome::Done)
     }
 
-    /// What the snackbar says once it worked, if anything. A share announces
-    /// itself through the host's `quadrantShareSubmission` event, an export
-    /// through its last `quadrantExportProgress`.
-    fn done_text(&self) -> Option<SharedString> {
-        Some(match self {
-            Op::Apply(_) => t("setModpackSuccess"),
-            Op::Delete(name) => format!("Deleted \"{name}\"").into(),
-            Op::Create(new) => format!("Created \"{}\"", new.name).into(),
-            Op::Clear(_) => "Cleared the applied modpack".into(),
-            // The desktop app's own summary of the saved details.
-            Op::Update { to, .. } => format!("{} | {} | {}", to.name, to.version, to.loader).into(),
-            Op::Sync { .. } => t("modpackUpdated"),
-            Op::Install { .. } => t("downloadSuccess"),
-            Op::Invite { .. } => t("invite"),
-            Op::DeleteSynced(_) => t("delete"),
-            Op::Export { .. }
+    /// What the snackbar says once it worked, if anything, as the desktop
+    /// app says it. A share announces itself through the host's
+    /// `quadrantShareSubmission` event, an export through its last
+    /// `quadrantExportProgress`; clearing says nothing.
+    fn done_text(&self) -> Option<(SnackbarKind, SharedString)> {
+        let success = |text| Some((SnackbarKind::Success, text));
+        match self {
+            Op::Apply(_) => success(t("setModpackSuccess")),
+            Op::Delete(_) => Some((SnackbarKind::Deleted, SharedString::default())),
+            Op::Create(new) | Op::Update { to: new, .. } => {
+                Some((SnackbarKind::Saved, new.summary()))
+            }
+            Op::Sync { .. } => success(t("modpackUpdated")),
+            Op::Install { .. } => success(t("downloadSuccess")),
+            Op::Invite { .. } => success(t("invite")),
+            Op::DeleteSynced(_) => success(t("delete")),
+            Op::Clear(_)
+            | Op::Export { .. }
             | Op::Share(_)
             | Op::ShareRaw(_)
             | Op::Kick { .. }
-            | Op::ResolveShare(_) => return None,
-        })
+            | Op::ResolveShare(_) => None,
+        }
     }
 
     /// What this op works on. Of two ops that share a lane, the second
@@ -423,7 +423,7 @@ struct ModpackForm {
 }
 
 impl ModpackForm {
-    fn submit(&self, cx: &App) -> Result<NewModpack, &'static str> {
+    fn submit(&self, cx: &App) -> Option<NewModpack> {
         NewModpack::parse(
             &self.name.read(cx).value(),
             &self.version.value(cx),
@@ -761,8 +761,8 @@ impl ModpacksPage {
                                 cx,
                             ),
                         }
-                        if let Some(text) = op.done_text() {
-                            snackbar::show(cx, SnackbarKind::Success, text);
+                        if let Some((kind, text)) = op.done_text() {
+                            snackbar::show(cx, kind, text);
                         }
                     }
                     Err(error) => match op {
@@ -776,6 +776,13 @@ impl ModpacksPage {
                             log::warn!("Quadrant Share lookup failed: {}", describe(error));
                             snackbar::show(cx, SnackbarKind::Error, t("unsupportedDownload"));
                         }
+                        // The desktop app's modpack dialog says only this.
+                        Op::Create(_) | Op::Update { .. } => {
+                            log::warn!("Saving a modpack failed: {}", describe(error));
+                            snackbar::show(cx, SnackbarKind::Error, t("invalidData"));
+                        }
+                        // The desktop app's clear reports nothing.
+                        Op::Clear(_) => log::warn!("Clearing failed: {}", describe(error)),
                         _ => snackbar::show(cx, SnackbarKind::Error, describe(error)),
                     },
                 }
@@ -798,13 +805,10 @@ impl ModpacksPage {
             Loadable::Ready(versions) => versions.first().cloned(),
             Loadable::Idle | Loadable::Loading | Loadable::Failed(_) => None,
         };
-        match newest {
-            Some(version) => self.run(Op::Clear(version.to_string()), cx),
-            None => snackbar::show(
-                cx,
-                SnackbarKind::Error,
-                "Clearing needs the Minecraft version list, which hasn't loaded.",
-            ),
+        // As in the desktop app, without a version list there is nothing
+        // to clear with, and nothing is said.
+        if let Some(version) = newest {
+            self.run(Op::Clear(version.to_string()), cx);
         }
     }
 
@@ -895,19 +899,26 @@ impl ModpacksPage {
                 let form = form.clone();
                 let page = page.clone();
                 let original = original.clone();
-                move |_: &ClickEvent, window: &mut Window, cx: &mut App| match form.submit(cx) {
-                    Ok(new) => {
-                        let op = match &original {
-                            Some(from) => Op::Update {
+                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    match (form.submit(cx), &original) {
+                        (Some(new), Some(from)) => {
+                            let op = Op::Update {
                                 from: from.clone(),
                                 to: new,
-                            },
-                            None => Op::Create(new),
-                        };
-                        page.update(cx, |page, cx| page.run(op, cx));
-                        window.close_dialog(cx);
+                            };
+                            page.update(cx, |page, cx| page.run(op, cx));
+                        }
+                        (Some(new), None) => {
+                            page.update(cx, |page, cx| page.run(Op::Create(new), cx));
+                        }
+                        // The desktop app sends a blank name to the update,
+                        // which refuses it.
+                        (None, Some(_)) => {
+                            snackbar::show(cx, SnackbarKind::Error, t("invalidData"))
+                        }
+                        (None, None) => {}
                     }
-                    Err(problem) => snackbar::show(cx, SnackbarKind::Error, problem),
+                    window.close_dialog(cx);
                 }
             };
             let (title, name_label) = match original {
@@ -964,8 +975,8 @@ impl ModpacksPage {
     }
 
     /// Opens `name`'s Details or edit dialog, or goes back to the list, for
-    /// screenshots.
-    #[cfg(feature = "screenshot")]
+    /// screenshots and perf runs.
+    #[cfg(any(feature = "screenshot", feature = "perf"))]
     pub fn preview(
         &mut self,
         name: Option<&str>,
@@ -1111,47 +1122,6 @@ impl ModpacksPage {
         );
     }
 
-    pub fn confirm_delete(
-        &mut self,
-        name: SharedString,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let page = cx.entity();
-        window.open_dialog(cx, move |dialog, _, cx| {
-            let delete = {
-                let page = page.clone();
-                let name = name.clone();
-                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                    page.update(cx, |page, cx| page.run(Op::Delete(name.to_string()), cx));
-                    window.close_dialog(cx);
-                }
-            };
-            theme::dialog_surface(dialog)
-                .w(px(520.))
-                .title(theme::dialog_title(format!("Delete \"{name}\"?")))
-                .child("This removes the modpack folder and every mod in it.")
-                .footer(
-                    DialogFooter::new()
-                        .justify_start()
-                        .child(
-                            theme::pill_button(
-                                "confirm-delete",
-                                Tone::Danger,
-                                t("delete"),
-                                Some(MdIcon::Delete),
-                                cx,
-                            )
-                            .on_click(delete),
-                        )
-                        .child(
-                            theme::cancel_button("cancel", t("cancel"), cx)
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        ),
-                )
-        });
-    }
-
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .mx_8()
@@ -1259,21 +1229,19 @@ impl ModpacksPage {
             .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Apply(_))))
             .on_click(cx.listener(move |this, _, _, cx| this.run(Op::Apply(name.to_string()), cx)))
         };
-        let delete =
-            {
-                let name = name.clone();
-                theme::pill_button(
-                    ("delete", index),
-                    Tone::Destructive,
-                    t("delete"),
-                    Some(MdIcon::Delete),
-                    cx,
-                )
-                .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Delete(_))))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.confirm_delete(name.clone(), window, cx)
-                }))
-            };
+        let delete = {
+            let name = name.clone();
+            theme::pill_button(
+                ("delete", index),
+                Tone::Destructive,
+                t("delete"),
+                Some(MdIcon::Delete),
+                cx,
+            )
+            .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Delete(_))))
+            // As in the desktop app, at once and without asking.
+            .on_click(cx.listener(move |this, _, _, cx| this.run(Op::Delete(name.to_string()), cx)))
+        };
         let update = {
             let modpack = modpack.clone();
             theme::pill_button(
@@ -1700,18 +1668,38 @@ mod tests {
     }
 
     #[test]
-    fn create_form_needs_every_field() {
+    fn create_form_skips_a_blank_name_or_no_loader() {
+        let pack = NewModpack::parse("  Pack ", " 1.21.1 ", Some(ModLoader::Quilt));
         assert_eq!(
-            NewModpack::parse("  Pack ", " 1.21.1 ", Some(ModLoader::Quilt)),
-            Ok(NewModpack {
+            pack,
+            Some(NewModpack {
                 name: "Pack".into(),
                 version: "1.21.1".into(),
                 loader: ModLoader::Quilt,
             })
         );
-        assert!(NewModpack::parse(" ", "1.21.1", Some(ModLoader::Quilt)).is_err());
-        assert!(NewModpack::parse("Pack", "", Some(ModLoader::Quilt)).is_err());
-        assert!(NewModpack::parse("Pack", "1.21.1", None).is_err());
+        assert_eq!(pack.unwrap().summary(), "Pack | 1.21.1 | Quilt");
+        assert_eq!(
+            NewModpack::parse(" ", "1.21.1", Some(ModLoader::Quilt)),
+            None
+        );
+        assert_eq!(NewModpack::parse("Pack", "1.21.1", None), None);
+        // The backend judges the version.
+        assert!(NewModpack::parse("Pack", "", Some(ModLoader::Quilt)).is_some());
+    }
+
+    #[test]
+    fn snackbars_say_what_the_desktop_app_says() {
+        let pack = NewModpack::parse("Pack", "1.21.1", Some(ModLoader::Fabric)).unwrap();
+        assert_eq!(
+            Op::Create(pack.clone()).done_text(),
+            Some((SnackbarKind::Saved, "Pack | 1.21.1 | Fabric".into()))
+        );
+        assert_eq!(
+            Op::Delete("Pack".into()).done_text(),
+            Some((SnackbarKind::Deleted, SharedString::default()))
+        );
+        assert_eq!(Op::Clear("1.21.1".into()).done_text(), None);
     }
 
     /// Runs each op against a throwaway Minecraft folder through the same host

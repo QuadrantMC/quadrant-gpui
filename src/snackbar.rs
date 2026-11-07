@@ -28,6 +28,12 @@ pub enum SnackbarKind {
     Neutral,
     /// `bg-emerald-600` with a check mark (`useReportSuccess`).
     Success,
+    /// `bg-emerald-600` without one, as the desktop app's modpack dialog
+    /// confirms a save.
+    Saved,
+    /// `bg-emerald-600` with a delete icon and no text, as a deleted
+    /// modpack is confirmed.
+    Deleted,
     /// `bg-red-700` (`useReportError`).
     Error,
 }
@@ -37,7 +43,8 @@ impl SnackbarKind {
     pub fn icon(self) -> Option<MdIcon> {
         match self {
             Self::Success => Some(MdIcon::Check),
-            Self::Neutral | Self::Error => None,
+            Self::Deleted => Some(MdIcon::Delete),
+            Self::Saved | Self::Neutral | Self::Error => None,
         }
     }
 }
@@ -270,9 +277,11 @@ mod tests {
     }
 
     #[test]
-    fn only_success_carries_a_check_mark() {
+    fn only_success_carries_a_check_mark_and_delete_its_own_icon() {
         assert_eq!(SnackbarKind::Success.icon(), Some(MdIcon::Check));
         assert_eq!(SnackbarKind::Error.icon(), None);
+        assert_eq!(SnackbarKind::Saved.icon(), None);
+        assert_eq!(SnackbarKind::Deleted.icon(), Some(MdIcon::Delete));
         assert_eq!(SnackbarKind::Neutral.icon(), None);
     }
 }

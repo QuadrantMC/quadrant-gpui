@@ -74,15 +74,6 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
         window,
         cx,
         Route::Modpacks,
-        |page: &mut ModpacksPage, window, cx| page.confirm_delete("Beta Pack".into(), window, cx),
-    )?;
-    capture(window, &dir.join("delete-confirm.png"), cx).await?;
-    close_dialogs(window, cx).await?;
-
-    with_page(
-        window,
-        cx,
-        Route::Modpacks,
         |page: &mut ModpacksPage, window, cx| page.preview(Some("Alpha Pack"), true, window, cx),
     )?;
     capture(window, &dir.join("update-dialog.png"), cx).await?;
@@ -118,6 +109,12 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
         )
     });
     capture(window, &snackbars.join("error.png"), cx).await?;
+    cx.update(|cx| snackbar::show(cx, SnackbarKind::Deleted, ""));
+    capture(window, &snackbars.join("deleted.png"), cx).await?;
+    cx.update(|cx| snackbar::show(cx, SnackbarKind::Saved, "Alpha Pack | 1.21.1 | Fabric"));
+    capture(window, &snackbars.join("saved.png"), cx).await?;
+    cx.update(|cx| snackbar::show(cx, SnackbarKind::Error, t("invalidData")));
+    capture(window, &snackbars.join("invalid-data.png"), cx).await?;
 
     capture_mod_pages(window, dir, cx).await?;
     capture_widths(window, dir, cx).await?;

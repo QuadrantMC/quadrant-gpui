@@ -719,7 +719,7 @@ impl Driver {
                     match self.slot.unwrap_or(0) % 4 {
                         0 => modpacks.update(cx, |page, cx| page.open_create_dialog(window, cx)),
                         2 => modpacks.update(cx, |page, cx| {
-                            page.confirm_delete("Beta Pack".into(), window, cx)
+                            page.preview(Some("Beta Pack"), true, window, cx)
                         }),
                         _ => window.close_all_dialogs(cx),
                     }
