@@ -118,6 +118,8 @@ schemes = ["quadrantnext", "curseforge", "modrinth"]
 [package.metadata.packager.nsis]
 installer-mode = "currentUser"
 installer-icon = "packaging/icons/icon.ico"
+# cargo-packager's template with the uninstaller's link-scheme cleanup fixed.
+template = "packaging/windows/installer.nsi"
 
 [package.metadata.packager.macos]
 minimum-system-version = "11.0"
