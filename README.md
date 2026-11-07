@@ -64,7 +64,7 @@ As in the desktop app, closing the window keeps Quadrant-Native running in the t
 
 ## Single instance and links
 
-As in the desktop app, one copy runs per data folder. A second launch hands its links to the running one over a local socket (a named pipe on Windows) and exits; the running one comes back from the tray, unminimized, centred (Windows only: gpui can't move a window on macOS, and Wayland leaves it to the compositor) and in front, then opens them. The socket's name hashes the home folder and the data folder, so a `--data-dir` sandbox runs beside the real app. Screenshot and perf runs don't take part.
+One app runs per data folder, and Quadrant-Native and the desktop app count as one: both claim the same socket through quadrant-host's `single_instance`. A second launch of either hands its links to the running one over a local socket (a named pipe on Windows) and exits; the running one comes back from the tray, unminimized, centred (Windows only: gpui can't move a window on macOS, and Wayland leaves it to the compositor) and in front, then opens them. The socket's name hashes the home folder and the data folder, so a `--data-dir` sandbox runs beside the real app. Screenshot and perf runs don't take part. An app that starts its successor (an update, a switch) lets go of the socket first, and the successor, marked by `QUADRANT_LAUNCH=handoff`, waits to take it over rather than handing its links back.
 
 Links follow the desktop app's `deepLinks.ts` (`src/deep_link.rs`, with its tests): `modrinth://mod/<slug>` (also `resourcepack` and `shader`, and a wrapped `modrinth://https://modrinth.com/...`), `curseforge://install?addonId=<id>[&fileId=<id>]` and `quadrantnext://modrinth|curseforge?modId=<id>[&fileId=<id>]` open the mod's install page on Search, installing that file when there is a `fileId`; `quadrantnext://modpack?code=<code>` and `https://usequadrant.dev/modpack/<code>` open the Quadrant Share import on Apply; `quadrantnext://login` finishes a Quadrant ID sign-in whose state matches. They arrive as arguments at launch, from a second launch, and on macOS through the system's open events. The packages register the three schemes: the NSIS setup under `HKCU\Software\Classes`, the .app's `CFBundleURLTypes`, and the desktop file's `x-scheme-handler` MIME types. To try one without registering anything, pass it to a sandboxed run: `cargo run -- modrinth://mod/sodium --data-dir ... --mc-folder ...`.
 
@@ -78,17 +78,28 @@ An update download, an export and a modpack download show their progress on the 
 
 ## Updates
 
-With the `updater` feature, an installed copy updates itself the way the Tauri app does, through the same update server. At launch, and whenever the update channel changes in Settings, it asks
+With the `updater` feature, an installed copy updates itself the way the Tauri app does, through the same update server, and the update channel also switches between the two apps. The `channel` setting is shared with the desktop app, and quadrant-host's `updates` maps it to an app:
+
+| `channel` | App | Server channel |
+|---|---|---|
+| `stable` (or unset, or unknown) | Quadrant | `stable` |
+| `preview` | Quadrant | `preview`, then `stable` |
+| `gpui-preview` | Quadrant-Native | `gpui-preview` |
+| `gpui-experimental` (less stable) | Quadrant-Native | `gpui-experimental`, which the server answers with `gpui-preview`'s release when that is at least as new |
+
+At launch, and whenever the channel changes in Settings, it asks
 
 ```
-https://api.usequadrant.dev/api/any/quadrant-native/updates/{channel}/{target}/{arch}/{version}?variant={bundle}
+https://api.usequadrant.dev/api/any/{app}/updates/{channel}/{target}/{arch}/{version}?variant={bundle}
 ```
 
-with Tauri's names (`windows`, `linux`, `darwin`; `x86_64`, `aarch64`) and its install kind (`nsis`, `appimage`, `deb`, `rpm`, `app`). The channel is the `channel` setting the Tauri app keeps in the shared config, `stable` unless set; a non-stable channel falls back to stable's URL when its own fails. The answer is Tauri's updater JSON. A different version counts as an update, so switching back to stable moves to stable's release. The download is checked against the minisign signature in the answer with Quadrant's updater public key, the one in Quadrant's `tauri.conf.json`, before anything is kept. The title bar then shows "Install an update". Pressing it runs the NSIS setup passively (it relaunches the app), swaps the AppImage or the macOS `.app` and relaunches, or upgrades the deb or rpm through `pkexec`.
+with Tauri's names (`windows`, `linux`, `darwin`; `x86_64`, `aarch64`) and its install kind (`nsis`, `appimage`, `deb`, `rpm`, `app`). On a Quadrant-Native channel `{app}` is `quadrant-native` and `{version}` is this one; Quadrant-Native never reads Quadrant's channels. On a Quadrant channel it asks for `quadrant` with version `0.0.0`, which answers with Quadrant's newest release there. The answer is Tauri's updater JSON. A different version counts as an update. The download is checked against the minisign signature in the answer with Quadrant's updater public key, the one in Quadrant's `tauri.conf.json`, before anything is kept. The title bar then shows "Install an update", or "Switch to Quadrant" for Quadrant's release. Pressing it runs the NSIS setup passively (it starts the installed app), writes the AppImage or unpacks the `.app` (over this one, or beside it under Quadrant's name), or installs the deb or rpm through `pkexec`, then starts the installed app and quits.
+
+Each install records its path in the shared config's `appPaths` (machine-local, never synced). A launch whose channel names Quadrant starts Quadrant's recorded install with the same arguments and exits before claiming the single instance or opening a window, and the desktop app does the same the other way round. Sandboxes (`--data-dir`), `--noupdater`, screenshot and perf runs, and copies that aren't installs never redirect, and a redirected launch never redirects again.
 
 The updater stays off for `--noupdater` (for package managers that own updates), for screenshot and perf runs, and for a copy that isn't an install it can replace: a build in `target/`, or a Linux binary no package owns. Checks and failures only log, as in the Tauri app.
 
-For testing, debug builds read `QUADRANT_NATIVE_UPDATE_ENDPOINT` (an update server to ask instead, plain http allowed) and `QUADRANT_NATIVE_BACKGROUND` (open the window without focus). `QUADRANT_NATIVE_UPDATER_PUBKEY` at compile time swaps the public key. `scripts\update-e2e.ps1` uses all three to run the whole Windows update against a local server and a throwaway key. It installs the old build for this user, lets it download and verify the new one, presses the button through UI Automation, checks the new version took over, refuses a tampered setup and one signed with another key, uninstalls and checks nothing is left. It needs `cargo-packager` and the Tauri CLI from `../quadrant/node_modules`.
+For testing, debug builds read `QUADRANT_NATIVE_UPDATE_ENDPOINT` (an update server to ask instead, plain http allowed) and `QUADRANT_NATIVE_BACKGROUND` (open the window without focus). `QUADRANT_UPDATER_PUBKEY` at compile time swaps the public key (quadrant-host reads it). `scripts\update-e2e.ps1` uses all three to run the whole Windows update against a local server and a throwaway key. It installs the old build for this user, lets it download and verify the new one, presses the button through UI Automation, checks the new version took over, refuses a tampered setup and one signed with another key, uninstalls and checks nothing is left. It needs `cargo-packager` and the Tauri CLI from `../quadrant/node_modules`.
 
 ## Packaging
 
@@ -99,7 +110,7 @@ cargo install cargo-packager --locked --version 0.11.8
 cargo build --release --locked --features updater
 cargo packager --release -f nsis             # Windows: per-user setup in target/release
 cargo packager --release -f deb,appimage     # Linux
-cargo generate-rpm -s 'version = "26.10.0"' -s 'release = "stable"'   # rpm versions can't contain '-'
+cargo generate-rpm -s 'version = "26.11.1"' -s 'release = "gpui_preview.1"'   # rpm versions and releases can't contain '-'
 cargo packager --release -f app              # macOS; release.yml signs it and makes the dmg
 ```
 
@@ -111,7 +122,7 @@ The NSIS uninstaller removes the app, its Start menu entry and its uninstall ent
 
 ## Releasing
 
-Versions follow Quadrant's `YY.MM.REVISION` with the channel as the pre-release: `26.10.0-alpha`, `26.10.1-preview.1`, `26.11.0-stable`. Tags ending in `-stable`, `-preview` or `-alpha` start a release. Set it in `Cargo.toml`, commit, and push the tag `v<version>`. `.github/workflows/release.yml` then checks the tag against `Cargo.toml` and builds Linux x64 and arm64 (deb, AppImage, rpm), Windows x64 and arm64 (NSIS) and macOS arm64 (an ad-hoc signed `.app` in a dmg, plus `.app.tar.gz` for the updater). It signs every updater artifact with Tauri's signer, uploads it all to the release, and assembles `latest.json`. Without `TAURI_SIGNING_PRIVATE_KEY` it skips signing and `latest.json`. It `PUT`s `latest.json` to `/api/any/quadrant-native/add_updates/{channel}/{tag}` only when the repository variable `SUBMIT_UPDATES` is `true`, so by default no release reaches anyone's updater. Stable releases arrive unpublished, and RelMan publishes them like Quadrant's.
+Versions follow Quadrant's `YY.MM.REVISION` with the update channel as the pre-release: `26.11.1-gpui-preview.1`, `26.11.1-gpui-experimental.1`. Only `gpui-preview` and `gpui-experimental` tags start a release; `stable` and `preview` are Quadrant's channels, and the workflow refuses anything else. Set it in `Cargo.toml`, commit, and push the tag `v<version>`. `.github/workflows/release.yml` then checks the tag against `Cargo.toml` and builds Linux x64 and arm64 (deb, AppImage, rpm), Windows x64 and arm64 (NSIS) and macOS arm64 (an ad-hoc signed `.app` in a dmg, plus `.app.tar.gz` for the updater). It signs every updater artifact with Tauri's signer, uploads it all to the release, and assembles `latest.json`. Without `TAURI_SIGNING_PRIVATE_KEY` it skips signing and `latest.json`. When the repository variable `SUBMIT_UPDATES` is `true`, as it is on QuadrantMC/quadrant-gpui, it `PUT`s `latest.json` to `/api/any/quadrant-native/add_updates/{channel}/{tag}`. As with Quadrant's releases, it arrives unpublished, and reaches updaters once RelMan publishes it. Without the variable, nothing is submitted.
 
 Secrets:
 
@@ -127,13 +138,13 @@ Variables:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RELEASES_REPO` | this repository | the repository whose release carries the downloads |
-| `ASSET_BASE_URL` | `https://github.com/<RELEASES_REPO>/releases/download` | where `latest.json` says the files are, as `<base>/<tag>/<file>` |
-| `SUBMIT_UPDATES` | unset | `true` submits each release to the update server |
+| `SUBMIT_UPDATES` | unset (`true` here) | `true` submits each release to the update server, for RelMan to publish |
+| `RELEASES_REPO` | this repository | optional: another repository whose release carries the downloads |
+| `ASSET_BASE_URL` | `https://github.com/<RELEASES_REPO>/releases/download` | optional: where `latest.json` says the files are, as `<base>/<tag>/<file>` |
 
-This repository is private, so its release assets can't be downloaded by users or by the updater. Before the first release, point `RELEASES_REPO` at a public repository (for example a `quadrant-native-releases` repository under QuadrantMC) with a `RELEASES_REPO_TOKEN` that can write to it, or serve the files elsewhere and set `ASSET_BASE_URL`.
+This repository is public, so its own release assets serve users and the updater, and `RELEASES_REPO`, `RELEASES_REPO_TOKEN` and `ASSET_BASE_URL` stay unset. They remain for serving the files from somewhere else.
 
-One-time server-side steps: add `quadrant-native` to RelMan's `APPS` so its stable releases can be published, and make sure `VERSION_UPDATE_TRIGGER_TOKEN` here holds an update-server API key (product `updater`, scope `update`). The server needs no other change. It is generic over the app name, and `quadrant-native` already answers `404 No supported versions` until the first release is published.
+`VERSION_UPDATE_TRIGGER_TOKEN` must hold an update-server API key (product `updater`, scope `update`), and RelMan must list `quadrant-native` among its apps to publish its releases. The server (quadrant_api 12.5.5 or later) treats `gpui-preview` as a base channel like `stable`, and `quadrant-native` answers `404 No supported versions` on a channel until its first release there.
 
 ## Frame times
 

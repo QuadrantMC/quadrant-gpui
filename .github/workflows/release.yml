@@ -1,17 +1,18 @@
 name: Release
 
 # A tag `v<version>` whose version equals Cargo.toml's builds every package,
-# signs the updater artifacts and publishes them with latest.json. Submitting
-# latest.json to Quadrant's update server (app `quadrant-native`) is opt-in:
-# it only runs when the repository variable SUBMIT_UPDATES is `true`. Signing
-# and latest.json are skipped when TAURI_SIGNING_PRIVATE_KEY isn't set. See
-# README, "Releasing".
+# signs the updater artifacts and publishes them with latest.json. The version's
+# pre-release names the update channel, `gpui-preview` or `gpui-experimental`:
+# Quadrant-Native never publishes to Quadrant's `stable` or `preview`.
+# Submitting latest.json to Quadrant's update server (app `quadrant-native`)
+# runs when the repository variable SUBMIT_UPDATES is `true`. Signing and
+# latest.json are skipped when TAURI_SIGNING_PRIVATE_KEY isn't set. See README,
+# "Releasing".
 on:
   push:
     tags:
-      - "v*-stable*"
-      - "v*-preview*"
-      - "v*-alpha*"
+      - "v*-gpui-preview*"
+      - "v*-gpui-experimental*"
 
 permissions:
   contents: read
@@ -27,14 +28,13 @@ env:
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
   CARGO_PROFILE_RELEASE_STRIP: symbols
   CARGO_INCREMENTAL: "0"
-  # The repository whose GitHub release carries the downloads. This one is
-  # private, so its release assets can't be downloaded by users or by the
-  # updater: point RELEASES_REPO at a public repository and give
-  # RELEASES_REPO_TOKEN write access to it.
+  # The repository whose GitHub release carries the downloads: this public
+  # one, unless the optional RELEASES_REPO variable names another (then
+  # RELEASES_REPO_TOKEN needs write access to it).
   RELEASES_REPO: ${{ vars.RELEASES_REPO || github.repository }}
   # Where latest.json says the files are. Defaults to RELEASES_REPO's release;
-  # set ASSET_BASE_URL to serve them from elsewhere (then publishing there is
-  # up to you), as `<base>/<tag>/<file>`.
+  # the optional ASSET_BASE_URL variable serves them from elsewhere (then
+  # publishing there is up to you), as `<base>/<tag>/<file>`.
   ASSET_BASE_URL: ${{ vars.ASSET_BASE_URL || format('https://github.com/{0}/releases/download', vars.RELEASES_REPO || github.repository) }}
   TAURI_CLI: "@tauri-apps/cli@2.11.5"
 
@@ -60,9 +60,16 @@ jobs:
             echo "::error::tag $TAG doesn't match Cargo.toml's version $crate"
             exit 1
           fi
-          # 26.10.0-stable -> stable, 26.10.1-preview.2 -> preview
+          # 26.11.1-gpui-preview.1 -> gpui-preview
           channel="${version#*-}"
           channel="${channel%%.*}"
+          case "$channel" in
+            gpui-preview | gpui-experimental) ;;
+            *)
+              echo "::error::$TAG's channel $channel isn't gpui-preview or gpui-experimental"
+              exit 1
+              ;;
+          esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
 
@@ -72,14 +79,13 @@ jobs:
           PUBLIC_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN || secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
           VERSION: ${{ steps.version.outputs.version }}
-          CHANNEL: ${{ steps.version.outputs.channel }}
         run: |
           create() {
             if GH_TOKEN="$1" gh release view "$TAG" --repo "$2" >/dev/null 2>&1; then
               return
             fi
-            flags=()
-            if [ "$CHANNEL" != stable ]; then flags+=(--prerelease); fi
+            # Both channels are pre-releases.
+            flags=(--prerelease)
             GH_TOKEN="$1" gh release create "$TAG" --repo "$2" --target "$GITHUB_SHA" \
               --title "Quadrant-Native v$VERSION" \
               --notes "See the assets to download this version and install. Check out the [changelog on my blog](https://blog.mrquantumoff.dev)" \
@@ -173,8 +179,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cargo packager --release -f deb,appimage
-          # rpm versions can't contain '-': 26.10.0-stable is version 26.10.0, release stable.
-          cargo generate-rpm -s "version = \"${VERSION%%-*}\"" -s "release = \"${VERSION#*-}\""
+          # rpm versions and releases can't contain '-': 26.11.1-gpui-preview.1
+          # is version 26.11.1, release gpui_preview.1.
+          release="${VERSION#*-}"
+          cargo generate-rpm -s "version = \"${VERSION%%-*}\"" -s "release = \"${release//-/_}\""
           mkdir -p dist
           cp target/release/quadrant-native_*.deb target/release/quadrant-native_*.AppImage target/generate-rpm/quadrant-native-*.rpm dist/
           cd dist
@@ -273,8 +281,8 @@ jobs:
             GH_TOKEN="$PUBLIC_TOKEN" gh release upload "$TAG" latest.json --repo "$RELEASES_REPO" --clobber
           fi
 
-      # Opt-in, so a tag never reaches users' updaters by accident. Stable
-      # releases arrive unpublished; the RelMan bot publishes them.
+      # Only when SUBMIT_UPDATES is `true`. As with Quadrant's releases, the
+      # release arrives unpublished, on either channel, and RelMan publishes it.
       - name: Submit the release to the update server
         if: vars.SUBMIT_UPDATES == 'true' && steps.latest.outputs.built == 'true'
         env:

@@ -48,11 +48,11 @@ New-Item -ItemType Directory -Force "$work\keys", "$work\site\files" | Out-Null
 Step "throwaway signing keys"
 & $tauri signer generate --ci -p "" -w "$work\keys\test.key" | Out-Null
 & $tauri signer generate --ci -p "other" -w "$work\keys\other.key" | Out-Null
-$env:QUADRANT_NATIVE_UPDATER_PUBKEY = (Get-Content -Raw "$work\keys\test.key.pub").Trim()
+$env:QUADRANT_UPDATER_PUBKEY =(Get-Content -Raw "$work\keys\test.key.pub").Trim()
 
 Step "building the old and the new version"
 $manifest = Get-Content -Raw (Join-Path $repo "Cargo.toml")
-$old = [regex]::Match($manifest, '(?m)^version = "(\d+)\.(\d+)\.(\d+)-(\w+)"')
+$old = [regex]::Match($manifest, '(?m)^version = "(\d+)\.(\d+)\.(\d+)-([^"]+)"')
 $oldVersion = "$($old.Groups[1]).$($old.Groups[2]).$($old.Groups[3])-$($old.Groups[4])"
 $newVersion = "$($old.Groups[1]).$($old.Groups[2]).$([int]$old.Groups[3].Value + 1)-$($old.Groups[4])"
 $env:CARGO_TARGET_DIR = "$work\target"
@@ -97,7 +97,7 @@ $bytes[$bytes.Length - 100] = $bytes[$bytes.Length - 100] -bxor 0xFF
 function Publish([string]$Version, [string]$File, [string]$Signature) {
     $release = [ordered]@{
         product = "quadrant-native"; version = $Version; pub_date = (Get-Date).ToString("o")
-        arch = "x86_64"; platform = "windows"; platform_variation = "nsis"; branch = "stable"; public = $true
+        arch = "x86_64"; platform = "windows"; platform_variation = "nsis"; branch = "gpui-preview"; public = $true
         url = "http://localhost:$Port/files/$File"; signature = $Signature.Trim()
     }
     $release | ConvertTo-Json | Set-Content "$work\site\release.json"
@@ -132,6 +132,10 @@ try {
     Check (Test-Path "$startMenu\Quadrant-Native.lnk") "Start menu shortcut exists"
 
     & "$repo\scripts\sandbox.ps1" -Root "$work\sandbox" | Out-Null
+    # A Quadrant-Native channel, or the update check offers to switch to Quadrant.
+    $config = Get-Content -Raw "$work\sandbox\data\config.json" | ConvertFrom-Json
+    $config | Add-Member -Force channel "gpui-preview"
+    $config | ConvertTo-Json -Depth 10 | Set-Content "$work\sandbox\data\config.json"
     $env:QUADRANT_GPUI_DATA_DIR = "$work\sandbox\data"
     $env:QUADRANT_GPUI_MC_FOLDER = "$work\sandbox\mc"
     $env:QUADRANT_NATIVE_UPDATE_ENDPOINT = "http://localhost:$Port"
