@@ -31,7 +31,7 @@ use crate::{
     motion::{self, CardEntrance},
     pages::{
         mod_grid::{self, CardSlot, GridList, Item, RowHeights, Rows, Shape},
-        mod_ui::{CardPress, CardStatus, OnCardPress, Primary, card_key, mod_card},
+        mod_ui::{CardPress, CardStatus, OnCardPress, Primary, card_key, mod_card, waiting},
     },
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
@@ -825,17 +825,6 @@ fn spinner() -> AnyElement {
 }
 
 /// The desktop app's waiting panel: a slate-800 strip with one thing in it.
-fn waiting(content: AnyElement) -> AnyElement {
-    h_flex()
-        .w_full()
-        .p_4()
-        .justify_center()
-        .rounded(theme::radius_card())
-        .bg(theme::palette().surface)
-        .child(content)
-        .into_any_element()
-}
-
 impl Render for ModpackView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let width = window.viewport_size().width;

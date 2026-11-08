@@ -2,16 +2,17 @@
 //! `CurrentModpackPage` in the desktop app.
 
 use gpui::{
-    AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
-    Styled as _, Subscription, Task, Window, div,
+    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
+    Subscription, Task, Window, div,
 };
-use gpui_component::{h_flex, scroll::ScrollableElement as _, v_flex};
+use gpui_component::{scroll::ScrollableElement as _, v_flex};
 use quadrant_core::models::LocalModpack;
 
 use crate::{
     backend::Backend,
     loadable::{Loadable, Reload},
     pages::{
+        mod_ui::waiting,
         modpack_view::{ModpackView, ModpackViewEvent},
         modpacks::{digest, watch},
     },
@@ -143,17 +144,6 @@ fn unchanged(
 }
 
 /// The desktop app's waiting panel: a slate-800 strip with one thing in it.
-fn waiting(content: AnyElement) -> AnyElement {
-    h_flex()
-        .w_full()
-        .p_4()
-        .justify_center()
-        .rounded(theme::radius_card())
-        .bg(theme::palette().surface)
-        .child(content)
-        .into_any_element()
-}
-
 impl Render for CurrentModpackPage {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         if let Some((view, _)) = &self.view {

@@ -26,6 +26,18 @@ use crate::{
     theme::{self, Tone},
 };
 
+/// A card-sized box that centers a spinner or an error where content will go.
+pub fn waiting(content: AnyElement) -> AnyElement {
+    h_flex()
+        .w_full()
+        .p_4()
+        .justify_center()
+        .rounded(theme::radius_card())
+        .bg(theme::palette().surface)
+        .child(content)
+        .into_any_element()
+}
+
 /// A select option: what it reads as and the value it stands for.
 #[derive(Clone)]
 pub struct Choice<V> {

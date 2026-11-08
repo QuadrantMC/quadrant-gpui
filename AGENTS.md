@@ -59,7 +59,7 @@ Worktrees share `refs/stash`, so `git stash pop` can take another agent's work. 
 - The language, UI scale, color theme, icon shape and native decorations are `prefs::Prefs`, a global read before the window opens. The UI scale is the theme's font size, so lengths the desktop app gives in rem are `rems(..)` (or `theme::rem()` when computed), and `px` stays for its `[..px]` classes.
 - Remote images (mod icons, screenshots) are `remote_images::img(url, cx)`, never a bare `img(url)`: gpui's own cache keeps every decoded image and every failure for good, while `RemoteImages` keeps them within a byte budget, least recently drawn out first, and retries a failure after 30 s. gpui fetches them through `Backend::http_client`, which `main` installs, which runs on the backend's runtime and which caps their time and size. Only https addresses on the providers' CDNs load (`remote_images::is_trusted`, the desktop app's `imageHosts.ts`); `img` returns `None` for any other and the caller draws a placeholder, since the URLs come from provider data and shared packs. Addresses opened in the browser go through `web::open_external`, never `cx.open_url`.
 
-## gpui-component 0.7.3 gotchas
+## gpui-component 0.9.0 gotchas
 
 - A `ButtonCustomVariant` paints its resting color at 20% strength. `theme::filled` sets the background explicitly; build buttons through the theme helpers.
 - `Button::icon` resizes the icon to the button's size. For a large icon in a round button, add the `Icon` as a child.
