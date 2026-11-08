@@ -152,14 +152,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-packager@0.11.8
-
-      - uses: taiki-e/install-action@v2
-        if: runner.os == 'Linux'
-        with:
-          tool: cargo-generate-rpm@0.21.1
+      # From crates.io rather than a GitHub release download, which 504s now
+      # and then; rust-cache keeps ~/.cargo/bin, so later runs skip the build.
+      - name: Install the packagers
+        run: |
+          bash scripts/retry.sh cargo install --locked cargo-packager@0.11.8
+          if [ "$RUNNER_OS" = Linux ]; then
+            bash scripts/retry.sh cargo install --locked cargo-generate-rpm@0.21.1
+          fi
 
       - name: Build
         run: |
@@ -171,7 +171,8 @@ jobs:
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          cargo packager --release -f nsis
+          # It downloads NSIS from a GitHub release.
+          bash scripts/retry.sh cargo packager --release -f nsis
           mkdir -p dist
           cp target/release/quadrant-native_*-setup.exe dist/
           setup=$(cd dist && ls quadrant-native_*-setup.exe)
@@ -180,7 +181,8 @@ jobs:
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
-          cargo packager --release -f deb,appimage
+          # It downloads AppRun and linuxdeploy from GitHub releases.
+          bash scripts/retry.sh cargo packager --release -f deb,appimage
           # rpm versions and releases can't contain '-': 26.11.1-gpui-preview.1
           # is version 26.11.1, release gpui_preview.1.
           release="${VERSION#*-}"
@@ -194,7 +196,7 @@ jobs:
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
-          cargo packager --release -f app
+          bash scripts/retry.sh cargo packager --release -f app
           app=target/release/Quadrant-Native.app
           codesign --force --deep --sign - "$app"
           mkdir -p dist dmg
