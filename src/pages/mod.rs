@@ -70,6 +70,8 @@ pub fn shown(page: &AnyView, window: &mut Window, cx: &mut App) {
 pub fn hidden(page: &AnyView, cx: &mut App) {
     if let Ok(page) = page.clone().downcast::<ModpacksPage>() {
         page.update(cx, |page, _| page.hidden());
+    } else if let Ok(page) = page.clone().downcast::<CurrentModpackPage>() {
+        page.update(cx, |page, _| page.hidden());
     }
 }
 

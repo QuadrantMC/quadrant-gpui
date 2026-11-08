@@ -51,7 +51,7 @@ mod cloud;
 pub use cloud::parse_share_code;
 mod details;
 mod prism;
-mod watch;
+pub(super) mod watch;
 
 /// About one modpack card, for the scrollbar until cards are measured.
 const CARD_HINT: gpui::Pixels = px(260.);
@@ -354,7 +354,7 @@ pub fn sort_modpacks(mut modpacks: Vec<LocalModpack>) -> Vec<LocalModpack> {
 }
 
 /// A digest of a listing, which changes whenever anything shown would.
-fn digest(modpacks: &[LocalModpack]) -> anyhow::Result<u64> {
+pub(super) fn digest(modpacks: &[LocalModpack]) -> anyhow::Result<u64> {
     use std::hash::{Hash as _, Hasher as _};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     serde_json::to_string(modpacks)?.hash(&mut hasher);

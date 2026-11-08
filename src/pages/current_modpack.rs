@@ -1,8 +1,6 @@
 //! The Current modpack page: the applied modpack in a [`ModpackView`], after
 //! `CurrentModpackPage` in the desktop app.
 
-use std::time::Duration;
-
 use gpui::{
     AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
     Styled as _, Subscription, Task, Window, div,
@@ -13,41 +11,39 @@ use quadrant_core::models::LocalModpack;
 use crate::{
     backend::Backend,
     loadable::{Loadable, Reload},
-    pages::modpack_view::{ModpackView, ModpackViewEvent},
+    pages::{
+        modpack_view::{ModpackView, ModpackViewEvent},
+        modpacks::{digest, watch},
+    },
     theme,
 };
-
-/// How often the page looks for changes made outside it, as the desktop
-/// app's watch on the `mods` folder does.
-const POLL: Duration = Duration::from_secs(2);
 
 pub struct CurrentModpackPage {
     /// `Ready(None)` when no modpack is applied.
     modpack: Loadable<Option<LocalModpack>>,
     /// The applied modpack's view, kept while the same pack stays applied.
     view: Option<(Entity<ModpackView>, Subscription)>,
+    /// The digest of the pack `modpack` holds, to tell a fresh answer
+    /// that changes nothing.
+    listed: Option<u64>,
     /// The newest listing; replacing it drops a stale answer.
     loading: Reload,
-    _poll: Task<()>,
+    /// The watch on the Minecraft folder and its modpacks, while shown, as
+    /// the desktop app watches the `mods` folder.
+    folders: Option<Task<()>>,
 }
 
 impl CurrentModpackPage {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let poll = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(POLL).await;
-                if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
-                    break;
-                }
-            }
-        });
         let mut page = Self {
             modpack: Loadable::Loading,
             view: None,
+            listed: None,
             loading: Reload::default(),
-            _poll: poll,
+            folders: None,
         };
         page.refresh(cx);
+        page.folders = Some(watch::folders(cx, Self::folder_changed));
         page
     }
 
@@ -55,14 +51,18 @@ impl CurrentModpackPage {
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let task = Backend::global(cx).run(cx, |host| async move {
             let modpacks = host.get_modpacks(false).await?;
-            Ok(modpacks.into_iter().find(|modpack| modpack.is_applied))
+            let applied = modpacks.into_iter().find(|modpack| modpack.is_applied);
+            let digest = digest(applied.as_slice())?;
+            Ok((applied, digest))
         });
         self.loading.start(cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                let fresh = Loadable::from_result(result);
-                if !same_modpack(&this.modpack, &fresh) {
+                let digest = result.as_ref().ok().map(|(_, digest)| *digest);
+                let fresh = Loadable::from_result(result.map(|(applied, _)| applied));
+                if !unchanged((&this.modpack, this.listed), (&fresh, digest)) {
                     this.modpack = fresh;
+                    this.listed = digest;
                     this.show_applied(cx);
                     cx.notify();
                 }
@@ -73,7 +73,15 @@ impl CurrentModpackPage {
         }));
     }
 
-    /// Re-reads the applied modpack as the page is shown again.
+    /// Something changed in the Minecraft folder or under `modpacks/`.
+    fn folder_changed(&mut self, cx: &mut Context<Self>) {
+        if self.loading.ask() {
+            self.refresh(cx);
+        }
+    }
+
+    /// Re-reads the applied modpack as the page is shown again, and watches
+    /// the folders while it is.
     pub fn revalidate(&mut self, cx: &mut Context<Self>) {
         if let Some((view, _)) = &self.view {
             view.update(cx, |view, cx| view.replay_entrance(cx));
@@ -81,6 +89,12 @@ impl CurrentModpackPage {
         if self.loading.ask() {
             self.refresh(cx);
         }
+        self.folders = Some(watch::folders(cx, Self::folder_changed));
+    }
+
+    /// The page is no longer shown: it stops watching the folders.
+    pub fn hidden(&mut self) {
+        self.folders = None;
     }
 
     /// Points the view at the applied modpack: the same pack's view takes
@@ -115,15 +129,14 @@ impl CurrentModpackPage {
     }
 }
 
-/// Whether a re-read found the same modpack, so the page need not redraw.
-fn same_modpack(
-    old: &Loadable<Option<LocalModpack>>,
-    new: &Loadable<Option<LocalModpack>>,
+/// Whether a re-read found the same modpack, so the page need not redraw:
+/// each side is what it holds and the digest of a pack it read.
+fn unchanged(
+    (old, listed): (&Loadable<Option<LocalModpack>>, Option<u64>),
+    (new, digest): (&Loadable<Option<LocalModpack>>, Option<u64>),
 ) -> bool {
     match (old, new) {
-        (Loadable::Ready(old), Loadable::Ready(new)) => {
-            serde_json::to_value(old).ok() == serde_json::to_value(new).ok()
-        }
+        (Loadable::Ready(_), Loadable::Ready(_)) => listed.is_some() && listed == digest,
         (Loadable::Failed(old), Loadable::Failed(new)) => old == new,
         _ => false,
     }
@@ -181,6 +194,22 @@ mod tests {
         entry.mod_type = "Mod".into();
         entry.download_count = downloads;
         entry
+    }
+
+    #[test]
+    fn a_reread_with_the_same_digest_changes_nothing() {
+        use super::unchanged;
+        use crate::loadable::Loadable;
+        let ready = Loadable::Ready(None);
+        let failed = |error: &'static str| Loadable::Failed(error.into());
+        assert!(unchanged((&ready, Some(1)), (&ready, Some(1))));
+        assert!(!unchanged((&ready, Some(1)), (&ready, Some(2))));
+        assert!(!unchanged((&Loadable::Loading, None), (&ready, Some(1))));
+        assert!(unchanged(
+            (&failed("offline"), None),
+            (&failed("offline"), None)
+        ));
+        assert!(!unchanged((&failed("offline"), None), (&ready, Some(1))));
     }
 
     #[test]
