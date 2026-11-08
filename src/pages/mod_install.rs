@@ -173,14 +173,16 @@ pub fn initial_targets(
 /// Saves install choices for the next install and search, as the desktop
 /// app's `lastUsed*` settings.
 pub fn remember(cx: &App, entries: Vec<(&'static str, String)>) {
-    Backend::global(cx)
-        .run(cx, move |host| async move {
+    Backend::global(cx).run_logged(
+        cx,
+        "save the last install choices",
+        move |host| async move {
             for (key, value) in entries {
                 config::set(&host, key, value.into())?;
             }
             Ok(())
-        })
-        .detach();
+        },
+    );
 }
 
 /// What the install page asks of the page that shows it.

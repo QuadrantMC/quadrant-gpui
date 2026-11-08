@@ -495,11 +495,9 @@ impl SearchPage {
             return;
         }
         let saved = save_filters(&self.filters, self.filters_open);
-        Backend::global(cx)
-            .run(cx, move |host| async move {
-                config::set(&host, "searchFilters", saved)
-            })
-            .detach();
+        Backend::global(cx).run_logged(cx, "save the search filters", move |host| async move {
+            config::set(&host, "searchFilters", saved)
+        });
     }
 
     fn load_categories(&mut self, cx: &mut Context<Self>) {

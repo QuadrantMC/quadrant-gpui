@@ -47,6 +47,22 @@ impl Backend {
         cx.background_executor().spawn(async move { job.await? })
     }
 
+    /// Runs a save nobody waits for. A failure (a `config.json` the desktop
+    /// app holds locked, a read-only folder) is logged as `Couldn't {what}`
+    /// instead of being lost with the dropped task.
+    pub fn run_logged<Fut>(&self, cx: &App, what: &'static str, f: impl FnOnce(QuadrantHost) -> Fut)
+    where
+        Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
+    {
+        let task = self.run(cx, f);
+        cx.spawn(async move |_| {
+            if let Err(error) = task.await {
+                log::warn!("Couldn't {what}: {error:#}");
+            }
+        })
+        .detach();
+    }
+
     /// Host events, e.g. download progress. `tokio::sync` channels need no
     /// tokio runtime to receive on, so gpui tasks can await this directly.
     pub fn subscribe_events(&self) -> broadcast::Receiver<HostEventEnvelope> {
