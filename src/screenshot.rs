@@ -1259,7 +1259,7 @@ const NETWORK_SETTLE: Duration = Duration::from_secs(8);
 async fn capture_prefs(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
     let shots = dir.join("prefs");
     std::fs::create_dir_all(&shots)?;
-    let base = cx.update(|cx| Prefs::global(cx));
+    let base = cx.update(|cx| Prefs::global(cx).clone());
     let with = |prefs: Prefs, cx: &mut AsyncApp| cx.update(|cx| prefs.apply(cx));
     for (locale, name) in [(Locale::Turkish, "tr"), (Locale::Ukrainian, "uk")] {
         with(
@@ -1304,7 +1304,7 @@ async fn capture_prefs(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp
 async fn capture_themes(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
     let shots = dir.join("themes");
     std::fs::create_dir_all(&shots)?;
-    let base = cx.update(|cx| Prefs::global(cx));
+    let base = cx.update(|cx| Prefs::global(cx).clone());
     for theme in color_theme::built_in() {
         let slug = theme.id.as_str();
         let prefs = Prefs {

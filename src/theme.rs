@@ -205,16 +205,20 @@ palette! {
 }
 
 /// The palette views draw with, as [`set_palette`] last set it.
-static PALETTE: RwLock<Palette> = RwLock::new(QUADRANT);
+/// A reference, not the palette itself: views read it for every color they
+/// draw, and copying all of it each time would cost more than the read.
+static PALETTE: RwLock<&'static Palette> = RwLock::new(&QUADRANT);
 
-pub fn palette() -> Palette {
+pub fn palette() -> &'static Palette {
     *PALETTE.read().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Switches every window to `palette`, with gpui-component's own widgets
 /// (selects, inputs, dialogs, scrollbars) in `mode`.
 pub fn set_palette(palette: Palette, mode: ThemeMode, cx: &mut App) {
-    *PALETTE.write().unwrap_or_else(PoisonError::into_inner) = palette;
+    // Leaked once per switch the user makes; `Prefs` calls this only when
+    // the palette changes.
+    *PALETTE.write().unwrap_or_else(PoisonError::into_inner) = Box::leak(Box::new(palette));
     Theme::change(mode, None, cx);
     apply_component_theme(cx);
     cx.refresh_windows();
@@ -485,7 +489,7 @@ fn snackbar_colors(kind: SnackbarKind, p: &Palette) -> (Rgba, Rgba) {
 /// The desktop app's snackbar: `p-4 rounded-4xl font-bold text-slate-50` on
 /// the kind's color.
 pub fn snackbar_surface(kind: SnackbarKind) -> Div {
-    let (fill, text) = snackbar_colors(kind, &palette());
+    let (fill, text) = snackbar_colors(kind, palette());
     div()
         .p_4()
         .rounded(radius_card())

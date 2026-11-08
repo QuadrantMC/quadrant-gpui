@@ -239,7 +239,8 @@ fn theme_items(cx: &App) -> Vec<ThemeItem> {
 /// theme as it now reads.
 fn rescanned(themes: Themes, cx: &mut App) {
     cx.set_global(themes);
-    prefs::show_color_theme(&Prefs::global(cx).color_theme, cx);
+    let id = Prefs::global(cx).color_theme.clone();
+    prefs::show_color_theme(&id, cx);
 }
 
 impl SettingsPage {

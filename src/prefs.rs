@@ -7,6 +7,8 @@
 //! re-reads the config after the settings page or settings sync changed it.
 //! Views that keep a string or a shape across frames observe the global.
 
+use std::sync::LazyLock;
+
 use gpui::{App, Global};
 use quadrant_host::QuadrantHost;
 use serde_json::Value;
@@ -91,8 +93,9 @@ impl Prefs {
         }
     }
 
-    pub fn global(cx: &App) -> Self {
-        cx.try_global::<Self>().cloned().unwrap_or_default()
+    pub fn global(cx: &App) -> &Self {
+        static DEFAULT: LazyLock<Prefs> = LazyLock::new(Prefs::default);
+        cx.try_global::<Self>().unwrap_or(&DEFAULT)
     }
 
     /// Applies `self` and keeps following settings sync. Before the window
@@ -159,7 +162,7 @@ impl Prefs {
     pub fn set_locale(locale: Locale, cx: &mut App) {
         Self {
             locale,
-            ..Self::global(cx)
+            ..Self::global(cx).clone()
         }
         .apply(cx);
         save(cx, LOCALE_KEY, locale.code().into());
@@ -170,7 +173,7 @@ impl Prefs {
         let ui_scale = clamp_ui_scale(Some(scale as f64));
         Self {
             ui_scale,
-            ..Self::global(cx)
+            ..Self::global(cx).clone()
         }
         .apply(cx);
         save(cx, UI_SCALE_KEY, ui_scale.into());
@@ -180,7 +183,7 @@ impl Prefs {
         let saved = color_theme.as_str().to_string();
         Self {
             color_theme,
-            ..Self::global(cx)
+            ..Self::global(cx).clone()
         }
         .apply(cx);
         save(cx, COLOR_THEME_KEY, saved.into());
@@ -199,7 +202,7 @@ impl Prefs {
 pub fn show_color_theme(id: &ThemeId, cx: &mut App) {
     let wanted = Themes::global(cx).resolve(id);
     let (palette, mode) = (wanted.palette, wanted.mode);
-    if theme::palette() != palette || gpui_component::Theme::global(cx).mode != mode {
+    if *theme::palette() != palette || gpui_component::Theme::global(cx).mode != mode {
         theme::set_palette(palette, mode, cx);
     }
 }

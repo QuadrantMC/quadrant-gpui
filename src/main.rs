@@ -406,7 +406,7 @@ fn open_main_window(mode: &Mode, autostart: bool, cx: &mut App) -> Result<Window
             appears_transparent: !native,
             traffic_light_position: (!native).then(|| point(px(12.), px(12.))),
         }),
-        window_decorations: Some(prefs::window_decorations(&Prefs::global(cx))),
+        window_decorations: Some(prefs::window_decorations(Prefs::global(cx))),
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(800.), px(500.))),
         show: !hidden,
