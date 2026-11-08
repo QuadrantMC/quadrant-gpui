@@ -490,6 +490,12 @@ impl ModpackView {
         cx.notify();
     }
 
+    /// Whether a change is running. The page that closed this view keeps it
+    /// alive until the change ends, so its result is still reported.
+    pub fn busy(&self) -> bool {
+        !self.running.is_empty()
+    }
+
     fn running_on(&self, id: &str) -> bool {
         self.running.iter().any(|op| op.id() == id)
     }

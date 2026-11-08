@@ -190,6 +190,9 @@ pub enum InstallViewEvent {
     Open(Box<Mod>, Bounds<Pixels>),
     /// An install finished; the opener refreshes what it shows.
     Installed,
+    /// The install ended, with or without an error. An opener that kept the
+    /// page alive for it lets go.
+    Finished,
 }
 
 struct Setup {
@@ -660,11 +663,18 @@ impl ModInstallView {
                     }
                     Err(error) => snackbar::show(cx, SnackbarKind::Error, describe(error)),
                 }
+                cx.emit(InstallViewEvent::Finished);
                 cx.notify();
             });
         })
         .detach();
         cx.notify();
+    }
+
+    /// Whether an install is running. The opener keeps a closed page alive
+    /// until it ends, so its result is still reported.
+    pub fn installing(&self) -> bool {
+        self.running.is_some()
     }
 
     /// Refreshes the "already installed" note after an install without
@@ -789,7 +799,9 @@ impl ModInstallView {
                                             .text_color(theme::palette().text_badge)
                                             .child(Icon::new(MdIcon::Person).size_3p5())
                                             .child(owner)
-                                            .on_click(move |_, _, cx| crate::web::open_external(&url, cx))
+                                            .on_click(move |_, _, cx| {
+                                                crate::web::open_external(&url, cx)
+                                            })
                                     }),
                                 ))
                             }),

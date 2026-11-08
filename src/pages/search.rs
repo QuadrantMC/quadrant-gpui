@@ -111,6 +111,9 @@ pub struct SearchPage {
     finished: Vec<String>,
     /// Install pages opened from a result, the newest on top.
     details: InstallPages<(Entity<ModInstallView>, Subscription)>,
+    /// Closed install pages still installing: kept alive so their result is
+    /// shown and the results refresh when they finish.
+    finishing: Vec<(Entity<ModInstallView>, Subscription)>,
     target_picker: Picker<Option<String>>,
     version_picker: Picker<Option<String>>,
     sort_picker: Picker<Sort>,
@@ -224,6 +227,7 @@ impl SearchPage {
             installs: HashMap::new(),
             finished: Vec::new(),
             details: InstallPages::new(),
+            finishing: Vec::new(),
             target_picker,
             version_picker,
             sort_picker,
@@ -669,17 +673,36 @@ impl SearchPage {
         let location = self.install_to.read(cx).selected(cx);
         let view =
             cx.new(|cx| ModInstallView::new(item, target, location, origin, file_id, window, cx));
-        let subscription = cx.subscribe_in(&view, window, |this, _, event, window, cx| {
-            match event {
-                InstallViewEvent::Close => this.details.close(),
-                InstallViewEvent::Open(item, origin) => {
-                    this.open_details((**item).clone(), Some(*origin), None, window, cx)
-                }
-                InstallViewEvent::Installed => this.refresh_modpacks(window, cx),
-            }
-            cx.notify();
-        });
+        let subscription = cx.subscribe_in(&view, window, Self::on_install_event);
         self.details.open((view, subscription), origin.is_some());
+        cx.notify();
+    }
+
+    fn on_install_event(
+        &mut self,
+        view: &Entity<ModInstallView>,
+        event: &InstallViewEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let closed = self.finishing.iter().any(|(page, _)| page == view);
+        match event {
+            InstallViewEvent::Close if closed => {}
+            InstallViewEvent::Close => {
+                if let Some((page, _)) = self.details.close()
+                    && page.read(cx).installing()
+                {
+                    let subscription = cx.subscribe_in(&page, window, Self::on_install_event);
+                    self.finishing.push((page, subscription));
+                }
+            }
+            InstallViewEvent::Open(item, origin) if !closed => {
+                self.open_details((**item).clone(), Some(*origin), None, window, cx)
+            }
+            InstallViewEvent::Open(..) => {}
+            InstallViewEvent::Installed => self.refresh_modpacks(window, cx),
+            InstallViewEvent::Finished => self.finishing.retain(|(page, _)| page != view),
+        }
         cx.notify();
     }
 
@@ -1631,8 +1654,8 @@ impl<V> InstallPages<V> {
         self.pages.push(page);
     }
 
-    fn close(&mut self) {
-        self.pages.pop();
+    fn close(&mut self) -> Option<V> {
+        self.pages.pop()
     }
 
     #[cfg(feature = "screenshot")]

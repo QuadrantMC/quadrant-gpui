@@ -478,6 +478,9 @@ pub struct ModpacksPage {
     /// The view the last change of view left, fading out under the new one
     /// until the crossfade ends, and the crossfade's number.
     leaving: Option<(View, usize)>,
+    /// Closed Details whose changes are still running: kept alive so their
+    /// result is shown and the list refreshes when they finish.
+    finishing: Vec<(Entity<ModpackView>, Subscription)>,
     leaving_done: Task<()>,
     /// A shared pack's cards' `Mod.tsx` entrance, and where it puts them
     /// this frame.
@@ -566,6 +569,7 @@ impl ModpacksPage {
             install_progress: None,
             sync_conflict: None,
             leaving: None,
+            finishing: Vec::new(),
             leaving_done: Task::ready(()),
             shared_entrance: motion::CardEntrance::Rest,
             shared_frame: None,
@@ -1043,6 +1047,17 @@ impl ModpacksPage {
             self.shared_entrance.restart();
         }
         let left = std::mem::replace(&mut self.view, view);
+        if let View::Details { view, .. } = &left
+            && view.read(cx).busy()
+        {
+            let events = cx.subscribe(view, |this, _, event, cx| {
+                if matches!(event, ModpackViewEvent::Changed) {
+                    this.refresh(cx);
+                    this.finishing.retain(|(view, _)| view.read(cx).busy());
+                }
+            });
+            self.finishing.push((view.clone(), events));
+        }
         if std::mem::discriminant(&left) != std::mem::discriminant(&self.view) {
             let crossfade = self.leaving.as_ref().map_or(0, |(_, id)| id + 1);
             self.leaving = Some((left, crossfade));
