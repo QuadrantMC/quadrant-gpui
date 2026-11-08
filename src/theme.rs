@@ -822,7 +822,13 @@ pub fn wide_button(
 /// A mod's icon over the desktop app's gradient letter tile, which also
 /// stands in while it loads and when it has none: round with the
 /// `clipIcons` setting on, a `rounded-2xl` square with it off.
-pub fn mod_icon(url: &str, name: &str, size: gpui::Rems, round: bool) -> gpui::AnyElement {
+pub fn mod_icon(
+    url: &str,
+    name: &str,
+    size: gpui::Rems,
+    round: bool,
+    cx: &App,
+) -> gpui::AnyElement {
     fn corners<E: Styled>(this: E, round: bool) -> E {
         if round {
             this.rounded_full()
@@ -863,7 +869,7 @@ pub fn mod_icon(url: &str, name: &str, size: gpui::Rems, round: bool) -> gpui::A
     }
     let loading = tile;
     use gpui::StyledImage as _;
-    corners(gpui::img(SharedString::from(url.to_string())), round)
+    corners(crate::remote_images::img(url.to_string(), cx), round)
         .size(size)
         .flex_none()
         .object_fit(gpui::ObjectFit::Cover)

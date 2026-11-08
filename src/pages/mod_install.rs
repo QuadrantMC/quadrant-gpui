@@ -6,8 +6,8 @@ use std::{rc::Rc, time::Instant};
 use gpui::{
     App, AppContext as _, Bounds, Context, Entity, EventEmitter, FontWeight,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollHandle,
-    SharedString, StatefulInteractiveElement as _, Styled as _, StyledImage as _, Subscription,
-    Task, Window, div, prelude::FluentBuilder as _, px, rems,
+    StatefulInteractiveElement as _, Styled as _, StyledImage as _, Subscription, Task, Window,
+    div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     Disableable as _, Icon, h_flex,
@@ -35,6 +35,7 @@ use crate::{
         search::logic::{Provider, installed_in, loader_options},
     },
     prefs::Prefs,
+    remote_images,
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
 };
@@ -692,6 +693,7 @@ impl ModInstallView {
         window_width: Pixels,
         revealed: bool,
         round_icon: bool,
+        cx: &App,
     ) -> impl IntoElement {
         let item = &self.item;
         let source = source_label(&item.source);
@@ -717,6 +719,7 @@ impl ModInstallView {
                         &item.name,
                         rems(4.),
                         round_icon,
+                        cx,
                     ))
                     .child(
                         v_flex()
@@ -811,7 +814,7 @@ impl ModInstallView {
                                 .cursor_pointer()
                                 .on_click(move |_, _, cx| cx.open_url(&open))
                                 .child(
-                                    gpui::img(SharedString::from(url.clone()))
+                                    remote_images::img(url.clone(), cx)
                                         .size_full()
                                         .rounded_2xl()
                                         .object_fit(gpui::ObjectFit::Cover),
@@ -1045,8 +1048,12 @@ impl Render for ModInstallView {
             .hero
             .as_mut()
             .and_then(|hero| Some((hero.origin, hero.frame(window)?)));
-        let details =
-            self.render_details(window_width, hero.is_some(), Prefs::global(cx).clip_icons);
+        let details = self.render_details(
+            window_width,
+            hero.is_some(),
+            Prefs::global(cx).clip_icons,
+            cx,
+        );
         let details = match hero {
             Some((origin, frame)) => motion::reveal(
                 details,

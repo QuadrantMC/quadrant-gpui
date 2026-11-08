@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use anyhow::ensure;
 use gpui::{
@@ -54,9 +54,20 @@ impl Backend {
     /// The client gpui's `img(url)` downloads remote images with. It runs
     /// each request on this runtime, as `run` does.
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            // A stalled transfer ends soon; a slow but moving screenshot
+            // gets longer.
+            .read_timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(120))
+            .build()
+            .unwrap_or_else(|error| {
+                log::warn!("Images load without timeouts: {error}");
+                reqwest::Client::new()
+            });
         Arc::new(ImageFetcher {
             runtime: self.runtime.handle().clone(),
-            client: reqwest::Client::new(),
+            client,
             user_agent: HeaderValue::from_static(concat!(
                 "QuadrantMC/",
                 env!("CARGO_PKG_NAME"),
@@ -67,8 +78,13 @@ impl Backend {
     }
 }
 
-/// Fetches mod icons and screenshots. gpui only ever GETs images, so the
-/// request body is not forwarded.
+/// The largest image body fetched. Icons and screenshots are well under it;
+/// anything bigger is not an image worth decoding.
+const MAX_IMAGE_BYTES: usize = 16 << 20;
+
+/// Fetches mod icons and screenshots, within a timeout and
+/// [`MAX_IMAGE_BYTES`]. gpui only ever GETs images, so the request body is
+/// not forwarded.
 struct ImageFetcher {
     runtime: Handle,
     client: reqwest::Client,
@@ -97,16 +113,74 @@ impl HttpClient for ImageFetcher {
             .header(reqwest::header::USER_AGENT, self.user_agent.clone());
         let job = self.runtime.spawn(async move {
             ensure!(method == Method::GET, "only GET requests are supported");
-            let response = fetch.send().await?;
+            let mut response = fetch.send().await?;
             let status = response.status();
-            let body = response.bytes().await?;
+            let too_big = || anyhow::anyhow!("image larger than {MAX_IMAGE_BYTES} bytes");
+            let length = response.content_length().unwrap_or(0);
+            if usize::try_from(length).map_or(true, |length| length > MAX_IMAGE_BYTES) {
+                return Err(too_big());
+            }
+            let mut body = Vec::with_capacity(length as usize);
+            while let Some(chunk) = response.chunk().await? {
+                if body.len() + chunk.len() > MAX_IMAGE_BYTES {
+                    return Err(too_big());
+                }
+                body.extend_from_slice(&chunk);
+            }
             Ok((status, body))
         });
         Box::pin(async move {
             let (status, body) = job.await??;
             Ok(Response::builder()
                 .status(status.as_u16())
-                .body(AsyncBody::from(body.to_vec()))?)
+                .body(AsyncBody::from(body))?)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::AsyncReadExt as _;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    use super::*;
+
+    /// Serves one response per body, in turn, with its length declared.
+    fn serve(runtime: &Runtime, bodies: Vec<(usize, &'static [u8])>) -> String {
+        let listener = runtime
+            .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        runtime.spawn(async move {
+            for (length, body) in bodies {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 1024];
+                let _ = socket.read(&mut request).await;
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {length}\r\n\r\n");
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket.write_all(body).await;
+            }
+        });
+        format!("http://{address}/icon.png")
+    }
+
+    #[test]
+    fn an_image_over_the_cap_is_refused_before_its_body() {
+        let runtime = Runtime::new().unwrap();
+        let url = serve(&runtime, vec![(MAX_IMAGE_BYTES + 1, b""), (3, b"png")]);
+        let fetcher = ImageFetcher {
+            runtime: runtime.handle().clone(),
+            client: reqwest::Client::new(),
+            user_agent: HeaderValue::from_static("test"),
+        };
+        let get = || Request::get(url.as_str()).body(AsyncBody::empty()).unwrap();
+        let Err(refused) = futures::executor::block_on(fetcher.send(get())) else {
+            panic!("an image over the cap was fetched");
+        };
+        assert!(refused.to_string().contains("larger than"), "{refused}");
+        let mut response = futures::executor::block_on(fetcher.send(get())).unwrap();
+        let mut body = Vec::new();
+        futures::executor::block_on(response.body_mut().read_to_end(&mut body)).unwrap();
+        assert_eq!(body, b"png");
     }
 }

@@ -20,6 +20,7 @@ mod pages;
 #[cfg(feature = "perf")]
 mod perf;
 mod prefs;
+mod remote_images;
 mod route;
 #[cfg(feature = "screenshot")]
 mod screenshot;
@@ -486,6 +487,7 @@ fn main() -> ExitCode {
         gpui_component::init(cx);
         theme::install(cx);
         cx.set_http_client(backend.http_client());
+        remote_images::install(cx);
         cx.set_global(backend);
         if let Some(autostart) = autostart {
             cx.set_global(autostart);

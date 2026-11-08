@@ -283,6 +283,7 @@ pub fn mod_card<P: 'static>(
                     &item.name,
                     rems(3.5),
                     Prefs::global(cx).clip_icons,
+                    cx,
                 ))
                 .child(
                     v_flex()
