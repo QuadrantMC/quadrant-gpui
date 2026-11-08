@@ -39,6 +39,8 @@ pub struct SharedPack {
     pub sync: Option<SyncTarget>,
     /// The pack's mods as cards that only open in the web.
     cards: Vec<Mod>,
+    /// `cards` as their providers know them, kept as the catalog notifies.
+    merged: Vec<Rc<Mod>>,
     keys: Vec<ModKey>,
     /// How many of `keys` the catalog has answered, kept as it notifies.
     tally: Tally,
@@ -54,6 +56,7 @@ impl SharedPack {
             modpack: Rc::new(modpack),
             sync,
             cards,
+            merged: Vec::new(),
             keys,
             tally: Tally::default(),
             list: GridList::new(ROW_HINT),
@@ -65,9 +68,16 @@ impl SharedPack {
         &self.keys
     }
 
-    /// Counts the catalog's answers again, after it changed.
+    /// Takes in the catalog's answers, after it changed.
     pub fn retally(&mut self, cx: &mut App) {
-        self.tally = ModCatalog::global(cx).read(cx).tally(&self.keys);
+        let catalog = ModCatalog::global(cx);
+        let catalog = catalog.read(cx);
+        self.tally = catalog.tally(&self.keys);
+        self.merged = self
+            .cards
+            .iter()
+            .map(|card| Rc::new(with_record(card, catalog.get(&card.source, &card.id))))
+            .collect();
     }
 
     /// Lays the list out for this frame's width.
@@ -152,11 +162,7 @@ impl ModpacksPage {
                 .child(self.render_shared_header(shared, cx))
                 .into_any_element(),
             Item::Row { row, cards } => {
-                let catalog = ModCatalog::global(cx);
-                let shown: Vec<Mod> = shared.cards[cards.clone()]
-                    .iter()
-                    .map(|card| with_record(card, catalog.read(cx).get(&card.source, &card.id)))
-                    .collect();
+                let shown = shared.merged.get(cards.clone()).unwrap_or_default();
                 let status = CardStatus::default();
                 let key = shared.row_heights.key(
                     shape.rows.columns,

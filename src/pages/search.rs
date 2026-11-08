@@ -1467,7 +1467,7 @@ impl SearchPage {
                 motion::card_at(
                     mod_card(
                         page * PAGE_SIZE + index,
-                        item,
+                        &Rc::new((*item).clone()),
                         *status,
                         Some(slot),
                         on_press.clone(),

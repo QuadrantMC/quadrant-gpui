@@ -848,7 +848,14 @@ impl ModInstallView {
                     ..CardStatus::default()
                 };
                 motion::card_at(
-                    mod_card(index, dep, status, None, on_press.clone(), cx),
+                    mod_card(
+                        index,
+                        &Rc::new(dep.clone()),
+                        status,
+                        None,
+                        on_press.clone(),
+                        cx,
+                    ),
                     self.card_frame,
                 )
                 .into_any_element()

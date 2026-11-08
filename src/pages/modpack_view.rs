@@ -327,6 +327,9 @@ pub struct ModpackView {
     /// The cards the grid shows this frame, as indices into the mode's
     /// cards.
     shown: Vec<usize>,
+    /// The mode's cards as their providers know them, made again once the
+    /// catalog or the cards change rather than for every card drawn.
+    merged: Option<(Mode, Vec<Rc<Mod>>)>,
     /// The cards' `Mod.tsx` entrance, and where it puts them this frame.
     entrance: CardEntrance,
     card_frame: Option<(Pixels, f32)>,
@@ -340,7 +343,10 @@ impl EventEmitter<ModpackViewEvent> for ModpackView {}
 impl ModpackView {
     pub fn new(modpack: LocalModpack, back: bool, cx: &mut Context<Self>) -> Self {
         let catalog = ModCatalog::global(cx);
-        let catalog_changed = cx.observe(&catalog, |_, _, cx| cx.notify());
+        let catalog_changed = cx.observe(&catalog, |this: &mut Self, _, cx| {
+            this.merged = None;
+            cx.notify();
+        });
         let progress = watch_mod_progress(cx, |this: &mut Self, progress, cx| {
             if progress.stage == ModStage::Download
                 && this.running.iter().any(|op| op.id() == progress.mod_id)
@@ -366,6 +372,7 @@ impl ModpackView {
             list: GridList::new(ROW_HINT),
             row_heights: RowHeights::default(),
             shown: Vec::new(),
+            merged: None,
             entrance: CardEntrance::Pending,
             card_frame: None,
             catalog,
@@ -395,6 +402,7 @@ impl ModpackView {
     /// Shows the re-read manifest of the same modpack.
     pub fn set_modpack(&mut self, modpack: LocalModpack, cx: &mut Context<Self>) {
         self.cards = installed_cards(&modpack);
+        self.merged = None;
         self.modpack = modpack;
         let keys = catalog_keys(&self.cards);
         self.catalog
@@ -429,6 +437,7 @@ impl ModpackView {
                     snackbar::show(cx, SnackbarKind::Neutral, t("allModsUpToDate"));
                 }
                 this.updates = Loadable::from_result(result);
+                this.merged = None;
                 this.entrance.restart();
                 cx.notify();
             });
@@ -545,21 +554,44 @@ impl ModpackView {
     }
 
     /// `item` as its provider knows it, and how its card is drawn.
-    fn shown(&self, item: &Mod, cx: &App) -> (Mod, CardStatus) {
+    fn shown(&self, item: &Mod, cx: &App) -> (Rc<Mod>, CardStatus) {
         let item = with_record(item, self.catalog.read(cx).get(&item.source, &item.id));
-        let status = CardStatus {
+        let status = self.status(&item.id);
+        (Rc::new(item), status)
+    }
+
+    fn status(&self, id: &str) -> CardStatus {
+        CardStatus {
             progress: self
-                .running_on(&item.id)
-                .then(|| self.progress.get(&item.id).copied().unwrap_or(0)),
+                .running_on(id)
+                .then(|| self.progress.get(id).copied().unwrap_or(0)),
             ..CardStatus::default()
-        };
-        (item, status)
+        }
+    }
+
+    /// Makes [`Self::merged`] for the current mode, unless it is.
+    fn merge(&mut self, cx: &App) {
+        if self
+            .merged
+            .as_ref()
+            .is_some_and(|(mode, _)| *mode == self.mode)
+        {
+            return;
+        }
+        let catalog = self.catalog.read(cx);
+        let merged = self
+            .grid_cards()
+            .unwrap_or_default()
+            .iter()
+            .map(|card| Rc::new(with_record(card, catalog.get(&card.source, &card.id))))
+            .collect();
+        self.merged = Some((self.mode, merged));
     }
 
     fn card(
         &self,
         index: usize,
-        (item, status): &(Mod, CardStatus),
+        (item, status): &(Rc<Mod>, CardStatus),
         slot: Option<CardSlot>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -686,10 +718,11 @@ impl ModpackView {
                 } else {
                     rems(1.)
                 };
-                let source = self.grid_cards().unwrap_or_default();
-                let shown: Vec<(Mod, CardStatus)> = self.shown[cards.clone()]
+                let merged = self.merged.as_ref().map_or(&[][..], |(_, merged)| merged);
+                let shown: Vec<(Rc<Mod>, CardStatus)> = self.shown[cards.clone()]
                     .iter()
-                    .map(|&card| self.shown(&source[card], cx))
+                    .filter_map(|&card| merged.get(card))
+                    .map(|card| (card.clone(), self.status(&card.id)))
                     .collect();
                 let key = self.row_heights.key(
                     shape.rows.columns,
@@ -771,6 +804,7 @@ impl Render for ModpackView {
         let width = window.viewport_size().width;
         self.row_heights.next_frame(width);
         self.card_frame = self.entrance.frame(window);
+        self.merge(cx);
         let grid = self.grid_cards().map(|cards| {
             let columns = match self.mode {
                 Mode::Updates => mod_grid::update_columns(width),

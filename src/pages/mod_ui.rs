@@ -168,7 +168,7 @@ pub fn card_key(item: &Mod, status: CardStatus) -> u64 {
 /// changed, so each lays out once.
 pub fn mod_card<P: 'static>(
     index: usize,
-    item: &Mod,
+    item: &Rc<Mod>,
     status: CardStatus,
     slot: Option<CardSlot>,
     on_press: OnCardPress<P>,
@@ -250,11 +250,10 @@ pub fn mod_card<P: 'static>(
 
     let source = source_label(&item.source);
     let open = press(CardPress::Open);
-    let sized = |part: u64, element| match &slot {
-        Some(slot) => slot
-            .heights
-            .apply(slot.part(card_key(item, status), part), true, element),
-        None => element,
+    let key = slot.as_ref().map(|_| card_key(item, status));
+    let sized = |part: u64, element| match (&slot, key) {
+        (Some(slot), Some(key)) => slot.heights.apply(slot.part(key, part), true, element),
+        _ => element,
     };
     let card = v_flex()
         .id(("mod-card", index))

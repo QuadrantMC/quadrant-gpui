@@ -830,16 +830,15 @@ pub fn mod_icon(url: &str, name: &str, size: gpui::Rems, round: bool) -> gpui::A
             this.rounded_2xl()
         }
     }
-    let letter: SharedString = name
-        .trim()
-        .chars()
-        .next()
-        .map_or("?".into(), |first| first.to_uppercase().to_string())
-        .into();
+    let first = name.trim().chars().next();
     let hue = name
         .chars()
         .fold(0u32, |hue, char| (hue * 31 + char as u32) % 360) as f32;
+    // Only drawn while the icon loads, when it fails or when there is none,
+    // so the letter is made only then.
     let tile = move || {
+        let letter: SharedString =
+            first.map_or("?".into(), |first| first.to_uppercase().to_string().into());
         corners(div(), round)
             .size(size)
             .flex_none()
@@ -856,13 +855,13 @@ pub fn mod_icon(url: &str, name: &str, size: gpui::Rems, round: bool) -> gpui::A
             ))
             .text_2xl()
             .font_weight(FontWeight::EXTRA_BOLD)
-            .child(letter.clone())
+            .child(letter)
             .into_any_element()
     };
     if url.trim().is_empty() {
         return tile();
     }
-    let loading = tile.clone();
+    let loading = tile;
     use gpui::StyledImage as _;
     corners(gpui::img(SharedString::from(url.to_string())), round)
         .size(size)
