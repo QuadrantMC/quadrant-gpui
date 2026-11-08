@@ -243,7 +243,7 @@ pub fn mod_card<P: 'static>(
         buttons.push(
             theme::card_icon_button(("open-web", index), MdIcon::OpenInNew, cx)
                 .tooltip(t("openInTheWeb"))
-                .on_click(move |_, _, cx| cx.open_url(&url))
+                .on_click(move |_, _, cx| crate::web::open_external(&url, cx))
                 .into_any_element(),
         );
     }

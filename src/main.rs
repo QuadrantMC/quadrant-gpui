@@ -32,6 +32,7 @@ mod theme;
 mod tray;
 #[cfg(feature = "updater")]
 mod updater;
+mod web;
 
 use std::{
     ffi::{OsStr, OsString},

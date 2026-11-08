@@ -789,7 +789,7 @@ impl ModInstallView {
                                             .text_color(theme::palette().text_badge)
                                             .child(Icon::new(MdIcon::Person).size_3p5())
                                             .child(owner)
-                                            .on_click(move |_, _, cx| cx.open_url(&url))
+                                            .on_click(move |_, _, cx| crate::web::open_external(&url, cx))
                                     }),
                                 ))
                             }),
@@ -812,7 +812,7 @@ impl ModInstallView {
                                 .rounded_2xl()
                                 .bg(theme::palette().page)
                                 .cursor_pointer()
-                                .on_click(move |_, _, cx| cx.open_url(&open))
+                                .on_click(move |_, _, cx| crate::web::open_external(&open, cx))
                                 .child(
                                     remote_images::img(url.clone(), cx)
                                         .size_full()
@@ -1009,7 +1009,7 @@ impl ModInstallView {
                             cx,
                         )
                         .flex_1()
-                        .on_click(move |_, _, cx| cx.open_url(&url))
+                        .on_click(move |_, _, cx| crate::web::open_external(&url, cx))
                     }),
             )
     }

@@ -755,7 +755,7 @@ impl Notifications {
                                     cx,
                                 )
                                 .w_full()
-                                .on_click(move |_, _, cx| cx.open_url(&link)),
+                                .on_click(move |_, _, cx| crate::web::open_external(&link, cx)),
                             ),
                     )
             }))
