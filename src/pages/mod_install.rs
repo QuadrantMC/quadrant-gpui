@@ -212,7 +212,7 @@ pub struct ModInstallView {
     file_id: Option<String>,
     setup: Loadable<Setup>,
     owners: Loadable<Vec<String>>,
-    deps: Loadable<Vec<Mod>>,
+    deps: Loadable<Vec<Rc<Mod>>>,
     version: Entity<PickVersion>,
     loader: Entity<PickLoader>,
     modpack: Entity<PickVersion>,
@@ -577,7 +577,7 @@ impl ModInstallView {
                 match result {
                     Ok((owners, deps)) => {
                         this.owners = Loadable::Ready(owners);
-                        this.deps = Loadable::Ready(deps);
+                        this.deps = Loadable::Ready(deps.into_iter().map(Rc::new).collect());
                         this.entrance.restart();
                     }
                     Err(error) => {
@@ -864,14 +864,7 @@ impl ModInstallView {
                     ..CardStatus::default()
                 };
                 motion::card_at(
-                    mod_card(
-                        index,
-                        &Rc::new(dep.clone()),
-                        status,
-                        None,
-                        on_press.clone(),
-                        cx,
-                    ),
+                    mod_card(index, dep, status, None, on_press.clone(), cx),
                     self.card_frame,
                 )
                 .into_any_element()

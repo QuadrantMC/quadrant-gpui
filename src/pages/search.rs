@@ -63,19 +63,28 @@ struct Results {
     /// Each searched provider's answers, in request order, so a further
     /// page lines up with the list it extends.
     lists: Vec<Vec<Mod>>,
-    /// `lists` merged in the sort order.
-    shown: Vec<Mod>,
+    /// `lists` merged in the sort order, shared with the cards that show
+    /// them so a frame doesn't copy each mod.
+    shown: Vec<Rc<Mod>>,
     more: More,
 }
 
 impl Results {
     fn new(lists: Vec<Vec<Mod>>, sort: Sort) -> Self {
-        let shown = order_results(&lists, sort);
-        Self {
+        let mut results = Self {
             lists,
-            shown,
+            shown: Vec::new(),
             more: More::Available,
-        }
+        };
+        results.order(sort);
+        results
+    }
+
+    fn order(&mut self, sort: Sort) {
+        self.shown = order_results(&self.lists, sort)
+            .into_iter()
+            .map(Rc::new)
+            .collect();
     }
 }
 
@@ -584,7 +593,7 @@ impl SearchPage {
                             for (list, more) in results.lists.iter_mut().zip(lists) {
                                 list.extend(more);
                             }
-                            results.shown = order_results(&results.lists, sort);
+                            results.order(sort);
                             results.more = More::Available;
                         }
                     }
@@ -845,7 +854,7 @@ impl SearchPage {
     #[cfg(feature = "screenshot")]
     pub fn open_first_result(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Loadable::Ready(results) = &self.results
-            && let Some(first) = results.shown.first().cloned()
+            && let Some(first) = results.shown.first().map(|first| Mod::clone(first))
         {
             self.open_details(first, None, None, window, cx);
         }
@@ -1463,7 +1472,7 @@ impl SearchPage {
             this.press(press, item, origin, window, cx)
         });
         let columns = result_columns(self.results_width.width());
-        let shown: Vec<(&Mod, CardStatus)> = results
+        let shown: Vec<(&Rc<Mod>, CardStatus)> = results
             .shown
             .iter()
             .skip(page * PAGE_SIZE)
@@ -1503,7 +1512,7 @@ impl SearchPage {
                 motion::card_at(
                     mod_card(
                         page * PAGE_SIZE + index,
-                        &Rc::new((*item).clone()),
+                        item,
                         *status,
                         Some(slot),
                         on_press.clone(),
@@ -2009,6 +2018,25 @@ impl SearchPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pages::search::logic::tests::result;
+    use quadrant_core::models::ModSource;
+
+    #[test]
+    fn results_show_their_lists_in_order_and_again_after_more() {
+        let lists = vec![
+            vec![result("Sodium", ModSource::Modrinth, 10, "2026-01-01")],
+            vec![result("Iris", ModSource::Modrinth, 30, "2026-01-01")],
+        ];
+        let mut results = Results::new(lists, Sort::Downloads);
+        let names = |results: &Results| -> Vec<String> {
+            results.shown.iter().map(|item| item.name.clone()).collect()
+        };
+        assert_eq!(names(&results), ["Iris", "Sodium"]);
+
+        results.lists[0].push(result("Lithium", ModSource::Modrinth, 20, "2026-01-01"));
+        results.order(Sort::Downloads);
+        assert_eq!(names(&results), ["Iris", "Lithium", "Sodium"]);
+    }
 
     #[test]
     fn coming_back_from_an_install_page_plays_no_entrance() {
