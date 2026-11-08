@@ -239,8 +239,9 @@ fn reports_usage(args: &Args, background: bool) -> bool {
 }
 
 /// What the desktop app's setup starts in the background (`lib.rs`): the
-/// usage report and a refresh of the Minecraft version list, which the
-/// pages then read from the host's cache.
+/// usage report, a refresh of the Minecraft version list, which the pages
+/// then read from the host's cache, the mods' file hash backfill and the mod
+/// cache's pruning.
 fn start_background_jobs(args: &Args, cx: &mut App) {
     if args.mode != Mode::Interactive {
         return;
@@ -261,6 +262,22 @@ fn start_background_jobs(args: &Args, cx: &mut App) {
             match host.get_versions().await {
                 Ok(versions) => log::debug!("Refreshed {} Minecraft versions", versions.len()),
                 Err(error) => log::error!("Failed to update Minecraft versions: {error:#}"),
+            }
+            Ok(())
+        })
+        .detach();
+    // The mod cache sits in the user's cache folder whatever `--data-dir`
+    // says, so a sandboxed run leaves it to the apps on the real data folder.
+    let prune_cache = args.data_dir.is_none();
+    backend
+        .run(cx, move |host| async move {
+            match host.backfill_mod_hashes().await {
+                Ok(0) => {}
+                Ok(hashed) => log::info!("Recorded the file hash of {hashed} mod(s)"),
+                Err(error) => log::warn!("Couldn't record the mods' file hashes: {error:#}"),
+            }
+            if prune_cache && let Err(error) = host.prune_mod_cache().await {
+                log::warn!("Couldn't prune the mod cache: {error:#}");
             }
             Ok(())
         })
