@@ -365,15 +365,19 @@ impl SettingsPage {
             multiple: false,
             prompt: Some(title),
         });
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = chosen.await else {
-                return;
-            };
-            let Some(folder) = paths.into_iter().next() else {
-                return;
-            };
-            let _ = this.update(cx, |this, cx| this.run(pick(folder), cx));
-        })
+        cx.spawn(
+            async move |this, cx| match super::dialog_choice(chosen.await) {
+                Ok(Some(paths)) => {
+                    if let Some(folder) = paths.into_iter().next() {
+                        let _ = this.update(cx, |this, cx| this.run(pick(folder), cx));
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => cx.update(|cx| {
+                    snackbar::show(cx, SnackbarKind::Error, describe(error));
+                }),
+            },
+        )
         .detach();
     }
 

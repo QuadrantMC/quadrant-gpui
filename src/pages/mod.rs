@@ -75,6 +75,15 @@ pub fn hidden(page: &AnyView, cx: &mut App) {
     }
 }
 
+/// What a file dialog's answer comes to: what the user chose, or `None` for a
+/// cancel. A dialog the platform couldn't open (no desktop portal on a
+/// minimal Linux setup) is an error to show, not a cancel.
+pub fn dialog_choice<T>(
+    answer: Result<anyhow::Result<Option<T>>, futures::channel::oneshot::Canceled>,
+) -> anyhow::Result<Option<T>> {
+    answer.unwrap_or(Ok(None))
+}
+
 /// Builds the view for `route`. Called once per route; the app keeps the
 /// view alive across navigation.
 pub fn build(route: Route, window: &mut Window, cx: &mut App) -> AnyView {
@@ -85,5 +94,21 @@ pub fn build(route: Route, window: &mut Window, cx: &mut App) -> AnyView {
         Route::Settings => cx.new(SettingsPage::new).into(),
         Route::InstalledContent => cx.new(InstalledContentPage::new).into(),
         Route::Account => cx.new(AccountPage::new).into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dialog_that_failed_to_open_is_not_a_cancel() {
+        let (_, dropped) = futures::channel::oneshot::channel::<anyhow::Result<Option<u8>>>();
+        let canceled = futures::executor::block_on(dropped);
+        assert_eq!(dialog_choice(canceled).unwrap(), None);
+        assert_eq!(dialog_choice(Ok(Ok(None::<u8>))).unwrap(), None);
+        assert_eq!(dialog_choice(Ok(Ok(Some(3)))).unwrap(), Some(3));
+        let failed = dialog_choice(Ok(Err::<Option<u8>, _>(anyhow::anyhow!("no portal"))));
+        assert!(failed.is_err());
     }
 }
