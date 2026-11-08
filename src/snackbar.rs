@@ -135,6 +135,25 @@ impl Snackbar {
         self.generation
     }
 
+    /// Updates an export snackbar that is up with a newer percentage in place
+    /// and returns whether it did. The generation stays, so the entrance
+    /// doesn't play again and the timer already running still hides it.
+    fn update_export(&mut self, kind: SnackbarKind, message: &Message) -> bool {
+        match (&mut self.shown, message) {
+            (
+                Some(Shown {
+                    kind: shown_kind,
+                    message: shown @ Message::Export { .. },
+                }),
+                Message::Export { .. },
+            ) if *shown_kind == kind => {
+                *shown = message.clone();
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Hides the snackbar; returns whether one was up.
     fn hide(&mut self) -> bool {
         self.shown.take().is_some()
@@ -187,6 +206,16 @@ pub fn present(cx: &mut App, snack: Snack) {
         crate::notifications::record(cx, kind, message.clone());
     }
     let snackbar = view(cx);
+    let updated = snackbar.update(cx, |snackbar, cx| {
+        let updated = snackbar.update_export(kind, &message);
+        if updated {
+            cx.notify();
+        }
+        updated
+    });
+    if updated {
+        return;
+    }
     let generation = snackbar.update(cx, |snackbar, cx| {
         let generation = snackbar.replace(kind, message);
         cx.notify();
@@ -266,6 +295,21 @@ mod tests {
         assert!(snackbar.shown.is_some());
         assert!(snackbar.expire(second));
         assert_eq!(snackbar.shown, None);
+    }
+
+    #[test]
+    fn export_progress_updates_the_snackbar_without_a_new_generation() {
+        let mut snackbar = Snackbar::new();
+        let export = |percent| Message::Export { percent };
+        let generation = snackbar.replace(SnackbarKind::Neutral, export(10));
+        assert!(snackbar.update_export(SnackbarKind::Neutral, &export(40)));
+        assert_eq!(snackbar.generation, generation);
+        assert_eq!(snackbar.shown.as_ref().unwrap().message, export(40));
+        // Finishing is a snackbar of its own, and so is any other message.
+        assert!(!snackbar.update_export(SnackbarKind::Success, &export(100)));
+        assert!(!snackbar.update_export(SnackbarKind::Neutral, &Message::from("text")));
+        snackbar.replace(SnackbarKind::Error, Message::from("text"));
+        assert!(!snackbar.update_export(SnackbarKind::Neutral, &export(50)));
     }
 
     #[test]
