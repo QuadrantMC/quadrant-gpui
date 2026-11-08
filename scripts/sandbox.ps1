@@ -12,6 +12,15 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# -Root is deleted and recreated, so only a folder that is plainly a
+# throwaway one qualifies: below the temp folder, or named for the sandbox.
+$full = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+$temp = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\', '/')
+$belowTemp = $full.StartsWith("$temp\", [StringComparison]::OrdinalIgnoreCase)
+$named = (Split-Path $full -Leaf) -like "quadrant-gpui-sandbox*"
+if (-not ($belowTemp -or $named)) {
+    throw "-Root $full is neither below $temp nor named quadrant-gpui-sandbox*; it would be deleted"
+}
 if (Test-Path $Root) { Remove-Item -Recurse -Force $Root }
 $modpacks = Join-Path $Root "mc\modpacks"
 New-Item -ItemType Directory -Force (Join-Path $Root "data") | Out-Null
