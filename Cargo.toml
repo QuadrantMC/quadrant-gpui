@@ -2,7 +2,7 @@
 name = "quadrant-native"
 # YY.MM.REVISION with the release channel as the pre-release, like Quadrant.
 # The release tag is `v` plus this version.
-version = "26.11.2-gpui-experimental"
+version = "26.11.2-gpui-experimental.1"
 edition = "2024"
 description = "Manage your mods and modpacks with ease."
 authors = ["MrQuantumOFF (Demir Yerli) <me@mrquantumoff.dev>"]
@@ -41,9 +41,9 @@ gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", features =
 log = "0.4"
 # Watches the Minecraft folder while the Apply page is shown.
 notify = "8"
-quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "72ce92949ee1113dddc0de7b5ea761a2a3006712" }
+quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "1d38517ce45b28d81c6fe907c5232e0494c8d716" }
 # `single-instance`: one running app per data folder, shared with Quadrant.
-quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "72ce92949ee1113dddc0de7b5ea761a2a3006712", features = ["single-instance"] }
+quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "1d38517ce45b28d81c6fe907c5232e0494c8d716", features = ["single-instance"] }
 # Already in the tree through quadrant-core; fetches remote images for `img(url)`.
 reqwest = { version = "0.13", default-features = false }
 serde_json = "1"
