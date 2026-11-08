@@ -143,7 +143,6 @@ fn unchanged(
     }
 }
 
-/// The desktop app's waiting panel: a slate-800 strip with one thing in it.
 impl Render for CurrentModpackPage {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         if let Some((view, _)) = &self.view {

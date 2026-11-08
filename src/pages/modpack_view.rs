@@ -824,7 +824,6 @@ fn spinner() -> AnyElement {
     theme::circular_progress("progress").into_any_element()
 }
 
-/// The desktop app's waiting panel: a slate-800 strip with one thing in it.
 impl Render for ModpackView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let width = window.viewport_size().width;
