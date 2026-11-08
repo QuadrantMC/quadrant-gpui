@@ -116,6 +116,14 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     capture(window, &snackbars.join("saved.png"), cx).await?;
     cx.update(|cx| snackbar::show(cx, SnackbarKind::Error, t("invalidData")));
     capture(window, &snackbars.join("invalid-data.png"), cx).await?;
+    cx.update(|cx| {
+        snackbar::show(
+            cx,
+            SnackbarKind::Warning,
+            t_with("modpackSyncNeedsReview", &[("name", "Alpha Pack")]),
+        )
+    });
+    capture(window, &snackbars.join("sync-warning.png"), cx).await?;
 
     capture_mod_pages(window, dir, cx).await?;
     capture_widths(window, dir, cx).await?;
@@ -195,14 +203,21 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     )?;
     capture(window, &dir.join("share-code.png"), cx).await?;
     let mut shared = sample_synced().remove(1);
-    shared.mods = r#"[{"id":"fixture-sodium","name":"Sodium","source":"ModSource.modRinth","downloadUrl":"https://cdn.modrinth.com/data/fixture/sodium.jar"},{"id":"fixture-lithium","name":"Lithium","source":"ModSource.modRinth","downloadUrl":"https://cdn.modrinth.com/data/fixture/lithium.jar"},{"id":"fixture-iris","name":"Iris Shaders","source":"ModSource.modRinth","downloadUrl":"https://cdn.modrinth.com/data/fixture/iris.jar"}]"#.into();
+    // An Online mod and files without a hash, so the pack shows both warnings.
+    shared.mods = r#"[{"id":"fixture-sodium","name":"Sodium","source":"ModSource.modRinth","downloadUrl":"https://cdn.modrinth.com/data/fixture/sodium.jar","sha512":"00"},{"id":"fixture-lithium","name":"Lithium","source":"ModSource.modRinth","downloadUrl":"https://cdn.modrinth.com/data/fixture/lithium.jar"},{"id":"fixture-iris","name":"Iris Shaders","source":"ModSource.modRinth","downloadUrl":"https://cdn.modrinth.com/data/fixture/iris.jar"},{"id":"fixture-linked","name":"Linked Mod","source":"ModSource.online","downloadUrl":"https://files.example.com/linked.jar"}]"#.into();
+    with_page(window, cx, Route::Modpacks, {
+        let shared = shared.clone();
+        move |page: &mut ModpacksPage, _, cx| page.preview_shared(&shared, cx)
+    })?;
+    capture(window, &dir.join("shared-loading.png"), cx).await?;
     with_page(
         window,
         cx,
         Route::Modpacks,
-        move |page: &mut ModpacksPage, _, cx| page.preview_shared(&shared, cx),
+        move |page: &mut ModpacksPage, window, cx| page.preview_install_review(&shared, window, cx),
     )?;
-    capture(window, &dir.join("shared-loading.png"), cx).await?;
+    capture(window, &dir.join("install-review.png"), cx).await?;
+    close_dialogs(window, cx).await?;
     with_page(
         window,
         cx,

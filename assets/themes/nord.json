@@ -35,6 +35,7 @@
     "warningText": "#ebcb8b",
     "warningFill": "#ebcb8b1f",
     "warningBorder": "#ebcb8b33",
+    "caution": "#ebcb8b",
     "search": "#81a1c1",
     "searchHover": "#88c0d0",
     "spinnerRing": "#4c566a",

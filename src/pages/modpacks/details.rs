@@ -1,7 +1,9 @@
 //! A Quadrant Share or Sync pack's mods, after the desktop app's
 //! `SharedModpackView`: a header with its download, then a card per mod in
-//! `ModpackView`'s grid. Cards show the manifest's record until the mod's
-//! provider answers through the [`ModCatalog`](crate::mod_catalog::ModCatalog).
+//! `ModpackView`'s grid, Online mods included. Cards show the manifest's
+//! record until the mod's provider answers through the
+//! [`ModCatalog`](crate::mod_catalog::ModCatalog). The header warns about the
+//! files Quadrant can't verify and the mods that download from links.
 
 use std::rc::Rc;
 
@@ -12,7 +14,10 @@ use gpui::{
 use gpui_component::{h_flex, scroll::ScrollableElement as _, v_flex};
 use quadrant_core::{mc_mod::Mod, models::InstalledModpack};
 
-use super::{ModpacksPage, SyncTarget, View};
+use super::{
+    ModpacksPage, SyncTarget, View,
+    review::{self, Review},
+};
 use crate::{
     i18n::{t, t_with},
     mod_catalog::{ModCatalog, ModKey, Tally},
@@ -37,6 +42,7 @@ fn gap() -> gpui::Rems {
 pub struct SharedPack {
     pub modpack: Rc<InstalledModpack>,
     pub sync: Option<SyncTarget>,
+    review: Review,
     /// The pack's mods as cards that only open in the web.
     cards: Vec<Mod>,
     /// `cards` as their providers know them, kept as the catalog notifies.
@@ -53,6 +59,7 @@ impl SharedPack {
         let cards = cards(&modpack);
         let keys = catalog_keys(&cards);
         Self {
+            review: Review::of(&modpack.mods),
             modpack: Rc::new(modpack),
             sync,
             cards,
@@ -245,7 +252,16 @@ impl ModpacksPage {
                     ),
             )
             .when(shared.tally.pending > 0, |this| {
-                this.child(loading_status(shared.tally.found, shared.cards.len()))
+                // Online mods have no provider to ask.
+                this.child(loading_status(shared.tally.found, shared.keys.len()))
+            })
+            .when(!shared.review.is_empty(), |this| {
+                this.child(
+                    div()
+                        .mt_4()
+                        .font_weight(FontWeight::NORMAL)
+                        .child(review::warnings("shared-review", &shared.review)),
+                )
             })
     }
 }

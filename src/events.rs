@@ -34,6 +34,10 @@ pub fn forward(cx: &mut App) {
                 && let Some(done) = done
             {
                 cx.update(|cx| taskbar::progress(cx, Job::ModpackDownload, done));
+            } else if event.event == "modpackSyncWarning" {
+                if let Some(snack) = sync_warning_snack(&event.payload) {
+                    cx.update(|cx| snackbar::present(cx, snack));
+                }
             } else if let Some(text) = snackbar_text(&event) {
                 cx.update(|cx| snackbar::show(cx, SnackbarKind::Neutral, text));
             }
@@ -58,6 +62,32 @@ fn export_snack(done: f64) -> Snack {
         timeout: Duration::from_millis(if finished { 15_000 } else { 500_000 }),
         remember: finished,
     }
+}
+
+/// The amber snackbar `App.tsx` shows for a `modpackSyncWarning`: an
+/// automatic sync update held back for the user to apply (`applied` false,
+/// as it adds or changes Online mods), or one applied with files Quadrant
+/// couldn't verify.
+fn sync_warning_snack(payload: &serde_json::Value) -> Option<Snack> {
+    let name = payload.get("name")?.as_str()?;
+    let text = if payload.get("applied")?.as_bool()? {
+        let unverified = payload
+            .get("unverifiedMods")
+            .and_then(serde_json::Value::as_array)
+            .map_or(0, Vec::len);
+        t_with(
+            "modpackSyncUnverified",
+            &[("name", name), ("amount", &unverified.to_string())],
+        )
+    } else {
+        t_with("modpackSyncNeedsReview", &[("name", name)])
+    };
+    Some(Snack {
+        kind: SnackbarKind::Warning,
+        message: Message::Text(text),
+        timeout: Duration::from_millis(15_000),
+        remember: true,
+    })
 }
 
 /// Puts up the snackbar an export `done` of the way through shows.
@@ -332,6 +362,36 @@ mod tests {
         assert!(done.remember);
         assert_eq!(done.timeout, Duration::from_millis(15_000));
         assert_eq!(export_snack(0.999).kind, SnackbarKind::Neutral);
+    }
+
+    #[test]
+    fn a_sync_warning_names_the_pack_and_what_happened() {
+        let text = |payload| sync_warning_snack(&payload).map(|snack| snack.message);
+        let held = serde_json::json!({
+            "modpackId": "id",
+            "name": "Alpha",
+            "applied": false,
+            "onlineMods": ["Linked"],
+            "unverifiedMods": [],
+        });
+        assert_eq!(
+            text(held),
+            Some(Message::from("An update to Alpha needs your review"))
+        );
+        let applied = serde_json::json!({
+            "modpackId": "id",
+            "name": "Alpha",
+            "applied": true,
+            "onlineMods": [],
+            "unverifiedMods": ["One", "Two"],
+        });
+        let snack = sync_warning_snack(&applied).unwrap();
+        assert_eq!(snack.kind, SnackbarKind::Warning);
+        assert_eq!(
+            snack.message,
+            Message::from("Alpha was updated, but Quadrant couldn't verify 2 of its files.")
+        );
+        assert_eq!(text(Value::Null), None);
     }
 
     #[test]

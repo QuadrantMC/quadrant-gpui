@@ -51,6 +51,7 @@ mod cloud;
 pub use cloud::parse_share_code;
 mod details;
 mod prism;
+mod review;
 pub(super) mod watch;
 
 /// About one modpack card, for the scrollbar until cards are measured.
@@ -1100,6 +1101,24 @@ impl ModpacksPage {
         let keys = shared.keys().to_vec();
         ModCatalog::global(cx).update(cx, |catalog, _| catalog.preview_pending(keys));
         self.show(View::Shared(Box::new(shared)), cx);
+    }
+
+    /// Asks about installing `synced` as its download button would, for
+    /// screenshots. Nothing is installed.
+    #[cfg(feature = "screenshot")]
+    pub fn preview_install_review(
+        &mut self,
+        synced: &SyncedModpack,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let modpack = cloud::installable(synced, &synced.name);
+        let review = review::Review::of(&modpack.mods);
+        let op = Op::Install {
+            modpack: Box::new(modpack),
+            sync: Some(SyncTarget::of(synced)),
+        };
+        self.confirm_install(op, &synced.name, review, window, cx);
     }
 
     #[cfg(feature = "screenshot")]

@@ -169,6 +169,8 @@ palette! {
     warning_text: hex(0xfcd34d),
     warning_fill: hexa(0x78350f40),
     warning_border: hexa(0xb4530933),
+    /// amber-600: a snackbar that warns, as a held-back sync update.
+    caution: hex(0xd97706),
     /// sky-700 and sky-600: the Search button.
     search: hex(0x0369a1),
     search_hover: hex(0x0284c7),
@@ -483,6 +485,7 @@ fn snackbar_colors(kind: SnackbarKind, p: &Palette) -> (Rgba, Rgba) {
             (p.positive, p.on_accent)
         }
         SnackbarKind::Error => (p.destructive_hover, p.on_accent),
+        SnackbarKind::Warning => (p.caution, p.on_accent),
     }
 }
 
@@ -1189,10 +1192,11 @@ mod tests {
     #[test]
     fn snackbar_kinds_use_the_desktop_apps_colors() {
         let fill = |kind| snackbar_colors(kind, &QUADRANT).0;
-        // bg-slate-700, bg-emerald-600, bg-red-700
+        // bg-slate-700, bg-emerald-600, bg-red-700, bg-amber-600
         assert_eq!(fill(SnackbarKind::Neutral), rgb(0x334155));
         assert_eq!(fill(SnackbarKind::Success), rgb(0x059669));
         assert_eq!(fill(SnackbarKind::Error), rgb(0xb91c1c));
+        assert_eq!(fill(SnackbarKind::Warning), rgb(0xd97706));
     }
 
     #[test]

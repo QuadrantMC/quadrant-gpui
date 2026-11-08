@@ -23,7 +23,10 @@ use quadrant_core::{
     models::{InstalledMod, InstalledModpack, LocalModpack},
 };
 
-use super::{ModpacksPage, Op, SyncTarget, View, pill};
+use super::{
+    ModpacksPage, Op, SyncTarget, View, pill,
+    review::{self, Review},
+};
 use crate::{
     assets::MdIcon,
     i18n::{t, t_with},
@@ -193,16 +196,64 @@ impl ModpacksPage {
             (false, _) => (Tone::Positive, label),
         };
         theme::pill_button(id, tone, label, Some(MdIcon::Download), cx).on_click(cx.listener(
-            move |this, _, _, cx| {
-                this.run(
-                    Op::Install {
-                        modpack: Box::new((*modpack).clone()),
-                        sync: sync.clone(),
-                    },
-                    cx,
-                )
+            move |this, _, window, cx| {
+                let op = Op::Install {
+                    modpack: Box::new((*modpack).clone()),
+                    sync: sync.clone(),
+                };
+                let review = Review::of(&modpack.mods);
+                if review.is_empty() {
+                    this.run(op, cx)
+                } else {
+                    this.confirm_install(op, &modpack.name, review, window, cx)
+                }
             },
         ))
+    }
+
+    /// `useReviewedModpackInstall`'s question before installing a pack with
+    /// files Quadrant can't verify or mods from links.
+    pub(super) fn confirm_install(
+        &mut self,
+        op: Op,
+        name: &str,
+        review: Review,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let page = cx.entity();
+        let title = t_with("reviewInstallTitle", &[("name", name)]);
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let install = {
+                let (page, op) = (page.clone(), op.clone());
+                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    page.update(cx, |page, cx| page.run(op.clone(), cx));
+                    window.close_dialog(cx);
+                }
+            };
+            theme::dialog_surface(dialog)
+                .w(px(560.))
+                .title(theme::dialog_title(title.clone()))
+                .child(review::warnings("install-review", &review))
+                .footer(
+                    DialogFooter::new()
+                        .justify_start()
+                        .child(
+                            theme::pill_button(
+                                "install-anyway",
+                                Tone::Positive,
+                                t("reviewInstallAnyway"),
+                                None,
+                                cx,
+                            )
+                            .on_click(install),
+                        )
+                        .child(
+                            theme::cancel_button("cancel", t("cancel"), cx)
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        ),
+                )
+        });
     }
 
     /// A Quadrant Sync pack that isn't installed here.

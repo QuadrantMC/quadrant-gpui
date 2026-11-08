@@ -36,6 +36,9 @@ pub enum SnackbarKind {
     Deleted,
     /// `bg-red-700` (`useReportError`).
     Error,
+    /// `bg-amber-600`, as `App.tsx` reports a sync update it held back or
+    /// couldn't verify.
+    Warning,
 }
 
 impl SnackbarKind {
@@ -44,7 +47,7 @@ impl SnackbarKind {
         match self {
             Self::Success => Some(MdIcon::Check),
             Self::Deleted => Some(MdIcon::Delete),
-            Self::Saved | Self::Neutral | Self::Error => None,
+            Self::Saved | Self::Neutral | Self::Error | Self::Warning => None,
         }
     }
 }
