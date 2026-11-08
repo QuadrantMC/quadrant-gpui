@@ -189,6 +189,8 @@ pub struct SettingsPage {
     /// The color theme picker and the themes it lists, made like `language`.
     color_theme: Option<Entity<SelectState<Vec<ThemeItem>>>>,
     listed_themes: Vec<ThemeItem>,
+    /// [`Themes`] changed since the picker last listed it.
+    themes_changed: bool,
     _color_theme_picked: Option<Subscription>,
 }
 
@@ -249,6 +251,11 @@ impl SettingsPage {
         events::listen_bursts(&["configChanged"], cx, |this, cx| this.reload(false, cx));
         // The UI scale changes from the zoom shortcuts too.
         cx.observe_global::<Prefs>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<Themes>(|this, cx| {
+            this.themes_changed = true;
+            cx.notify();
+        })
+        .detach();
         let mut page = Self {
             settings: Loadable::Idle,
             running: None,
@@ -257,6 +264,7 @@ impl SettingsPage {
             _language_picked: None,
             color_theme: None,
             listed_themes: Vec::new(),
+            themes_changed: false,
             _color_theme_picked: None,
         };
         page.reload(true, cx);
@@ -450,19 +458,20 @@ impl SettingsPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<SelectState<Vec<ThemeItem>>> {
-        let items = theme_items(cx);
         let current = Themes::global(cx)
             .resolve(&Prefs::global(cx).color_theme)
             .id
             .clone();
         if let Some(select) = self.color_theme.clone() {
-            // A rescan or settings sync changes the list or the choice.
-            let relisted = self.listed_themes != items;
-            if relisted {
+            // A rescan changes the list, settings sync the choice.
+            let relisted = std::mem::take(&mut self.themes_changed)
+                .then(|| theme_items(cx))
+                .filter(|items| *items != self.listed_themes);
+            if let Some(items) = &relisted {
                 self.listed_themes = items.clone();
             }
             select.update(cx, |select, cx| {
-                if relisted {
+                if let Some(items) = relisted {
                     select.set_items(items, window, cx);
                 }
                 if select.selected_value() != Some(&current) {
@@ -471,6 +480,7 @@ impl SettingsPage {
             });
             return select;
         }
+        let items = theme_items(cx);
         let row = items.iter().position(|item| item.id == current);
         let select = cx.new(|cx| {
             SelectState::new(
@@ -501,7 +511,16 @@ impl SettingsPage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let select = self.color_theme_select(window, cx);
-        let broken = Themes::global(cx).broken.clone();
+        let broken: Vec<_> = Themes::global(cx)
+            .broken
+            .iter()
+            .map(|broken| {
+                theme::warning_note(t_with(
+                    "brokenColorTheme",
+                    &[("file", &broken.file), ("error", &broken.error)],
+                ))
+            })
+            .collect();
         v_flex()
             .my_4()
             .font_weight(FontWeight::BOLD)
@@ -533,17 +552,7 @@ impl SettingsPage {
                     ),
             )
             .when(!broken.is_empty(), |this| {
-                this.child(
-                    v_flex()
-                        .gap_2()
-                        .max_w(rems(40.))
-                        .children(broken.into_iter().map(|broken| {
-                            theme::warning_note(t_with(
-                                "brokenColorTheme",
-                                &[("file", &broken.file), ("error", &broken.error)],
-                            ))
-                        })),
-                )
+                this.child(v_flex().gap_2().max_w(rems(40.)).children(broken))
             })
     }
 
