@@ -299,10 +299,23 @@ mod platform {
     pub fn show(window: &mut Window, cx: &mut App) {
         #[cfg(windows)]
         {
-            use windows::Win32::UI::WindowsAndMessaging::{SW_SHOW, ShowWindow};
+            use windows::Win32::UI::WindowsAndMessaging::{
+                IsIconic, SW_RESTORE, SW_SHOW, ShowWindow,
+            };
             let _ = cx;
             if let Some(hwnd) = hwnd(window) {
-                let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
+                // SW_SHOW keeps a minimized window minimized, so one hidden
+                // from the taskbar while minimized would come back as a
+                // taskbar button only.
+                // SAFETY: plain Win32 calls on this process's own window.
+                let _ = unsafe {
+                    let how = if IsIconic(hwnd).as_bool() {
+                        SW_RESTORE
+                    } else {
+                        SW_SHOW
+                    };
+                    ShowWindow(hwnd, how)
+                };
             }
         }
         #[cfg(target_os = "macos")]
