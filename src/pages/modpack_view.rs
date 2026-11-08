@@ -779,6 +779,17 @@ impl ModpackView {
     }
 }
 
+/// The indices of the cards to draw. Updated mods leave the update list,
+/// which is a stale check result; in the installed list they stay.
+fn unfinished(cards: &[Mod], mode: Mode, finished: &[String]) -> Vec<usize> {
+    cards
+        .iter()
+        .enumerate()
+        .filter(|(_, card)| mode != Mode::Updates || !finished.contains(&card.id))
+        .map(|(index, _)| index)
+        .collect()
+}
+
 /// Row `row` of `rows` of a virtualized grid of cards: a slice of the
 /// slate-800 panel the grid sits on, `gap` below it until the last.
 pub fn grid_row(row: usize, rows: usize, gap: gpui::Rems, cards: gpui::Div) -> AnyElement {
@@ -830,12 +841,7 @@ impl Render for ModpackView {
                 Mode::Updates => mod_grid::update_columns(width),
                 Mode::Mods | Mode::Identify => mod_grid::modpack_columns(width),
             };
-            let shown: Vec<usize> = cards
-                .iter()
-                .enumerate()
-                .filter(|(_, card)| !self.finished.contains(&card.id))
-                .map(|(index, _)| index)
-                .collect();
+            let shown = unfinished(cards, self.mode, &self.finished);
             (Rows::new(shown.len(), columns), shown)
         });
         let shape = match grid {
@@ -869,5 +875,27 @@ impl Render for ModpackView {
             )
             .child(self.list.probe(cx.entity_id()))
             .vertical_scrollbar(self.list.state())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn card(id: &str) -> Mod {
+        let installed = InstalledMod::minimal(
+            id.into(),
+            ModSource::Modrinth,
+            format!("https://cdn.modrinth.com/data/{id}/{id}.jar"),
+        );
+        installed_card(&installed, "pack")
+    }
+
+    #[test]
+    fn an_updated_mod_leaves_the_update_list_but_stays_installed() {
+        let cards = [card("sodium"), card("lithium")];
+        let finished = ["sodium".to_string()];
+        assert_eq!(unfinished(&cards, Mode::Updates, &finished), [1]);
+        assert_eq!(unfinished(&cards, Mode::Mods, &finished), [0, 1]);
     }
 }
