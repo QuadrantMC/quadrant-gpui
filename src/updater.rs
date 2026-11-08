@@ -52,10 +52,11 @@ pub enum Status {
     Installing(Arc<Update>),
 }
 
-/// Whether this copy is an install that can replace itself, rather than a
-/// build in `target/` or a package a package manager updates.
-pub fn installed() -> bool {
-    updates::detect(PACKAGE).is_some()
+/// How this copy was installed, when it is an install that can replace
+/// itself rather than a build in `target/` or a package a package manager
+/// updates. On some Linux systems this asks `rpm`, so `main` calls it once.
+pub fn detect() -> Option<updates::Bundle> {
+    updates::detect(PACKAGE)
 }
 
 #[derive(Clone)]
@@ -92,10 +93,10 @@ impl Global for GlobalUpdater {}
 
 impl Updater {
     /// Starts checking for updates when this copy is an install that can
-    /// replace itself, and records where it lives so Quadrant can start it.
-    /// `main` skips it for `--noupdater`.
-    pub fn start(cx: &mut App) {
-        let Some(bundle) = updates::detect(PACKAGE) else {
+    /// replace itself (`bundle`, from [`detect`]), and records where it lives
+    /// so Quadrant can start it. `main` skips it for `--noupdater`.
+    pub fn start(bundle: Option<updates::Bundle>, cx: &mut App) {
+        let Some(bundle) = bundle else {
             log::info!("Not an installed copy; the updater stays off");
             return;
         };

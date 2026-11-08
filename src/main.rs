@@ -297,6 +297,9 @@ struct Running {
     primary: Option<single_instance::Primary>,
     /// The login item for this data folder, if the platform has one.
     autostart: Option<autostart::Autostart>,
+    /// How this copy was installed, when it updates itself and this run
+    /// starts the updater.
+    bundle: Option<updates::Bundle>,
 }
 
 /// This instance's hold on the single instance socket, which the updater
@@ -312,10 +315,12 @@ fn launch(raw_args: Vec<OsString>, launched: Launch) -> Result<Option<Running>> 
     let data_dir = data_folder(args.data_dir.as_deref())?;
     // Before the host starts, so a launch handed on leaves the config alone.
     #[cfg(feature = "updater")]
-    let installed = updater::installed();
+    let bundle = (args.mode == Mode::Interactive && !args.no_updater)
+        .then(updater::detect)
+        .flatten();
     #[cfg(not(feature = "updater"))]
-    let installed = false;
-    if follows_channel(&args, installed)
+    let bundle = None;
+    if follows_channel(&args, bundle.is_some())
         && app_paths::redirect(&data_dir, RUNNING, &raw_args, launched)
     {
         return Ok(None);
@@ -355,6 +360,7 @@ fn launch(raw_args: Vec<OsString>, launched: Launch) -> Result<Option<Running>> 
         args,
         primary,
         autostart,
+        bundle,
     }))
 }
 
@@ -445,21 +451,23 @@ fn main() -> ExitCode {
     let raw_args: Vec<OsString> = std::env::args_os().skip(1).collect();
     // Before parsing, so a bad argument is reported in the console too.
     let console = console::Console::setup(raw_args.iter().any(|arg| is_debug_flag(arg)));
-    let (backend, prefs, themes, args, primary, autostart) = match launch(raw_args, launched) {
-        Ok(Some(Running {
-            backend,
-            prefs,
-            themes,
-            args,
-            primary,
-            autostart,
-        })) => (backend, prefs, themes, args, primary, autostart),
-        Ok(None) => return ExitCode::SUCCESS,
-        Err(error) => {
-            console.fatal(&format!("{error:#}"));
-            return ExitCode::FAILURE;
-        }
-    };
+    let (backend, prefs, themes, args, primary, autostart, bundle) =
+        match launch(raw_args, launched) {
+            Ok(Some(Running {
+                backend,
+                prefs,
+                themes,
+                args,
+                primary,
+                autostart,
+                bundle,
+            })) => (backend, prefs, themes, args, primary, autostart, bundle),
+            Ok(None) => return ExitCode::SUCCESS,
+            Err(error) => {
+                console.fatal(&format!("{error:#}"));
+                return ExitCode::FAILURE;
+            }
+        };
     // Links from this launch, from later launches and from macOS's open
     // events, in the order they come.
     let (links, inbox) = futures::channel::mpsc::unbounded::<Vec<String>>();
@@ -490,8 +498,10 @@ fn main() -> ExitCode {
         events::forward(cx);
         #[cfg(feature = "updater")]
         if args.mode == Mode::Interactive && !args.no_updater {
-            updater::Updater::start(cx);
+            updater::Updater::start(bundle, cx);
         }
+        #[cfg(not(feature = "updater"))]
+        let _ = bundle;
         start_background_jobs(&args, cx);
         app::restore_last_page(args.mode == Mode::Interactive, cx);
         let window = match open_main_window(&args.mode, args.autostart, cx) {
