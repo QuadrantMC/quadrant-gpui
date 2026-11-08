@@ -175,6 +175,17 @@ pub enum Action {
     },
 }
 
+/// Where in `notifications` the ones [`is_visible`] keeps are.
+pub fn visible_indexes(
+    notifications: &[Notification],
+    show_updates: bool,
+    identity: &Identity,
+) -> Vec<usize> {
+    (0..notifications.len())
+        .filter(|&index| is_visible(&notifications[index], show_updates, identity))
+        .collect()
+}
+
 /// A notification as the panel words it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Shown {
@@ -356,6 +367,9 @@ const SHOW_UPDATES: &str = "showModpackUpdateNotifications";
 pub struct Notifications {
     history: History,
     account: Vec<Notification>,
+    /// Indexes into `account` of the ones the panel lists, kept by [`Self::sift`]:
+    /// telling them apart parses each message, too slow for every frame.
+    visible: Vec<usize>,
     news: Vec<Article>,
     show_updates: bool,
     error: Option<SharedString>,
@@ -403,6 +417,7 @@ impl Notifications {
             if matches!(session.read(cx).account(), Loadable::Ready(None)) {
                 this.account.clear();
             }
+            this.sift(cx);
             cx.notify();
         })
         .detach();
@@ -411,12 +426,14 @@ impl Notifications {
                 Ok(notifications) => this.account = newest_first(notifications),
                 Err(error) => log::warn!("Unreadable notifications: {error}"),
             }
+            this.sift(cx);
             cx.notify();
         });
         events::listen(&["configChanged"], cx, |this, _, cx| this.read_config(cx));
         let mut this = Self {
             history: History::default(),
             account: Vec::new(),
+            visible: Vec::new(),
             news: Vec::new(),
             show_updates: true,
             error: None,
@@ -448,6 +465,7 @@ impl Notifications {
             let _ = this.update(cx, |this, cx| {
                 if this.show_updates != show {
                     this.show_updates = show;
+                    this.sift(cx);
                     cx.notify();
                 }
             });
@@ -469,13 +487,15 @@ impl Notifications {
         .detach();
     }
 
-    /// The account notifications the panel lists.
-    fn visible(&self, cx: &App) -> Vec<&Notification> {
+    /// Picks the account notifications the panel lists, after the
+    /// notifications, the account or the setting changed.
+    fn sift(&mut self, cx: &App) {
         let identity = Identity::of(self.session.read(cx).account());
-        self.account
-            .iter()
-            .filter(|notification| is_visible(notification, self.show_updates, &identity))
-            .collect()
+        self.visible = visible_indexes(&self.account, self.show_updates, &identity);
+    }
+
+    fn visible(&self) -> impl Iterator<Item = &Notification> {
+        self.visible.iter().map(|&index| &self.account[index])
     }
 
     pub fn toggle(&mut self, cx: &mut Context<Self>) {
@@ -543,6 +563,7 @@ impl Notifications {
         self.account = newest_first(account);
         self.news = news;
         self.show_updates = true;
+        self.sift(cx);
         cx.notify();
     }
 
@@ -586,8 +607,7 @@ impl Notifications {
 
     fn render_account(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let cards = self
-            .visible(cx)
-            .into_iter()
+            .visible()
             .map(|notification| {
                 let id = notification.notification_id.clone();
                 let Shown { message, action } = shown(notification);
@@ -820,8 +840,7 @@ fn history_entry(entry: &HistoryEntry) -> gpui::Div {
 impl Render for Notifications {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let unread = self
-            .visible(cx)
-            .iter()
+            .visible()
             .filter(|notification| !notification.read)
             .count();
         let bell = theme::window_button(
@@ -1038,6 +1057,17 @@ mod tests {
             true,
             &Identity::Known(vec![])
         ));
+    }
+
+    #[test]
+    fn the_visible_ones_are_found_by_index() {
+        let account = [
+            sync_update("Sam"),
+            notification("plain", "Hello", 1),
+            sync_update("me"),
+        ];
+        assert_eq!(visible_indexes(&account, true, &me()), [0, 1]);
+        assert_eq!(visible_indexes(&account, false, &me()), [1]);
     }
 
     #[test]
