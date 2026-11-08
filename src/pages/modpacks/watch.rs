@@ -17,38 +17,52 @@ use crate::backend::Backend;
 /// Tauri's `delayMs: 50`.
 const DEBOUNCE: Duration = Duration::from_millis(50);
 
+/// How often a page re-reads when the folder can't be watched (an inotify
+/// limit, a network drive, an unresolved folder).
+const POLL: Duration = Duration::from_secs(30);
+
 /// Watches the Minecraft folder for as long as the returned task is kept,
-/// and calls `changed` on the view after each burst of changes.
+/// and calls `changed` on the view after each burst of changes. When the
+/// folder can't be watched it calls `changed` every [`POLL`] instead.
 pub fn folders<T: 'static>(
     cx: &mut Context<T>,
     changed: impl Fn(&mut T, &mut Context<T>) + 'static,
 ) -> Task<()> {
     let folder = Backend::global(cx).run(cx, |host| async move { host.get_minecraft_folder() });
     cx.spawn(async move |this, cx| {
-        let Ok(folder) = folder.await else {
-            return;
-        };
-        let (sender, mut changes) = unbounded();
-        // A recursive watch walks the tree on Linux; keep that off the UI
-        // thread.
-        let watch = cx.background_spawn({
-            let folder = folder.clone();
-            async move { watch(&folder, sender) }
-        });
-        let (mut watcher, mut tree_watched) = match watch.await {
-            Ok(watching) => watching,
-            Err(error) => {
-                log::warn!("Not watching {}: {error}", folder.display());
-                return;
+        if let Ok(folder) = folder.await {
+            let (sender, mut changes) = unbounded();
+            // A recursive watch walks the tree on Linux; keep that off the UI
+            // thread.
+            let watch = cx.background_spawn({
+                let folder = folder.clone();
+                async move { watch(&folder, sender) }
+            });
+            match watch.await {
+                Ok((mut watcher, mut tree_watched)) => {
+                    while changes.next().await.is_some() {
+                        cx.background_executor().timer(DEBOUNCE).await;
+                        drain(&mut changes);
+                        // The tree may not exist until the first local pack
+                        // is created.
+                        if !tree_watched {
+                            tree_watched = watch_tree(&mut watcher, &folder);
+                        }
+                        if this.update(cx, |this, cx| changed(this, cx)).is_err() {
+                            break;
+                        }
+                    }
+                    return;
+                }
+                Err(error) => log::warn!(
+                    "Not watching {}, re-reading every {}s instead: {error}",
+                    folder.display(),
+                    POLL.as_secs()
+                ),
             }
-        };
-        while changes.next().await.is_some() {
-            cx.background_executor().timer(DEBOUNCE).await;
-            drain(&mut changes);
-            // The tree may not exist until the first local pack is created.
-            if !tree_watched {
-                tree_watched = watch_tree(&mut watcher, &folder);
-            }
+        }
+        loop {
+            cx.background_executor().timer(POLL).await;
             if this.update(cx, |this, cx| changed(this, cx)).is_err() {
                 break;
             }
@@ -80,4 +94,18 @@ fn watch_tree(watcher: &mut RecommendedWatcher, folder: &Path) -> bool {
 
 fn drain(changes: &mut UnboundedReceiver<()>) {
     while changes.try_recv().is_ok() {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A folder that can't be watched is the case that falls back to polling.
+    #[test]
+    fn a_missing_folder_cannot_be_watched() {
+        let missing = std::env::temp_dir().join("quadrant-gpui-watch-test-missing");
+        assert!(!missing.exists());
+        let (sender, _changes) = unbounded();
+        assert!(watch(&missing, sender).is_err());
+    }
 }
