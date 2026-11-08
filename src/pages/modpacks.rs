@@ -1595,6 +1595,7 @@ mod tests {
             is_applied: applied,
             last_synced,
             modpack_id: None,
+            manifest_error: None,
         }
     }
 

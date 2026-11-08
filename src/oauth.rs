@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
+use quadrant_core::account::pkce::{CODE_CHALLENGE_METHOD, Pkce};
 use quadrant_host::QuadrantHost;
 use serde_json::Value;
 use tokio::{
@@ -29,6 +30,9 @@ const READ_TIMEOUT: Duration = Duration::from_secs(10);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// The config key the desktop app keeps the pending sign-in's state under.
 const OAUTH_STATE: &str = "oauthState";
+/// The pending sign-in's PKCE verifier, beside its state, so a
+/// `quadrantnext://login` redirect that either app receives can redeem the code.
+const OAUTH_VERIFIER: &str = "oauthVerifier";
 
 /// How a sign-in ended without failing.
 #[derive(Debug, PartialEq, Eq)]
@@ -52,8 +56,10 @@ pub async fn sign_in(
         );
     }
     let state = new_state()?;
+    let pkce = Pkce::generate()?;
     config::set(&host, OAUTH_STATE, Value::String(state.clone()))?;
-    let outcome = wait_and_exchange(&host, &state, browser, cancel).await;
+    config::set(&host, OAUTH_VERIFIER, Value::String(pkce.verifier.clone()))?;
+    let outcome = wait_and_exchange(&host, &state, pkce, browser, cancel).await;
     forget_state(&host, &state);
     outcome
 }
@@ -61,6 +67,7 @@ pub async fn sign_in(
 async fn wait_and_exchange(
     host: &QuadrantHost,
     state: &str,
+    pkce: Pkce,
     browser: oneshot::Sender<Url>,
     cancel: oneshot::Receiver<()>,
 ) -> Result<Outcome> {
@@ -70,6 +77,7 @@ async fn wait_and_exchange(
         &host.oauth2_client_id(),
         &redirect_uri,
         state,
+        &pkce.challenge,
     ));
     let code = tokio::select! {
         code = tokio::time::timeout(LOGIN_TIMEOUT, wait_for_callback(listener, state)) => {
@@ -77,7 +85,8 @@ async fn wait_and_exchange(
         }
         _ = cancel => return Ok(Outcome::Cancelled),
     };
-    host.oauth2_login(code, redirect_uri).await?;
+    host.oauth2_login(code, redirect_uri, Some(pkce.verifier))
+        .await?;
     Ok(Outcome::SignedIn)
 }
 
@@ -100,20 +109,25 @@ pub async fn finish_redirect(
         log::warn!("Ignored a sign-in redirect this app didn't start");
         return Ok(());
     }
-    let result = host.oauth2_login(code, redirect_uri).await;
+    let verifier = host
+        .get_config_value(OAUTH_VERIFIER)?
+        .and_then(|value| value.as_str().map(str::to_string));
     forget_state(&host, &state);
-    result
+    host.oauth2_login(code, redirect_uri, verifier).await
 }
 
-/// Removes the pending sign-in's state once it has ended either way, so a
-/// later redirect carrying it is ignored. A sign-in started since keeps its
-/// own state.
+/// Removes the pending sign-in's state and verifier once it has ended either
+/// way, so a later redirect carrying it is ignored. A sign-in started since
+/// keeps its own.
 fn forget_state(host: &QuadrantHost, state: &str) {
     let pending = host.get_config_value(OAUTH_STATE).ok().flatten();
-    if pending.as_ref().and_then(Value::as_str) == Some(state)
-        && let Err(error) = config::unset(host, OAUTH_STATE)
-    {
-        log::warn!("Couldn't forget the sign-in state: {error:#}");
+    if pending.as_ref().and_then(Value::as_str) != Some(state) {
+        return;
+    }
+    for key in [OAUTH_STATE, OAUTH_VERIFIER] {
+        if let Err(error) = config::unset(host, key) {
+            log::warn!("Couldn't forget the sign-in's {key}: {error:#}");
+        }
     }
 }
 
@@ -123,7 +137,7 @@ fn new_state() -> Result<String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn authorize_url(client_id: &str, redirect_uri: &str, state: &str) -> Url {
+fn authorize_url(client_id: &str, redirect_uri: &str, state: &str, challenge: &str) -> Url {
     Url::parse_with_params(
         AUTHORIZE_URL,
         [
@@ -132,6 +146,8 @@ fn authorize_url(client_id: &str, redirect_uri: &str, state: &str) -> Url {
             ("scope", SCOPES),
             ("response_type", "code"),
             ("state", state),
+            ("code_challenge", challenge),
+            ("code_challenge_method", CODE_CHALLENGE_METHOD),
         ],
     )
     .expect("the authorize URL is a valid base")
@@ -292,7 +308,7 @@ mod tests {
 
     #[test]
     fn authorize_url_encodes_every_parameter() {
-        let url = authorize_url("client", "http://127.0.0.1:4000", "abc");
+        let url = authorize_url("client", "http://127.0.0.1:4000", "abc", "the-challenge");
         let pairs: Vec<(String, String)> = url
             .query_pairs()
             .map(|(key, value)| (key.into_owned(), value.into_owned()))
@@ -300,6 +316,8 @@ mod tests {
         assert_eq!(url.path(), "/account/oauth2/authorize");
         assert!(pairs.contains(&("redirect_uri".into(), "http://127.0.0.1:4000".into())));
         assert!(pairs.contains(&("scope".into(), SCOPES.into())));
+        assert!(pairs.contains(&("code_challenge".into(), "the-challenge".into())));
+        assert!(pairs.contains(&("code_challenge_method".into(), "S256".into())));
         assert!(!url.as_str().contains(' '));
     }
 
@@ -355,13 +373,19 @@ mod tests {
         options.keyring_service_name = "quadrant-gpui-tests".into();
         let host = QuadrantHost::new(options).unwrap();
         config::set(&host, OAUTH_STATE, Value::String("newer".into())).unwrap();
+        config::set(&host, OAUTH_VERIFIER, Value::String("verifier".into())).unwrap();
         forget_state(&host, "older");
         assert_eq!(
             host.get_config_value(OAUTH_STATE).unwrap(),
             Some(Value::String("newer".into()))
         );
+        assert_eq!(
+            host.get_config_value(OAUTH_VERIFIER).unwrap(),
+            Some(Value::String("verifier".into()))
+        );
         forget_state(&host, "newer");
         assert_eq!(host.get_config_value(OAUTH_STATE).unwrap(), None);
+        assert_eq!(host.get_config_value(OAUTH_VERIFIER).unwrap(), None);
     }
 
     /// Default builds have no OAuth client, so signing in fails before it

@@ -421,6 +421,7 @@ mod tests {
             file_name: "iris-2.jar".into(),
             download_url: "https://cdn.modrinth.com/iris-2.jar".into(),
             sha1: String::new(),
+            sha512: None,
             size: 0,
         });
         assert_eq!(

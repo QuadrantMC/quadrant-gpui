@@ -83,9 +83,9 @@ embed-resource = "3"
 
 # Uncomment to build against a sibling checkout of the quadrant repo instead of
 # the pinned upstream revision.
-# [patch."https://github.com/QuadrantMC/quadrant"]
-# quadrant-core = { path = "../quadrant/src-tauri/crates/quadrant-core" }
-# quadrant-host = { path = "../quadrant/src-tauri/crates/quadrant-host" }
+[patch."https://github.com/QuadrantMC/quadrant"]
+quadrant-core = { path = "C:/Users/mrqua/git/worktrees/quadrant-crates/src-tauri/crates/quadrant-core" }
+quadrant-host = { path = "C:/Users/mrqua/git/worktrees/quadrant-crates/src-tauri/crates/quadrant-host" }
 
 # cargo-packager 0.11 (`cargo install cargo-packager --locked`). Build the
 # binary first (`cargo build --release --features updater`), then run

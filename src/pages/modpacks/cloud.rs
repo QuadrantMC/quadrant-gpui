@@ -605,6 +605,7 @@ mod tests {
             is_applied: false,
             last_synced: 0,
             modpack_id: id.map(Into::into),
+            manifest_error: None,
         }
     }
 

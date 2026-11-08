@@ -35,7 +35,7 @@ pub enum Op {
 impl Op {
     pub async fn perform(self, host: QuadrantHost) -> anyhow::Result<()> {
         match self {
-            Op::SignOut => host.logout(),
+            Op::SignOut => host.clear_account_token().await,
         }
     }
 }

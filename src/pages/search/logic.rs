@@ -707,6 +707,7 @@ pub mod tests {
             is_applied: false,
             last_synced: 0,
             modpack_id: None,
+            manifest_error: None,
         }
     }
 
