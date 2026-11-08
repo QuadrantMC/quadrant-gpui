@@ -1128,7 +1128,8 @@ impl InstalledContentPage {
                 let first_in_section = matches!(part, Part::Section(_));
                 let last_in_section = after != Some((index, Some(section_index)));
                 let inner = match part {
-                    Part::File { file, .. } => div()
+                    // A flex wrapper keeps the row's margins inside the item.
+                    Part::File { file, .. } => v_flex()
                         .when(file == 0, |this| this.pt_3())
                         .child(self.render_file(locations, &section_ref, &section.files[file], cx))
                         .into_any_element(),
