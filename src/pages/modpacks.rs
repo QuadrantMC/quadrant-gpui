@@ -974,12 +974,17 @@ impl ModpacksPage {
             .or_else(dirs::home_dir)
             .unwrap_or_default();
         let chosen = cx.prompt_for_new_path(&folder, Some(&format!("{name}.quadrantExport.zip")));
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(to))) = chosen.await else {
-                return;
-            };
-            let _ = this.update(cx, |this, cx| this.run(Op::Export { name, to }, cx));
-        })
+        cx.spawn(
+            async move |this, cx| match super::dialog_choice(chosen.await) {
+                Ok(Some(to)) => {
+                    let _ = this.update(cx, |this, cx| this.run(Op::Export { name, to }, cx));
+                }
+                Ok(None) => {}
+                Err(error) => cx.update(|cx| {
+                    snackbar::show(cx, SnackbarKind::Error, describe(error));
+                }),
+            },
+        )
         .detach();
     }
 
