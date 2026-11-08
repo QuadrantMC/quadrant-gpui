@@ -6,7 +6,13 @@
 //! signature in the background, and the title bar then offers to install
 //! it, which starts the installed app and quits this one.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FontWeight, Global, IntoElement as _,
@@ -319,14 +325,17 @@ impl Updater {
         // The installed app claims the single instance socket as it starts.
         let serving = cx
             .try_global::<SingleInstance>()
-            .map(|single| single.0.clone());
+            .map(|single| single.serving.clone());
+        let released = Arc::new(AtomicBool::new(false));
         let job = Backend::global(cx).run(cx, {
             let update = update.clone();
+            let released = released.clone();
             move |_| async move {
                 tokio::task::spawn_blocking(move || {
                     update.install(|| {
                         if let Some(serving) = serving {
                             serving.release();
+                            released.store(true, Ordering::SeqCst);
                         }
                     })
                 })
@@ -337,6 +346,11 @@ impl Updater {
             Ok(()) => cx.update(|cx| cx.quit()),
             Err(error) => {
                 log::error!("Installing the update failed: {error:#}");
+                // The install let go of the socket before it failed to
+                // start the new app; this one is still the app that runs.
+                if released.load(Ordering::SeqCst) {
+                    cx.update(SingleInstance::reclaim);
+                }
                 let _ = this.update(cx, |this, cx| {
                     this.status = Status::Ready(update);
                     snackbar::show(cx, SnackbarKind::Error, describe(error));

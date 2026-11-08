@@ -41,6 +41,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow, bail};
+use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions,
     point, px, size,
@@ -171,6 +172,14 @@ fn parse_args(
     {
         bail!("--perf needs --data-dir and --mc-folder, pointing at a sandbox");
     }
+    // Screenshot mode turns experimental features on and registers a mod in
+    // a pack, which on the desktop app's folders would change the user's
+    // settings (and their sync) and a real pack.
+    if matches!(parsed.mode, Mode::Screenshot(_))
+        && (parsed.data_dir.is_none() || parsed.mc_folder.is_none())
+    {
+        bail!("--screenshot needs --data-dir and --mc-folder, pointing at a sandbox");
+    }
     // The host saves the Minecraft folder as the data folder's `mcFolder`
     // setting, so without a data folder of its own it would rewrite the
     // desktop app's.
@@ -180,6 +189,17 @@ fn parse_args(
         );
     }
     Ok(parsed)
+}
+
+impl Args {
+    /// The folders as absolute paths, so the keyring entry, the host's saved
+    /// `mcFolder` and the login item (which records absolute paths) all name
+    /// the same folders whatever the working directory.
+    fn absolute(mut self) -> Result<Self> {
+        self.data_dir = self.data_dir.map(std::path::absolute).transpose()?;
+        self.mc_folder = self.mc_folder.map(std::path::absolute).transpose()?;
+        Ok(self)
+    }
 }
 
 fn is_debug_flag(arg: &OsStr) -> bool {
@@ -294,6 +314,8 @@ struct Running {
     prefs: Prefs,
     themes: color_theme::Themes,
     args: Args,
+    /// The data folder in use, resolved.
+    data_dir: PathBuf,
     /// Where later launches reach this one; `None` in screenshot and perf
     /// runs, or when the socket failed.
     primary: Option<single_instance::Primary>,
@@ -306,14 +328,58 @@ struct Running {
 
 /// This instance's hold on the single instance socket, which the updater
 /// releases before it starts the installed app.
-pub struct SingleInstance(pub Serving);
+#[cfg_attr(
+    not(feature = "updater"),
+    expect(dead_code, reason = "only the updater takes the socket back")
+)]
+pub struct SingleInstance {
+    pub serving: Serving,
+    data_dir: PathBuf,
+    links: UnboundedSender<Vec<String>>,
+}
 
 impl gpui::Global for SingleInstance {}
+
+impl SingleInstance {
+    fn serve(
+        primary: single_instance::Primary,
+        data_dir: PathBuf,
+        links: UnboundedSender<Vec<String>>,
+    ) -> Self {
+        let forward = links.clone();
+        let serving = primary.serve(move |urls| {
+            let _ = forward.unbounded_send(urls);
+        });
+        Self {
+            serving,
+            data_dir,
+            links,
+        }
+    }
+
+    /// Listens for later launches again, after an install released the
+    /// socket and then failed to start the new app, so this instance keeps
+    /// being the one they reach.
+    #[cfg(feature = "updater")]
+    pub fn reclaim(cx: &mut App) {
+        let Some(old) = cx.try_global::<Self>() else {
+            return;
+        };
+        let (data_dir, links) = (old.data_dir.clone(), old.links.clone());
+        match single_instance::claim(&data_dir, &[], false) {
+            Ok(Claim::Primary(primary)) => cx.set_global(Self::serve(primary, data_dir, links)),
+            Ok(Claim::Forwarded) => log::warn!("Another instance took the single-instance socket"),
+            Err(error) => {
+                log::warn!("Later launches will start instances of their own: {error:#}")
+            }
+        }
+    }
+}
 
 /// `None` when Quadrant or another instance took the launch and this one is
 /// done.
 fn launch(raw_args: Vec<OsString>, launched: Launch) -> Result<Option<Running>> {
-    let args = parse_args(raw_args.clone(), |key| std::env::var_os(key))?;
+    let args = parse_args(raw_args.clone(), |key| std::env::var_os(key))?.absolute()?;
     let data_dir = data_folder(args.data_dir.as_deref())?;
     // Before the host starts, so a launch handed on leaves the config alone.
     #[cfg(feature = "updater")]
@@ -343,15 +409,11 @@ fn launch(raw_args: Vec<OsString>, launched: Launch) -> Result<Option<Running>> 
         log::warn!("Later launches will start instances of their own: {error:#}");
         None
     });
-    let mc_folder = args
-        .mc_folder
-        .as_deref()
-        .map(std::path::absolute)
-        .transpose()?;
-    let sandbox =
-        args.data_dir
-            .is_some()
-            .then_some((key.as_str(), data_dir.as_path(), mc_folder.as_deref()));
+    let sandbox = args.data_dir.is_some().then_some((
+        key.as_str(),
+        data_dir.as_path(),
+        args.mc_folder.as_deref(),
+    ));
     let autostart = autostart::Autostart::new(sandbox)
         .inspect_err(|error| log::warn!("No launch at login: {error:#}"))
         .ok();
@@ -360,6 +422,7 @@ fn launch(raw_args: Vec<OsString>, launched: Launch) -> Result<Option<Running>> 
         prefs,
         themes,
         args,
+        data_dir,
         primary,
         autostart,
         bundle,
@@ -376,9 +439,14 @@ fn start(args: &Args) -> Result<(Backend, Prefs, color_theme::Themes)> {
         args.mc_folder.clone(),
         credentials(&args.mode),
     )?;
+    // Not the links: a sign-in link carries its code.
     log::debug!(
-        "Quadrant-Native {} started with {args:?}",
-        env!("CARGO_PKG_VERSION")
+        "Quadrant-Native {} started with data folder {:?}, Minecraft folder {:?}, {:?}, {} link(s)",
+        env!("CARGO_PKG_VERSION"),
+        args.data_dir,
+        args.mc_folder,
+        args.mode,
+        args.urls.len()
     );
     let prefs = Prefs::read(&host);
     let themes = color_theme::Themes::scan(&color_theme::folder(&host.options().data_dir));
@@ -453,17 +521,20 @@ fn main() -> ExitCode {
     let raw_args: Vec<OsString> = std::env::args_os().skip(1).collect();
     // Before parsing, so a bad argument is reported in the console too.
     let console = console::Console::setup(raw_args.iter().any(|arg| is_debug_flag(arg)));
-    let (backend, prefs, themes, args, primary, autostart, bundle) =
+    let (backend, prefs, themes, args, data_dir, primary, autostart, bundle) =
         match launch(raw_args, launched) {
             Ok(Some(Running {
                 backend,
                 prefs,
                 themes,
                 args,
+                data_dir,
                 primary,
                 autostart,
                 bundle,
-            })) => (backend, prefs, themes, args, primary, autostart, bundle),
+            })) => (
+                backend, prefs, themes, args, data_dir, primary, autostart, bundle,
+            ),
             Ok(None) => return ExitCode::SUCCESS,
             Err(error) => {
                 console.fatal(&format!("{error:#}"));
@@ -536,10 +607,7 @@ fn main() -> ExitCode {
                     let _ = links.unbounded_send(args.urls.clone());
                 }
                 if let Some(primary) = primary {
-                    let serving = primary.serve(move |urls| {
-                        let _ = links.unbounded_send(urls);
-                    });
-                    cx.set_global(SingleInstance(serving));
+                    cx.set_global(SingleInstance::serve(primary, data_dir, links));
                 }
                 app::open_links(inbox, window, cx);
             }
@@ -728,8 +796,39 @@ mod tests {
         assert!(!follows_channel(&parse(&[]), false));
         assert!(!follows_channel(&parse(&["--noupdater"]), true));
         assert!(!follows_channel(&parse(&["--data-dir", "sandbox"]), true));
-        #[cfg(feature = "screenshot")]
-        assert!(!follows_channel(&parse(&["--screenshot", "out"]), true));
+        let screenshot = Args {
+            mode: Mode::Screenshot("out".into()),
+            ..Args::default()
+        };
+        assert!(!follows_channel(&screenshot, true));
+    }
+
+    #[cfg(feature = "screenshot")]
+    #[test]
+    fn screenshots_need_a_sandbox() {
+        let shoot = |extra: &[&str]| {
+            let mut list = vec!["--screenshot", "out"];
+            list.extend(extra);
+            parse_args(args(&list), |_| None)
+        };
+        assert!(shoot(&[]).is_err());
+        assert!(shoot(&["--data-dir", "data"]).is_err());
+        assert!(shoot(&["--data-dir", "data", "--mc-folder", "mc"]).is_ok());
+    }
+
+    #[test]
+    fn the_folders_become_absolute_once_so_every_user_of_them_agrees() {
+        let parsed = parse_args(
+            args(&["--data-dir", "sandbox/data", "--mc-folder", "sandbox/mc"]),
+            |_| None,
+        )
+        .unwrap()
+        .absolute()
+        .unwrap();
+        let (data, mc) = (parsed.data_dir.unwrap(), parsed.mc_folder.unwrap());
+        assert!(data.is_absolute() && data.ends_with("sandbox/data"));
+        assert!(mc.is_absolute() && mc.ends_with("sandbox/mc"));
+        assert_eq!(Args::default().absolute().unwrap(), Args::default());
     }
 
     #[test]
