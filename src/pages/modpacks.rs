@@ -37,7 +37,7 @@ use crate::{
     motion,
     pages::{
         mod_grid::HintedList,
-        modpack_view::{ModpackView, ModpackViewEvent, catalog_keys},
+        modpack_view::{ModpackView, ModpackViewEvent},
     },
     prefs::Prefs,
     session::Session,
@@ -441,10 +441,7 @@ enum View {
         _events: Subscription,
     },
     /// A Quadrant Share or Quadrant Sync pack, with its download.
-    Shared {
-        modpack: Box<InstalledModpack>,
-        sync: Option<SyncTarget>,
-    },
+    Shared(Box<details::SharedPack>),
 }
 
 pub struct ModpacksPage {
@@ -526,7 +523,8 @@ impl ModpacksPage {
         // A shared pack's cards fill in as their providers answer.
         let catalog = ModCatalog::global(cx);
         cx.observe(&catalog, |this, _, cx| {
-            if matches!(this.view, View::Shared { .. }) {
+            if let View::Shared(shared) = &mut this.view {
+                shared.retally(cx);
                 cx.notify();
             }
         })
@@ -764,10 +762,7 @@ impl ModpacksPage {
                                 cx.write_to_clipboard(ClipboardItem::new_string(link))
                             }
                             Outcome::Shared(modpack) => this.show(
-                                View::Shared {
-                                    modpack,
-                                    sync: None,
-                                },
+                                View::Shared(Box::new(details::SharedPack::new(*modpack, None))),
                                 cx,
                             ),
                         }
@@ -1040,10 +1035,11 @@ impl ModpacksPage {
         cx.notify();
     }
 
-    fn show(&mut self, view: View, cx: &mut Context<Self>) {
-        if let View::Shared { modpack, .. } = &view {
-            let keys = catalog_keys(&details::cards(modpack));
+    fn show(&mut self, mut view: View, cx: &mut Context<Self>) {
+        if let View::Shared(shared) = &mut view {
+            let keys = shared.keys().to_vec();
             ModCatalog::global(cx).update(cx, |catalog, cx| catalog.want(keys, cx));
+            shared.retally(cx);
             self.shared_entrance.restart();
         }
         let left = std::mem::replace(&mut self.view, view);
@@ -1067,7 +1063,7 @@ impl ModpacksPage {
         match &self.view {
             View::List => None,
             View::Details { view, .. } => Some(view.read(cx).modpack().name.clone().into()),
-            View::Shared { modpack, .. } => Some(modpack.name.clone().into()),
+            View::Shared(shared) => Some(shared.modpack.name.clone().into()),
         }
     }
 
@@ -1077,16 +1073,13 @@ impl ModpacksPage {
     /// asked about, for screenshots. Nothing is asked of the providers.
     #[cfg(feature = "screenshot")]
     pub fn preview_shared(&mut self, synced: &SyncedModpack, cx: &mut Context<Self>) {
-        let modpack = cloud::installable(synced, &synced.name);
-        let keys = catalog_keys(&details::cards(&modpack));
-        ModCatalog::global(cx).update(cx, |catalog, _| catalog.preview_pending(keys));
-        self.show(
-            View::Shared {
-                modpack: Box::new(modpack),
-                sync: Some(SyncTarget::of(synced)),
-            },
-            cx,
+        let shared = details::SharedPack::new(
+            cloud::installable(synced, &synced.name),
+            Some(SyncTarget::of(synced)),
         );
+        let keys = shared.keys().to_vec();
+        ModCatalog::global(cx).update(cx, |catalog, _| catalog.preview_pending(keys));
+        self.show(View::Shared(Box::new(shared)), cx);
     }
 
     #[cfg(feature = "screenshot")]
@@ -1529,7 +1522,13 @@ impl Render for ModpacksPage {
             });
         }
         self.sync_list(cx);
-        let current = self.render_view(&self.view, window, cx);
+        if let View::Shared(shared) = &mut self.view {
+            shared.prepare(window);
+        }
+        if let Some((View::Shared(shared), _)) = &mut self.leaving {
+            shared.prepare(window);
+        }
+        let current = self.render_view(&self.view, false, cx);
         let Some((leaving, crossfade)) = &self.leaving else {
             return current;
         };
@@ -1542,7 +1541,7 @@ impl Render for ModpacksPage {
                 div()
                     .absolute()
                     .inset_0()
-                    .child(self.render_view(leaving, window, cx)),
+                    .child(self.render_view(leaving, true, cx)),
             )
             .child(
                 div()
@@ -1562,8 +1561,7 @@ impl Render for ModpacksPage {
 }
 
 impl ModpacksPage {
-    fn render_view(&self, view: &View, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let page = v_flex().size_full().overflow_y_scrollbar();
+    fn render_view(&self, view: &View, leaving: bool, cx: &mut Context<Self>) -> AnyElement {
         match view {
             View::List => div()
                 .size_full()
@@ -1579,34 +1577,7 @@ impl ModpacksPage {
                 .vertical_scrollbar(&self.list.state)
                 .into_any_element(),
             View::Details { view, .. } => view.clone().into_any_element(),
-            View::Shared { modpack, sync } => {
-                let header = format!(
-                    "{} | {} | {} | {}",
-                    modpack.name,
-                    modpack.mod_loader,
-                    modpack.version,
-                    t_with("modCount", &[("amount", &modpack.mods.len().to_string())])
-                );
-                let download = self
-                    .download_button(
-                        "shared-download",
-                        t("download"),
-                        (**modpack).clone(),
-                        sync.clone(),
-                        cx,
-                    )
-                    .into_any_element();
-                let cards = details::cards(modpack);
-                page.child(details::render(
-                    header.into(),
-                    download,
-                    &cards,
-                    self.shared_frame,
-                    window,
-                    cx,
-                ))
-                .into_any_element()
-            }
+            View::Shared(shared) => self.render_shared(shared, leaving, cx),
         }
     }
 }

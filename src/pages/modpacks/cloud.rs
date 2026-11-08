@@ -2,6 +2,8 @@
 //! `mergeModpacks`, `syncDates`, `SyncedModpack`, `CloudMembersPanel` and the
 //! share code banner. All of it needs a signed-in Quadrant ID.
 
+use std::rc::Rc;
+
 use chrono::{Local, TimeZone as _};
 use gpui::{
     App, AppContext as _, ClickEvent, Context, Entity, FontWeight, InteractiveElement as _,
@@ -178,7 +180,7 @@ impl ModpacksPage {
         &self,
         id: impl Into<gpui::ElementId>,
         label: SharedString,
-        modpack: InstalledModpack,
+        modpack: Rc<InstalledModpack>,
         sync: Option<SyncTarget>,
         cx: &mut Context<Self>,
     ) -> Button {
@@ -194,7 +196,7 @@ impl ModpacksPage {
             move |this, _, _, cx| {
                 this.run(
                     Op::Install {
-                        modpack: Box::new(modpack.clone()),
+                        modpack: Box::new((*modpack).clone()),
                         sync: sync.clone(),
                     },
                     cx,
@@ -248,10 +250,10 @@ impl ModpacksPage {
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.show(
-                    View::Shared {
-                        modpack: Box::new(modpack.clone()),
-                        sync: Some(target.clone()),
-                    },
+                    View::Shared(Box::new(super::details::SharedPack::new(
+                        modpack.clone(),
+                        Some(target.clone()),
+                    ))),
                     cx,
                 )
             }))
@@ -284,7 +286,7 @@ impl ModpacksPage {
                     .child(self.download_button(
                         ("cloud-download", index),
                         t("download"),
-                        modpack,
+                        Rc::new(modpack),
                         Some(target),
                         cx,
                     ))
@@ -375,7 +377,7 @@ impl ModpacksPage {
                 self.download_button(
                     element_id("force-pull"),
                     t("forcePull"),
-                    installable(synced, name),
+                    Rc::new(installable(synced, name)),
                     Some(SyncTarget::of(synced)),
                     cx,
                 )

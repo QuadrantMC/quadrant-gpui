@@ -709,25 +709,12 @@ impl ModpackView {
                         self.card(index, card, Some(slot), cx)
                     })
                     .collect();
-                let first = row == 0;
-                let last = row + 1 == shape.rows.len();
-                v_flex()
-                    .w_full()
-                    .px_4()
-                    .when(last, |this| this.pb_4())
-                    .child(
-                        div()
-                            .ml_2()
-                            .mr_4()
-                            .when(last, |this| this.mb_12())
-                            .px_4()
-                            .bg(theme::palette().surface)
-                            .map(|this| if last { this.pb_4() } else { this.pb(gap) })
-                            .when(first, |this| this.pt_4().rounded_t(theme::radius_card()))
-                            .when(last, |this| this.rounded_b(theme::radius_card()))
-                            .child(mod_grid::row(shape.rows.columns, gap, elements)),
-                    )
-                    .into_any_element()
+                grid_row(
+                    row,
+                    shape.rows.len(),
+                    gap,
+                    mod_grid::row(shape.rows.columns, gap, elements),
+                )
             }
             Item::Trailer(_) => v_flex()
                 .w_full()
@@ -737,6 +724,30 @@ impl ModpackView {
                 .into_any_element(),
         }
     }
+}
+
+/// Row `row` of `rows` of a virtualized grid of cards: a slice of the
+/// slate-800 panel the grid sits on, `gap` below it until the last.
+pub fn grid_row(row: usize, rows: usize, gap: gpui::Rems, cards: gpui::Div) -> AnyElement {
+    let first = row == 0;
+    let last = row + 1 == rows;
+    v_flex()
+        .w_full()
+        .px_4()
+        .when(last, |this| this.pb_4())
+        .child(
+            div()
+                .ml_2()
+                .mr_4()
+                .when(last, |this| this.mb_12())
+                .px_4()
+                .bg(theme::palette().surface)
+                .map(|this| if last { this.pb_4() } else { this.pb(gap) })
+                .when(first, |this| this.pt_4().rounded_t(theme::radius_card()))
+                .when(last, |this| this.rounded_b(theme::radius_card()))
+                .child(cards),
+        )
+        .into_any_element()
 }
 
 fn spinner() -> AnyElement {
