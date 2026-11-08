@@ -224,6 +224,7 @@ impl ModpacksPage {
             "shared-download",
             t("download"),
             modpack.clone(),
+            &modpack.name,
             shared.sync.clone(),
             cx,
         );

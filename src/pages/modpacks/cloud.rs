@@ -166,6 +166,31 @@ pub fn installable(synced: &SyncedModpack, name: &str) -> InstalledModpack {
     }
 }
 
+/// The account's Quadrant Sync records, each with the manifest it describes
+/// read once per listing: the cards draw from it every frame, and a pack's
+/// mods JSON is too large to parse that often.
+#[derive(Default)]
+pub struct SyncedList {
+    pub records: Vec<SyncedModpack>,
+    packs: Vec<Rc<InstalledModpack>>,
+}
+
+impl SyncedList {
+    pub fn new(records: Vec<SyncedModpack>) -> Self {
+        let packs = records
+            .iter()
+            .map(|synced| Rc::new(installable(synced, &synced.name)))
+            .collect();
+        Self { records, packs }
+    }
+
+    /// The record at `place` in `records` and its manifest, under its cloud
+    /// name.
+    pub fn get(&self, place: usize) -> (&SyncedModpack, &Rc<InstalledModpack>) {
+        (&self.records[place], &self.packs[place])
+    }
+}
+
 /// Whether `account` may kick `username`: admins may kick anyone but
 /// themselves.
 pub fn can_kick(synced: &SyncedModpack, account: &AccountInfo, username: &str) -> bool {
@@ -177,19 +202,21 @@ pub fn can_kick(synced: &SyncedModpack, account: &AccountInfo, username: &str) -
 }
 
 impl ModpacksPage {
-    /// The download button of a cloud pack, showing the install's progress
-    /// while it runs.
+    /// The download button of a cloud pack, which installs it as `name`,
+    /// showing the install's progress while it runs.
     pub(super) fn download_button(
         &self,
         id: impl Into<gpui::ElementId>,
         label: SharedString,
         modpack: Rc<InstalledModpack>,
+        name: &str,
         sync: Option<SyncTarget>,
         cx: &mut Context<Self>,
     ) -> Button {
         let installing = self.running_any(
-            |op| matches!(op, Op::Install { modpack: running, .. } if running.name == modpack.name),
+            |op| matches!(op, Op::Install { modpack: running, .. } if running.name == name),
         );
+        let name = name.to_string();
         let (tone, label) = match (installing, self.install_progress) {
             (true, Some(progress)) => (Tone::Neutral, format!("{:.2}%", progress * 100.).into()),
             (true, None) => (Tone::Neutral, "0.00%".into()),
@@ -198,14 +225,17 @@ impl ModpacksPage {
         theme::pill_button(id, tone, label, Some(MdIcon::Download), cx).on_click(cx.listener(
             move |this, _, window, cx| {
                 let op = Op::Install {
-                    modpack: Box::new((*modpack).clone()),
+                    modpack: Box::new(InstalledModpack {
+                        name: name.clone(),
+                        ..(*modpack).clone()
+                    }),
                     sync: sync.clone(),
                 };
                 let review = Review::of(&modpack.mods);
                 if review.is_empty() {
                     this.run(op, cx)
                 } else {
-                    this.confirm_install(op, &modpack.name, review, window, cx)
+                    this.confirm_install(op, &name, review, window, cx)
                 }
             },
         ))
@@ -261,10 +291,10 @@ impl ModpacksPage {
         &self,
         index: usize,
         synced: &SyncedModpack,
+        modpack: &Rc<InstalledModpack>,
         account: &AccountInfo,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let modpack = installable(synced, &synced.name);
         let target = SyncTarget::of(synced);
         let line = format!(
             "{} | {} | {} | {}",
@@ -286,7 +316,7 @@ impl ModpacksPage {
                 cx,
             )
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.run(Op::ShareRaw(Box::new(modpack.clone())), cx)
+                this.run(Op::ShareRaw(Box::new((*modpack).clone())), cx)
             }))
         };
         let details = {
@@ -302,7 +332,7 @@ impl ModpacksPage {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.show(
                     View::Shared(Box::new(super::details::SharedPack::new(
-                        modpack.clone(),
+                        (*modpack).clone(),
                         Some(target.clone()),
                     ))),
                     cx,
@@ -337,14 +367,15 @@ impl ModpacksPage {
                     .child(self.download_button(
                         ("cloud-download", index),
                         t("download"),
-                        Rc::new(modpack),
+                        modpack.clone(),
+                        &synced.name,
                         Some(target),
                         cx,
                     ))
                     .child(share)
                     .child(details),
             )
-            .child(self.render_sync_panel(synced, None, account, cx))
+            .child(self.render_sync_panel(synced, modpack, None, account, cx))
     }
 
     /// The folding Quadrant Sync panel of a card: members, kicking, inviting,
@@ -352,6 +383,7 @@ impl ModpacksPage {
     pub(super) fn render_sync_panel(
         &self,
         synced: &SyncedModpack,
+        modpack: &Rc<InstalledModpack>,
         local_name: Option<&str>,
         account: &AccountInfo,
         cx: &mut Context<Self>,
@@ -428,7 +460,8 @@ impl ModpacksPage {
                 self.download_button(
                     element_id("force-pull"),
                     t("forcePull"),
-                    Rc::new(installable(synced, name)),
+                    modpack.clone(),
+                    name,
                     Some(SyncTarget::of(synced)),
                     cx,
                 )
@@ -754,6 +787,16 @@ mod tests {
         assert_eq!(pack.name, "Local");
         assert_eq!(pack.mods.len(), 1);
         assert_eq!(pack.mod_loader, ModLoader::Forge);
+    }
+
+    #[test]
+    fn the_listing_reads_each_pack_once_under_its_cloud_name() {
+        let list = SyncedList::new(vec![cloud("One", "one", 1), cloud("Two", "two", 2)]);
+        let (record, pack) = list.get(1);
+        assert_eq!(record.modpack_id, "two");
+        assert_eq!(pack.name, "Two");
+        assert_eq!(pack.mods.len(), 1);
+        assert!(Rc::ptr_eq(pack, list.get(1).1));
     }
 
     #[test]

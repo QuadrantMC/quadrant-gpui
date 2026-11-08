@@ -1,6 +1,6 @@
 //! The Apply page: local modpacks, after `ApplyPage` in the desktop app.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, rc::Rc};
 
 use quadrant_core::{
     account::{id::AccountInfo, quadrant_sync::SyncedModpack},
@@ -463,7 +463,7 @@ pub struct ModpacksPage {
     folders: Option<Task<()>>,
     session: Entity<Session>,
     /// The signed-in account's Quadrant Sync packs; `Idle` while signed out.
-    synced: Loadable<Vec<SyncedModpack>>,
+    synced: Loadable<cloud::SyncedList>,
     /// The modpacks, the Sync packs, the account or the search changed since
     /// `rows` was made: merging the lists is too slow for every frame.
     rows_stale: bool,
@@ -613,7 +613,7 @@ impl ModpacksPage {
         self.synced_listing.start(cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.synced = Loadable::from_result(result);
+                this.synced = Loadable::from_result(result.map(cloud::SyncedList::new));
                 this.rows_stale = true;
                 if this.synced_listing.landed() {
                     this.load_synced(cx);
@@ -1031,7 +1031,7 @@ impl ModpacksPage {
             .map(|modpack| modpack.modpack_id.clone())
             .into_iter()
             .collect();
-        self.synced = Loadable::Ready(synced);
+        self.synced = Loadable::Ready(cloud::SyncedList::new(synced));
         self.rows_stale = true;
         self.search.update(cx, |input, cx| {
             input.set_value(search.to_string(), window, cx)
@@ -1203,7 +1203,7 @@ impl ModpacksPage {
         &self,
         index: usize,
         modpack: &LocalModpack,
-        synced: Option<&SyncedModpack>,
+        synced: Option<(&SyncedModpack, &Rc<InstalledModpack>)>,
         account: Option<&AccountInfo>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1244,15 +1244,15 @@ impl ModpacksPage {
             }))
         });
         let mut line = metadata_line(modpack);
-        if let Some(synced) = synced {
+        if let Some((synced, _)) = synced {
             line.push_str(" | ");
             line.push_str(&t_with(
                 "cloudSyncDate",
                 &[("date", &cloud::format_sync_date(synced.last_synced))],
             ));
         }
-        let panel = synced.zip(account).map(|(synced, account)| {
-            self.render_sync_panel(synced, Some(&modpack.name), account, cx)
+        let panel = synced.zip(account).map(|((synced, pack), account)| {
+            self.render_sync_panel(synced, pack, Some(&modpack.name), account, cx)
                 .into_any_element()
         });
         let apply = if modpack.is_applied {
@@ -1396,7 +1396,7 @@ impl ModpacksPage {
 
     fn synced_slice(&self) -> &[SyncedModpack] {
         match &self.synced {
-            Loadable::Ready(synced) => synced.as_slice(),
+            Loadable::Ready(synced) => synced.records.as_slice(),
             Loadable::Idle | Loadable::Loading | Loadable::Failed(_) => &[],
         }
     }
@@ -1450,13 +1450,16 @@ impl ModpacksPage {
                     return div().into_any_element();
                 };
                 let account = self.sync_account(cx);
-                let synced = synced.map(|place| &self.synced_slice()[place]);
+                let synced = match (&self.synced, synced) {
+                    (Loadable::Ready(list), Some(place)) => Some(list.get(place)),
+                    _ => None,
+                };
                 let card = match (local, synced, &account) {
                     (Some(local), synced, account) => self
                         .render_card(index, &modpacks[local], synced, account.as_ref(), cx)
                         .into_any_element(),
-                    (None, Some(synced), Some(account)) => self
-                        .render_cloud_card(index, synced, account, cx)
+                    (None, Some((synced, pack)), Some(account)) => self
+                        .render_cloud_card(index, synced, pack, account, cx)
                         .into_any_element(),
                     (None, _, _) => div().into_any_element(),
                 };
