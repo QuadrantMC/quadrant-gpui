@@ -2,9 +2,13 @@
 //! downloads, description), after the desktop app's per-mod `getMod` calls
 //! in `ModpackView` and `SharedModpackView`. One app-wide cache: each mod is
 //! asked about once per run, however many views show it, and a view shows
-//! the manifest's own record until the answer arrives.
+//! the manifest's own record until the answer arrives. A provider that
+//! couldn't be reached is asked again, not remembered as not knowing the mod.
 
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::{Duration, Instant},
+};
 
 use futures::StreamExt as _;
 use gpui::{App, AppContext as _, Context, Entity, Global, Task};
@@ -12,7 +16,7 @@ use quadrant_core::{
     mc_mod::{GetModArgs, Mod},
     models::{ModLoader, ModSource},
 };
-use quadrant_host::QuadrantHost;
+use quadrant_host::{ErrorCode, QuadrantHost};
 
 use crate::backend::Backend;
 
@@ -20,6 +24,9 @@ use crate::backend::Backend;
 const BATCH: usize = 24;
 /// Requests in flight at once, well under the providers' rate limits.
 pub const CONCURRENCY: usize = 6;
+/// How long after an unreachable provider a mod is asked about again, when a
+/// view next wants it.
+const RETRY_AFTER: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ModKey {
@@ -46,8 +53,40 @@ impl ModKey {
 enum Answer {
     Pending,
     Found(Box<Mod>),
-    /// The provider had no record, or couldn't be reached.
+    /// The provider has no record of it.
     Missing,
+    /// The provider couldn't be reached (offline, rate limited, a server
+    /// error) at this moment.
+    Unreachable(Instant),
+}
+
+impl Answer {
+    /// Whether a view that wants the mod should ask again at `now`.
+    fn due(&self, now: Instant) -> bool {
+        matches!(self, Self::Unreachable(at) if now.duration_since(*at) >= RETRY_AFTER)
+    }
+}
+
+/// What one lookup came to.
+enum Reply {
+    Found(Box<Mod>),
+    Missing,
+    Unreachable,
+}
+
+/// Whether a failed lookup says nothing about the mod itself.
+fn unreachable(error: anyhow::Error) -> bool {
+    matches!(
+        quadrant_host::user_facing(error).downcast_ref::<ErrorCode>(),
+        Some(
+            ErrorCode::Timeout
+                | ErrorCode::RateLimited
+                | ErrorCode::Server
+                | ErrorCode::Network
+                | ErrorCode::BadResponse
+                | ErrorCode::Busy
+        )
+    )
 }
 
 /// How far the catalog got with a set of mods, for `loadingMods`.
@@ -86,7 +125,7 @@ impl ModCatalog {
     pub fn get(&self, source: &ModSource, id: &str) -> Option<&Mod> {
         match self.known.get(&ModKey::new(source, id)?)? {
             Answer::Found(found) => Some(found.as_ref()),
-            Answer::Pending | Answer::Missing => None,
+            Answer::Pending | Answer::Missing | Answer::Unreachable(_) => None,
         }
     }
 
@@ -97,18 +136,20 @@ impl ModCatalog {
             match self.known.get(key) {
                 Some(Answer::Found(_)) => tally.found += 1,
                 Some(Answer::Pending) => tally.pending += 1,
-                Some(Answer::Missing) | None => {}
+                Some(Answer::Missing | Answer::Unreachable(_)) | None => {}
             }
             tally
         })
     }
 
-    /// Asks about every mod not asked about yet. Observers are notified when
+    /// Asks about every mod not asked about yet, and again about those a
+    /// provider couldn't answer for a while ago. Observers are notified when
     /// records arrive and once the queue runs dry; a mod the provider doesn't
     /// know changes nothing before then.
     pub fn want(&mut self, mods: impl IntoIterator<Item = ModKey>, cx: &mut Context<Self>) {
+        let now = Instant::now();
         for key in mods {
-            if !self.known.contains_key(&key) {
+            if self.known.get(&key).is_none_or(|answer| answer.due(now)) {
                 self.known.insert(key.clone(), Answer::Pending);
                 self.queue.push_back(key);
             }
@@ -139,17 +180,25 @@ impl ModCatalog {
                 .await)
         });
         self.fetching = Some(cx.spawn(async move |this, cx| {
-            let answers = task
-                .await
-                .unwrap_or_else(|_| asked.into_iter().map(|key| (key, None)).collect());
+            let answers = task.await.unwrap_or_else(|_| {
+                asked
+                    .into_iter()
+                    .map(|key| (key, Reply::Unreachable))
+                    .collect()
+            });
             let _ = this.update(cx, |this, cx| {
                 this.fetching = None;
                 let mut found = false;
-                for (key, answer) in answers {
-                    found |= answer.is_some();
+                let now = Instant::now();
+                for (key, reply) in answers {
+                    found |= matches!(reply, Reply::Found(_));
                     this.known.insert(
                         key,
-                        answer.map_or(Answer::Missing, |found| Answer::Found(Box::new(found))),
+                        match reply {
+                            Reply::Found(record) => Answer::Found(record),
+                            Reply::Missing => Answer::Missing,
+                            Reply::Unreachable => Answer::Unreachable(now),
+                        },
                     );
                 }
                 if found || this.queue.is_empty() {
@@ -163,12 +212,17 @@ impl ModCatalog {
 
 /// The provider's record, with the flags `GetModArgs` sets left neutral;
 /// each view sets its own.
-async fn fetch(host: QuadrantHost, key: ModKey) -> (ModKey, Option<Mod>) {
+async fn fetch(host: QuadrantHost, key: ModKey) -> (ModKey, Reply) {
     match provider_record(&host, &key).await {
-        Ok(found) => (key, Some(found)),
+        Ok(found) => (key, Reply::Found(Box::new(found))),
         Err(error) => {
             log::debug!("no provider record for {}: {error:#}", key.id);
-            (key, None)
+            let reply = if unreachable(error) {
+                Reply::Unreachable
+            } else {
+                Reply::Missing
+            };
+            (key, reply)
         }
     }
 }
@@ -201,4 +255,35 @@ async fn curseforge(host: &QuadrantHost, args: GetModArgs) -> anyhow::Result<Mod
 #[cfg(not(feature = "curseforge"))]
 async fn curseforge(_: &QuadrantHost, _: GetModArgs) -> anyhow::Result<Mod> {
     anyhow::bail!("this build has no CurseForge support")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_provider_that_could_not_be_reached_says_nothing_about_the_mod() {
+        for code in [
+            ErrorCode::Timeout,
+            ErrorCode::RateLimited,
+            ErrorCode::Server,
+            ErrorCode::Network,
+        ] {
+            assert!(unreachable(code.into()), "{code}");
+        }
+        assert!(!unreachable(ErrorCode::NotFound.into()));
+        assert!(!unreachable(anyhow::anyhow!("Unsupported Mod Type")));
+    }
+
+    #[test]
+    fn only_an_unreachable_answer_is_asked_again_and_not_at_once() {
+        let at = Instant::now();
+        let later = at + RETRY_AFTER;
+        let unreachable = Answer::Unreachable(at);
+        assert!(!unreachable.due(at));
+        assert!(unreachable.due(later));
+        for settled in [Answer::Pending, Answer::Missing] {
+            assert!(!settled.due(later));
+        }
+    }
 }
