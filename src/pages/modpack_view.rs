@@ -175,6 +175,13 @@ pub fn installed_card(installed: &InstalledMod, modpack: &str) -> Mod {
     }
 }
 
+/// Whether the pages may offer to update, identify, share or sync `modpack`.
+/// The host refuses all of them for a pack whose `modConfigV2.json` doesn't
+/// parse; applying, exporting and deleting it still work.
+pub fn changeable(modpack: &LocalModpack) -> bool {
+    modpack.manifest_error.is_none()
+}
+
 /// Why a pack whose `modConfigV2.json` doesn't parse can't be changed or
 /// synced, as the desktop app's broken-pack notice says it.
 pub fn unreadable_notice(modpack: &LocalModpack) -> Option<impl IntoElement + use<>> {
@@ -647,8 +654,7 @@ impl ModpackView {
             }
             _ => self.modpack.mods.len(),
         };
-        // The host refuses to change a pack whose manifest it can't read.
-        let readable = self.modpack.manifest_error.is_none();
+        let readable = changeable(&self.modpack);
         let header = h_flex()
             .w_full()
             .mt_2()
@@ -909,5 +915,19 @@ mod tests {
         let finished = ["sodium".to_string()];
         assert_eq!(unfinished(&cards, Mode::Updates, &finished), [1]);
         assert_eq!(unfinished(&cards, Mode::Mods, &finished), [0, 1]);
+    }
+
+    #[test]
+    fn a_pack_with_an_unreadable_manifest_is_shown_as_broken() {
+        let mut modpack = crate::pages::search::logic::tests::modpack(
+            "Pack",
+            "1.21.1",
+            quadrant_core::models::ModLoader::Fabric,
+        );
+        assert!(changeable(&modpack));
+        assert!(unreadable_notice(&modpack).is_none());
+        modpack.manifest_error = Some("expected value at line 1".into());
+        assert!(!changeable(&modpack));
+        assert!(unreadable_notice(&modpack).is_some());
     }
 }

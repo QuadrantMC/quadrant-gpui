@@ -37,7 +37,7 @@ use crate::{
     motion,
     pages::{
         mod_grid::HintedList,
-        modpack_view::{ModpackView, ModpackViewEvent, unreadable_notice},
+        modpack_view::{ModpackView, ModpackViewEvent, changeable, unreadable_notice},
     },
     prefs::Prefs,
     session::Session,
@@ -1208,9 +1208,7 @@ impl ModpacksPage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let name = SharedString::from(modpack.name.clone());
-        // The host refuses to change, share or sync a pack whose manifest it
-        // can't read; applying, exporting and deleting it still work.
-        let broken = modpack.manifest_error.is_some();
+        let broken = !changeable(modpack);
         let share = {
             let name = name.clone();
             theme::pill_button(
