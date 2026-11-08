@@ -134,7 +134,7 @@ fn fill(text: &str, values: &[(&str, &str)]) -> String {
 /// The text for `key`, or the key itself when the desktop app has no such
 /// string, so a typo shows up on screen instead of as a blank.
 pub fn t(key: &str) -> SharedString {
-    lookup(key).unwrap_or(key).to_string().into()
+    lookup(key).map_or_else(|| key.to_string().into(), SharedString::new_static)
 }
 
 /// [`t`] with i18next-style `{{name}}` placeholders filled in.
