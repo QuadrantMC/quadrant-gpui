@@ -109,11 +109,17 @@ pub async fn finish_redirect(
         log::warn!("Ignored a sign-in redirect this app didn't start");
         return Ok(());
     }
-    let verifier = host
-        .get_config_value(OAUTH_VERIFIER)?
-        .and_then(|value| value.as_str().map(str::to_string));
+    let verifier = pending_verifier(&host)?;
     forget_state(&host, &state);
     host.oauth2_login(code, redirect_uri, verifier).await
+}
+
+/// The PKCE verifier stored with the pending sign-in. A sign-in that a
+/// version without PKCE started has none, and the API then refuses the code.
+fn pending_verifier(host: &QuadrantHost) -> Result<Option<String>> {
+    Ok(host
+        .get_config_value(OAUTH_VERIFIER)?
+        .and_then(|value| value.as_str().map(str::to_string)))
 }
 
 /// Removes the pending sign-in's state and verifier once it has ended either
@@ -386,6 +392,20 @@ mod tests {
         forget_state(&host, "newer");
         assert_eq!(host.get_config_value(OAUTH_STATE).unwrap(), None);
         assert_eq!(host.get_config_value(OAUTH_VERIFIER).unwrap(), None);
+    }
+
+    #[test]
+    fn a_redirect_redeems_its_code_with_the_stored_verifier() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut options = QuadrantHostOptions::new(temp.path().to_path_buf(), "", "", "");
+        options.keyring_service_name = "quadrant-gpui-tests".into();
+        let host = QuadrantHost::new(options).unwrap();
+        assert_eq!(pending_verifier(&host).unwrap(), None);
+        config::set(&host, OAUTH_VERIFIER, Value::String("the-verifier".into())).unwrap();
+        assert_eq!(
+            pending_verifier(&host).unwrap().as_deref(),
+            Some("the-verifier")
+        );
     }
 
     /// Default builds have no OAuth client, so signing in fails before it
