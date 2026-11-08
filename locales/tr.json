@@ -303,5 +303,6 @@
   "installedContentDeleteSelectedConfirm": "{{amount}} tanesi silinsin mi?",
   "errorContentMissing": "O paket artık o klasörde değil.",
   "launchAtLogin": "Oturum açılışında tepside başlat",
-  "allModsUpToDate": "Tüm modlar güncel."
+  "allModsUpToDate": "Tüm modlar güncel.",
+  "modpackUnreadable": "Quadrant bu modpack'in modConfigV2.json dosyasını okuyamıyor ({{error}}). Bu modpack'i değiştirmeden veya senkronize etmeden önce dosyayı düzeltin ya da modpack'i kaldırın."
 }

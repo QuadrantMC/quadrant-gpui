@@ -303,5 +303,6 @@
   "installedContentDeleteSelectedConfirm": "Delete {{amount}}?",
   "errorContentMissing": "That pack is no longer in that folder.",
   "launchAtLogin": "Launch at login, in the tray",
-  "allModsUpToDate": "Every mod is up to date."
+  "allModsUpToDate": "Every mod is up to date.",
+  "modpackUnreadable": "Quadrant can't read this modpack's modConfigV2.json ({{error}}). Fix or remove it before changing or syncing this modpack."
 }

@@ -175,6 +175,16 @@ pub fn installed_card(installed: &InstalledMod, modpack: &str) -> Mod {
     }
 }
 
+/// Why a pack whose `modConfigV2.json` doesn't parse can't be changed or
+/// synced, as the desktop app's broken-pack notice says it.
+pub fn unreadable_notice(modpack: &LocalModpack) -> Option<impl IntoElement + use<>> {
+    let error = modpack.manifest_error.as_deref()?;
+    Some(theme::warning_box(t_with(
+        "modpackUnreadable",
+        &[("error", error)],
+    )))
+}
+
 /// The modpack's mods as cards, most downloaded first.
 pub fn installed_cards(modpack: &LocalModpack) -> Vec<Mod> {
     let mut cards: Vec<Mod> = modpack
@@ -637,7 +647,9 @@ impl ModpackView {
             }
             _ => self.modpack.mods.len(),
         };
-        h_flex()
+        // The host refuses to change a pack whose manifest it can't read.
+        let readable = self.modpack.manifest_error.is_none();
+        let header = h_flex()
             .w_full()
             .mt_2()
             .mb_5()
@@ -659,17 +671,19 @@ impl ModpackView {
                     .items_center()
                     .gap_4()
                     .child(div().text_center().child(summary(&self.modpack, count)))
-                    .child(
-                        theme::pill_button(
-                            "updates",
-                            Tone::Primary,
-                            t("update"),
-                            Some(MdIcon::Update),
-                            cx,
+                    .when(readable, |this| {
+                        this.child(
+                            theme::pill_button(
+                                "updates",
+                                Tone::Primary,
+                                t("update"),
+                                Some(MdIcon::Update),
+                                cx,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_updates(cx))),
                         )
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_updates(cx))),
-                    )
-                    .when(self.modpack.unknown_mods, |this| {
+                    })
+                    .when(readable && self.modpack.unknown_mods, |this| {
                         this.child(
                             theme::pill_button(
                                 "identify",
@@ -681,7 +695,11 @@ impl ModpackView {
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_identify(cx))),
                         )
                     }),
-            )
+            );
+        v_flex()
+            .w_full()
+            .child(header)
+            .children(unreadable_notice(&self.modpack).map(|notice| div().mb_5().child(notice)))
     }
 
     /// The body when it isn't a grid: a waiting panel or the identification.

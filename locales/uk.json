@@ -309,5 +309,6 @@
   "installedContentDeleteSelectedConfirm": "Видалити {{amount}}?",
   "errorContentMissing": "Цього набору більше немає в тій теці.",
   "launchAtLogin": "Запускати під час входу, у треї",
-  "allModsUpToDate": "Усі моди оновлені."
+  "allModsUpToDate": "Усі моди оновлені.",
+  "modpackUnreadable": "Quadrant не може прочитати modConfigV2.json цього модпака ({{error}}). Виправте або видаліть його, перш ніж змінювати чи синхронізувати цей модпак."
 }

@@ -16,7 +16,7 @@ use gpui::{
     px,
 };
 use gpui_component::{
-    IndexPath, WindowExt as _,
+    Disableable as _, IndexPath, WindowExt as _,
     dialog::DialogFooter,
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -37,7 +37,7 @@ use crate::{
     motion,
     pages::{
         mod_grid::HintedList,
-        modpack_view::{ModpackView, ModpackViewEvent},
+        modpack_view::{ModpackView, ModpackViewEvent, unreadable_notice},
     },
     prefs::Prefs,
     session::Session,
@@ -1189,6 +1189,9 @@ impl ModpacksPage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let name = SharedString::from(modpack.name.clone());
+        // The host refuses to change, share or sync a pack whose manifest it
+        // can't read; applying, exporting and deleting it still work.
+        let broken = modpack.manifest_error.is_some();
         let share = {
             let name = name.clone();
             theme::pill_button(
@@ -1198,6 +1201,7 @@ impl ModpacksPage {
                 Some(MdIcon::Share),
                 cx,
             )
+            .disabled(broken)
             .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Share(_))))
             .on_click(cx.listener(move |this, _, _, cx| this.run(Op::Share(name.to_string()), cx)))
         };
@@ -1210,6 +1214,7 @@ impl ModpacksPage {
                 Some(MdIcon::Sync),
                 cx,
             )
+            .disabled(broken)
             .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Sync { .. })))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.run(
@@ -1275,6 +1280,7 @@ impl ModpacksPage {
                 Some(MdIcon::Edit),
                 cx,
             )
+            .disabled(broken)
             .loading(self.running_on(&modpack.name, |op| matches!(op, Op::Update { .. })))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_update_dialog(modpack.clone(), window, cx)
@@ -1324,6 +1330,7 @@ impl ModpacksPage {
                     }),
             )
             .child(div().text_color(theme::palette().text_muted).child(line))
+            .children(unreadable_notice(modpack).map(|notice| div().my_2().child(notice)))
             .children(self.prism.read(cx).applied_line(&modpack.name))
             .child(
                 h_flex()
@@ -1331,7 +1338,9 @@ impl ModpacksPage {
                     .flex_wrap()
                     .gap_4()
                     .child(apply)
-                    .children(prism::PrismMenus::menu(&self.prism, &modpack.name, cx))
+                    .when(!broken, |this| {
+                        this.children(prism::PrismMenus::menu(&self.prism, &modpack.name, cx))
+                    })
                     .child(share)
                     .children(sync)
                     .child(update)
