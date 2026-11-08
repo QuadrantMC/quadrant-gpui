@@ -6,7 +6,7 @@
 //! signature in the background, and the title bar then offers to install
 //! it, which starts the installed app and quits this one.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FontWeight, Global, IntoElement as _,
@@ -41,6 +41,9 @@ const PACKAGE: &str = "quadrant-native";
 /// Debug builds only: an update server to ask instead of Quadrant's, for
 /// testing the whole update against a local one. Plain http is allowed then.
 const ENDPOINT_OVERRIDE: &str = "QUADRANT_NATIVE_UPDATE_ENDPOINT";
+/// How often an idle updater looks for a release again. Closing the window
+/// hides the app into the tray, where it can run for days.
+const RECHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// What the title bar shows. Checking and failures show nothing, as in the
 /// desktop app; they are logged.
@@ -50,6 +53,20 @@ pub enum Status {
     Downloading(f32),
     Ready(Arc<Update>),
     Installing(Arc<Update>),
+}
+
+impl Status {
+    /// Whether the timer should look for a release now: not while one is
+    /// downloading, waiting to be installed or installing.
+    fn rechecks(&self) -> bool {
+        matches!(self, Self::Idle)
+    }
+
+    /// Whether a changed channel starts the check over. An install under way
+    /// can't be taken back.
+    fn restarts_on_channel_change(&self) -> bool {
+        !matches!(self, Self::Installing(_))
+    }
 }
 
 /// How this copy was installed, when it is an install that can replace
@@ -80,6 +97,8 @@ pub struct Updater {
     check: Arc<updates::Updater>,
     status: Status,
     work: Task<()>,
+    /// Asks for a release again every [`RECHECK_EVERY`].
+    timer: Task<()>,
     /// The `channel` setting; `None` until read.
     channel: Option<Channel>,
     /// The settings page's picker, built on its first render.
@@ -108,18 +127,17 @@ impl Updater {
             server: override_server.unwrap_or_else(|| updates::API_BASE.to_string()),
             ..check_for(bundle)
         };
-        Backend::global(cx)
-            .run(cx, |host| async move {
-                if let Some(path) = app_paths::current_executable() {
-                    app_paths::record(&host, RUNNING, &path)?;
-                }
-                Ok(())
-            })
-            .detach();
+        Backend::global(cx).run_logged(cx, "record the running app", |host| async move {
+            if let Some(path) = app_paths::current_executable() {
+                app_paths::record(&host, RUNNING, &path)?;
+            }
+            Ok(())
+        });
         let updater = cx.new(|cx| {
             let mut updater = Self::new(check, Status::Idle);
             updater.load_channel(cx);
             updater.check(cx);
+            updater.recheck_on_a_timer(cx);
             updater
         });
         cx.set_global(GlobalUpdater(updater));
@@ -130,6 +148,7 @@ impl Updater {
             check: Arc::new(check),
             status,
             work: Task::ready(()),
+            timer: Task::ready(()),
             channel: None,
             channel_select: None,
             _channel_picked: None,
@@ -153,6 +172,28 @@ impl Updater {
         if matches!(self.status, Status::Downloading(_) | Status::Installing(_)) {
             return;
         }
+        self.start_check(cx);
+    }
+
+    fn recheck_on_a_timer(&mut self, cx: &mut Context<Self>) {
+        self.timer = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(RECHECK_EVERY).await;
+                let rechecked = this.update(cx, |this, cx| {
+                    if this.status.rechecks() {
+                        this.check(cx);
+                    }
+                });
+                if rechecked.is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    /// Starts a check, dropping the one under way, so its release can't
+    /// come back after a newer check has answered.
+    fn start_check(&mut self, cx: &mut Context<Self>) {
         let (progress, mut progress_seen) = watch::channel(None::<f32>);
         let check = self.check.clone();
         let job = Backend::global(cx).run(cx, move |host| async move {
@@ -213,13 +254,22 @@ impl Updater {
     /// Saves the channel and checks it for a release, as the desktop app does.
     fn set_channel(&mut self, channel: Channel, cx: &mut Context<Self>) {
         self.channel = Some(channel);
+        let restarts = self.status.restarts_on_channel_change();
+        if restarts {
+            // What was found or is downloading belongs to the old channel.
+            self.work = Task::ready(());
+            taskbar::clear(cx, Job::Update);
+            self.status = Status::Idle;
+            cx.notify();
+        }
         let task = Backend::global(cx).run(cx, move |host| async move {
             config::set(&host, updates::CHANNEL_KEY, channel.as_str().into())
         });
         cx.spawn(async move |this, cx| match task.await {
-            Ok(()) => {
-                let _ = this.update(cx, |this, cx| this.check(cx));
+            Ok(()) if restarts => {
+                let _ = this.update(cx, |this, cx| this.start_check(cx));
             }
+            Ok(()) => {}
             Err(error) => cx.update(|cx| snackbar::show(cx, SnackbarKind::Error, describe(error))),
         })
         .detach();
@@ -388,4 +438,29 @@ pub fn channel_setting(window: &mut Window, cx: &mut App) -> Option<AnyElement> 
             ),
         );
     Some(field.into_any_element())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn update() -> Arc<Update> {
+        Arc::new(Update::preview(AppKind::QuadrantNative, RUNNING, "26.12.0"))
+    }
+
+    #[test]
+    fn the_timer_only_checks_for_an_idle_updater() {
+        assert!(Status::Idle.rechecks());
+        assert!(!Status::Downloading(0.5).rechecks());
+        assert!(!Status::Ready(update()).rechecks());
+        assert!(!Status::Installing(update()).rechecks());
+    }
+
+    #[test]
+    fn a_new_channel_drops_a_download_or_a_ready_release_but_not_an_install() {
+        assert!(Status::Idle.restarts_on_channel_change());
+        assert!(Status::Downloading(0.4).restarts_on_channel_change());
+        assert!(Status::Ready(update()).restarts_on_channel_change());
+        assert!(!Status::Installing(update()).restarts_on_channel_change());
+    }
 }
