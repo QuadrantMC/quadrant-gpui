@@ -9,7 +9,7 @@ use gpui::{
     Animation, AnimationExt as _, AnyElement, App, AppContext as _, Bounds, Context, Entity,
     FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Rems, Render,
     ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
-    Window, div, point, prelude::FluentBuilder as _, px, rems, rgb,
+    Window, div, point, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     Disableable as _, Icon, h_flex,
@@ -845,13 +845,13 @@ impl SearchPage {
                         .prefix(
                             Icon::new(MdIcon::Search)
                                 .size_4()
-                                .text_color(rgb(theme::TEXT_SUBTLE)),
+                                .text_color(theme::palette().text_subtle),
                         )
                         .h_10()
                         .pl_3p5()
                         .pr_4()
                         .rounded_full()
-                        .bg(rgb(theme::SURFACE))
+                        .bg(theme::palette().surface)
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM),
                 ),
@@ -877,7 +877,7 @@ impl SearchPage {
                     .child(
                         Icon::new(MdIcon::FilterAlt)
                             .size(rems(1.125))
-                            .text_color(rgb(theme::TEXT_BADGE)),
+                            .text_color(theme::palette().text_badge),
                     )
                     .child(
                         div()
@@ -897,9 +897,9 @@ impl SearchPage {
                                 .id("clear-all")
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(theme::TEXT_MUTED))
+                                .text_color(theme::palette().text_muted)
                                 .cursor_pointer()
-                                .hover(|this| this.text_color(rgb(theme::TEXT_DANGER)))
+                                .hover(|this| this.text_color(theme::palette().text_danger))
                                 .child(t("clearAll"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.change(window, cx, Filters::clear_all)
@@ -912,9 +912,9 @@ impl SearchPage {
                             .tooltip(|window, cx| {
                                 Tooltip::new(t("collapseFilters")).build(window, cx)
                             })
-                            .text_color(rgb(theme::TEXT_MUTED))
+                            .text_color(theme::palette().text_muted)
                             .cursor_pointer()
-                            .hover(|this| this.text_color(rgb(theme::TEXT_BRIGHT)))
+                            .hover(|this| this.text_color(theme::palette().text_bright))
                             .child(Icon::new(MdIcon::ChevronLeft).size_5())
                             .on_click(
                                 cx.listener(|this, _, _, cx| this.set_filters_open(false, cx)),
@@ -1030,23 +1030,20 @@ impl SearchPage {
             t("noTargetModpackHint")
         };
         let target_color = if filters.target.is_some() {
-            theme::SELECTED
+            theme::palette().primary
         } else {
-            theme::CONTROL
+            theme::palette().control
         };
         v_flex()
             .mb_6()
             .child(theme::filter_label(t("installInto")))
-            .child(
-                picker(Select::new(&self.target_picker).disabled(no_modpacks))
-                    .bg(rgb(target_color)),
-            )
+            .child(picker(Select::new(&self.target_picker).disabled(no_modpacks)).bg(target_color))
             .child(
                 div()
                     .mt_1p5()
                     .text_size(px(11.5))
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(theme::TEXT_SUBTLE))
+                    .text_color(theme::palette().text_subtle)
                     .text_center()
                     .child(target_hint),
             )
@@ -1059,7 +1056,7 @@ impl SearchPage {
             v_flex()
                 .mb_6()
                 .child(theme::filter_label(t("installedContentInstallTo")))
-                .child(picker(select).bg(rgb(theme::CONTROL))),
+                .child(picker(select).bg(theme::palette().control)),
         )
     }
 
@@ -1067,7 +1064,7 @@ impl SearchPage {
         v_flex()
             .mb_6()
             .child(theme::filter_label(t("minecraftVersion")))
-            .child(picker(Select::new(&self.version_picker)).bg(rgb(theme::CONTROL)))
+            .child(picker(Select::new(&self.version_picker)).bg(theme::palette().control))
     }
 
     /// Only mods have a loader, so the section is absent for packs.
@@ -1114,7 +1111,7 @@ impl SearchPage {
                     .collect();
                 v_flex()
                     .border_t_1()
-                    .border_color(gpui::rgba(theme::RULE))
+                    .border_color(theme::palette().rule)
                     .pt_4()
                     .mb_3p5()
                     .child(
@@ -1134,7 +1131,7 @@ impl SearchPage {
                             .child(
                                 Icon::new(MdIcon::ExpandMore)
                                     .size(rems(1.0625))
-                                    .text_color(rgb(theme::TEXT_MUTED))
+                                    .text_color(theme::palette().text_muted)
                                     .when(folded, |icon| {
                                         icon.rotate(gpui::radians(std::f32::consts::PI))
                                     }),
@@ -1164,7 +1161,7 @@ impl SearchPage {
         let open_source = self.filters.open_source;
         v_flex()
             .border_t_1()
-            .border_color(gpui::rgba(theme::RULE))
+            .border_color(theme::palette().rule)
             .pt_4()
             .child(
                 h_flex()
@@ -1177,7 +1174,7 @@ impl SearchPage {
                         div()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(rgb(theme::TEXT_SOFT))
+                            .text_color(theme::palette().text_soft)
                             .child(t("openSourceOnly")),
                     )
                     .child(theme::switch(open_source))
@@ -1216,11 +1213,11 @@ impl SearchPage {
             .into_any_element();
         }
         let label_color = if disabled {
-            theme::TEXT_DISABLED
+            theme::palette().text_disabled
         } else if picked {
-            theme::TEXT
+            theme::palette().text
         } else {
-            theme::TEXT_SOFT
+            theme::palette().text_soft
         };
         h_flex()
             .id(id)
@@ -1233,7 +1230,7 @@ impl SearchPage {
             .when(disabled, |this| this.opacity(0.55))
             .when(!disabled, |this| {
                 this.cursor_pointer()
-                    .hover(|this| this.bg(gpui::rgba(theme::OPTION_HOVER)))
+                    .hover(|this| this.bg(theme::palette().option_hover))
                     .on_click(toggle)
             })
             .child(theme::check_box(picked, disabled))
@@ -1242,7 +1239,7 @@ impl SearchPage {
                     .flex_1()
                     .text_size(px(13.5))
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(label_color))
+                    .text_color(label_color)
                     .child(category.name.clone()),
             )
             .when_some(category.only_on(), |this, provider| {
@@ -1280,8 +1277,8 @@ impl SearchPage {
                         .items_center()
                         .justify_center()
                         .rounded_full()
-                        .bg(rgb(theme::SURFACE))
-                        .text_color(rgb(theme::TEXT_BADGE))
+                        .bg(theme::palette().surface)
+                        .text_color(theme::palette().text_badge)
                         .cursor_pointer()
                         .child(Icon::new(MdIcon::FilterAlt).size(rems(1.125)))
                         .when(!chips.is_empty(), |this| {
@@ -1300,7 +1297,7 @@ impl SearchPage {
                 div()
                     .text_sm()
                     .font_weight(FontWeight::BOLD)
-                    .text_color(rgb(theme::TEXT_MUTED))
+                    .text_color(theme::palette().text_muted)
                     .child(t_with(
                         "resultCount",
                         &[("count", &count.to_string()), ("type", &content_label)],
@@ -1315,7 +1312,7 @@ impl SearchPage {
                         div()
                             .text_xs()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(theme::TEXT_SUBTLE))
+                            .text_color(theme::palette().text_subtle)
                             .child(t("sortBy")),
                     )
                     .child(
@@ -1325,7 +1322,7 @@ impl SearchPage {
                             .h_9()
                             .px_2()
                             .rounded_full()
-                            .bg(rgb(theme::SURFACE))
+                            .bg(theme::palette().surface)
                             .text_size(px(13.5))
                             .font_weight(FontWeight::BOLD),
                     ),
@@ -1343,14 +1340,14 @@ impl SearchPage {
                         .gap_1p5()
                         .items_center()
                         .rounded_full()
-                        .bg(rgb(theme::CONTROL))
-                        .text_color(rgb(theme::TEXT_BADGE))
+                        .bg(theme::palette().control)
+                        .text_color(theme::palette().text_badge)
                         .text_size(px(12.5))
                         .font_weight(FontWeight::BOLD)
                         .cursor_pointer()
                         .hover(|this| {
-                            this.bg(rgb(theme::CHIP_REMOVE))
-                                .text_color(rgb(theme::CHIP_REMOVE_TEXT))
+                            this.bg(theme::palette().chip_remove)
+                                .text_color(theme::palette().chip_remove_text)
                         })
                         .child(chip.label())
                         .child(Icon::new(MdIcon::Close).size_3p5())
@@ -1381,7 +1378,8 @@ impl SearchPage {
                 Loadable::Failed(error) => div()
                     .p_4()
                     .rounded(theme::radius_card())
-                    .bg(rgb(theme::ERROR_FILL))
+                    .bg(theme::palette().destructive_hover)
+                    .text_color(theme::palette().on_accent)
                     .font_weight(FontWeight::BOLD)
                     .child(error.clone())
                     .into_any_element(),
@@ -1502,7 +1500,8 @@ impl SearchPage {
                             .items_center()
                             .justify_center()
                             .rounded_full()
-                            .bg(rgb(theme::POSITIVE_FILL))
+                            .bg(theme::palette().positive)
+                            .text_color(theme::palette().on_accent)
                             .child(Icon::new(MdIcon::ArrowForward).size_5());
                         // The desktop app's arrow slides away right while
                         // more results load, rather than turning into a
@@ -1560,7 +1559,7 @@ impl SearchPage {
                                 .px_2()
                                 .text_size(px(13.))
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(theme::TEXT_MUTED))
+                                .text_color(theme::palette().text_muted)
                                 .child(t_with(
                                     "pageOf",
                                     &[
@@ -1789,7 +1788,8 @@ fn count_badge(count: usize) -> impl IntoElement {
         .items_center()
         .justify_center()
         .rounded_full()
-        .bg(rgb(theme::SELECTED))
+        .bg(theme::palette().primary)
+        .text_color(theme::palette().on_accent)
         .text_xs()
         .font_weight(FontWeight::EXTRA_BOLD)
         .child(count.to_string())
@@ -1826,14 +1826,18 @@ fn empty_state(
         .items_center()
         .justify_center()
         .text_center()
-        .text_color(rgb(theme::TEXT_SUBTLE))
-        .child(Icon::new(icon).size_12().text_color(rgb(theme::CONTROL)))
+        .text_color(theme::palette().text_subtle)
+        .child(
+            Icon::new(icon)
+                .size_12()
+                .text_color(theme::palette().control),
+        )
         .child(
             div()
                 .mt_4()
                 .text_size(px(17.))
                 .font_weight(FontWeight::EXTRA_BOLD)
-                .text_color(rgb(theme::TEXT_MUTED))
+                .text_color(theme::palette().text_muted)
                 .child(title),
         )
         .child(

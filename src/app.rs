@@ -5,7 +5,7 @@ use gpui::{
     AnyElement, AnyView, App, AsyncApp, Context, Decorations, DispatchPhase, Entity, Global,
     InteractiveElement as _, IntoElement, KeyBinding, MouseButton, NavigationDirection,
     ParentElement as _, Render, ScrollDelta, ScrollEvent, Styled as _, Window, WindowControlArea,
-    WindowHandle, actions, canvas, div, prelude::FluentBuilder as _, px, rgb,
+    WindowHandle, actions, canvas, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{Root, h_flex, v_flex};
 
@@ -366,7 +366,7 @@ impl QuadrantApp {
                             }))
                     })),
             )
-            .child(div().w(px(4.)).h_full().bg(rgb(theme::CONTROL)))
+            .child(div().w(px(4.)).h_full().bg(theme::palette().control))
     }
 
     /// Whether the app draws the window buttons, which it doesn't where the
@@ -426,7 +426,7 @@ impl QuadrantApp {
             .px_4()
             .py_2()
             .border_b_4()
-            .border_color(rgb(theme::CONTROL))
+            .border_color(theme::palette().control)
             .window_control_area(WindowControlArea::Drag)
             .when(!cfg!(target_os = "windows"), |this| {
                 this.on_mouse_down(
@@ -461,7 +461,7 @@ impl QuadrantApp {
             // without the buttons' rounded container.
             .when(self.draws_window_buttons(window), |this| {
                 this.rounded_full()
-                    .bg(rgb(theme::SURFACE))
+                    .bg(theme::palette().surface)
                     .child(
                         theme::window_button("minimize", Tone::Control, MdIcon::Minimize, cx)
                             .on_click(|_, window, _| window.minimize_window()),
@@ -506,8 +506,8 @@ impl Render for QuadrantApp {
         let root = h_flex()
             .id("quadrant")
             .size_full()
-            .bg(rgb(theme::PAGE))
-            .text_color(rgb(theme::TEXT))
+            .bg(theme::palette().page)
+            .text_color(theme::palette().text)
             .font_family(theme::FONT_FAMILY)
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),

@@ -1,5 +1,6 @@
 //! The settings that change how the whole window looks: the language, the
-//! UI scale, round or rounded-square mod icons and the OS title bar.
+//! UI scale, the color theme, round or rounded-square mod icons and the OS
+//! title bar.
 //!
 //! [`Prefs`] is a gpui global read from the config before the window opens.
 //! Setters apply a change at once and save it in the background; a reload
@@ -12,6 +13,7 @@ use serde_json::Value;
 
 use crate::{
     backend::Backend,
+    color_theme::{ThemeId, Themes},
     config,
     i18n::{self, Locale},
     theme,
@@ -21,6 +23,7 @@ const LOCALE_KEY: &str = "locale";
 const UI_SCALE_KEY: &str = "uiScale";
 const CLIP_ICONS_KEY: &str = "clipIcons";
 const NATIVE_DECORATIONS_KEY: &str = "nativeDecorations";
+const COLOR_THEME_KEY: &str = "colorTheme";
 
 /// The desktop app's `uiScale.ts`: percent of the 16.8px root font size.
 pub const DEFAULT_UI_SCALE: u32 = 100;
@@ -40,7 +43,7 @@ pub fn clamp_ui_scale(scale: Option<f64>) -> u32 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Prefs {
     pub locale: Locale,
     /// Percent, within [`MIN_UI_SCALE`]..=[`MAX_UI_SCALE`].
@@ -49,6 +52,8 @@ pub struct Prefs {
     pub clip_icons: bool,
     /// The OS draws the title bar and window buttons.
     pub native_decorations: bool,
+    /// As saved, which may name a theme this machine doesn't have.
+    pub color_theme: ThemeId,
 }
 
 impl Default for Prefs {
@@ -58,6 +63,7 @@ impl Default for Prefs {
             ui_scale: DEFAULT_UI_SCALE,
             clip_icons: true,
             native_decorations: false,
+            color_theme: ThemeId::default(),
         }
     }
 }
@@ -78,11 +84,15 @@ impl Prefs {
             native_decorations: value(NATIVE_DECORATIONS_KEY)
                 .and_then(|value| value.as_bool())
                 .unwrap_or(defaults.native_decorations),
+            color_theme: value(COLOR_THEME_KEY)
+                .as_ref()
+                .and_then(Value::as_str)
+                .map_or(defaults.color_theme, |id| ThemeId::new(id.to_string())),
         }
     }
 
     pub fn global(cx: &App) -> Self {
-        cx.try_global::<Self>().copied().unwrap_or_default()
+        cx.try_global::<Self>().cloned().unwrap_or_default()
     }
 
     /// Applies `self` and keeps following settings sync. Before the window
@@ -107,24 +117,28 @@ impl Prefs {
 
     /// Shows `self` now, without saving it.
     pub fn apply(self, cx: &mut App) {
-        let old = cx.try_global::<Self>().copied();
-        if old.map(|old| old.locale) != Some(self.locale) {
+        let old = cx.try_global::<Self>().cloned();
+        if old.as_ref().map(|old| old.locale) != Some(self.locale) {
             i18n::set_locale(self.locale);
         }
-        if old.map(|old| old.ui_scale) != Some(self.ui_scale) {
+        if old.as_ref().map(|old| old.ui_scale) != Some(self.ui_scale) {
             theme::set_ui_scale(self.ui_scale, cx);
         }
+        show_color_theme(&self.color_theme, cx);
         // Only Linux can swap a window's decorations once it is open; elsewhere
         // the next window, at the next start, has them.
         #[cfg(target_os = "linux")]
-        if old.is_some_and(|old| old.native_decorations != self.native_decorations) {
+        if old
+            .as_ref()
+            .is_some_and(|old| old.native_decorations != self.native_decorations)
+        {
             for window in cx.windows() {
                 let _ = window.update(cx, |_, window, _| {
-                    window.request_decorations(window_decorations(self))
+                    window.request_decorations(window_decorations(&self))
                 });
             }
         }
-        if old != Some(self) {
+        if old.as_ref() != Some(&self) {
             cx.set_global(self);
             cx.refresh_windows();
         }
@@ -162,6 +176,16 @@ impl Prefs {
         save(cx, UI_SCALE_KEY, ui_scale.into());
     }
 
+    pub fn set_color_theme(color_theme: ThemeId, cx: &mut App) {
+        let saved = color_theme.as_str().to_string();
+        Self {
+            color_theme,
+            ..Self::global(cx)
+        }
+        .apply(cx);
+        save(cx, COLOR_THEME_KEY, saved.into());
+    }
+
     /// One [`UI_SCALE_STEP`] up for a positive `direction`, down for a
     /// negative one, as the desktop app's zoom shortcuts.
     pub fn zoom(direction: i64, cx: &mut App) {
@@ -170,8 +194,18 @@ impl Prefs {
     }
 }
 
+/// Switches to `id`'s theme as [`Themes`] has it now, unless it shows
+/// already; a rescan can change a theme's colors without changing its id.
+pub fn show_color_theme(id: &ThemeId, cx: &mut App) {
+    let wanted = Themes::global(cx).resolve(id);
+    let (palette, mode) = (wanted.palette, wanted.mode);
+    if theme::palette() != palette || gpui_component::Theme::global(cx).mode != mode {
+        theme::set_palette(palette, mode, cx);
+    }
+}
+
 /// What the window asks the platform for.
-pub fn window_decorations(prefs: Prefs) -> gpui::WindowDecorations {
+pub fn window_decorations(prefs: &Prefs) -> gpui::WindowDecorations {
     if prefs.native_decorations {
         gpui::WindowDecorations::Server
     } else {
@@ -257,9 +291,19 @@ mod tests {
                 ui_scale: 130,
                 clip_icons: false,
                 native_decorations: true,
+                color_theme: ThemeId::default(),
             }
         );
         config::set(&host, UI_SCALE_KEY, "big".into()).unwrap();
         assert_eq!(Prefs::read(&host).ui_scale, DEFAULT_UI_SCALE);
+
+        config::set(&host, COLOR_THEME_KEY, "custom:from-elsewhere".into()).unwrap();
+        assert_eq!(
+            Prefs::read(&host).color_theme,
+            ThemeId::new("custom:from-elsewhere"),
+            "kept as saved, even when this machine has no such theme"
+        );
+        config::set(&host, COLOR_THEME_KEY, 3.into()).unwrap();
+        assert_eq!(Prefs::read(&host).color_theme, ThemeId::default());
     }
 }

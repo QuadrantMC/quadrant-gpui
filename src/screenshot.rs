@@ -24,6 +24,7 @@ use quadrant_core::{
 use crate::{
     app::QuadrantApp,
     backend::Backend,
+    color_theme,
     i18n::Locale,
     i18n::{t, t_with},
     notifications,
@@ -127,6 +128,8 @@ async fn capture_all(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) 
     resize(window, cx, 2300.)?;
     capture(window, &dir.join("settings-full.png"), cx).await?;
     capture_prefs(window, dir, cx).await?;
+    resize(window, cx, 720.)?;
+    capture_themes(window, dir, cx).await?;
 
     show(window, cx, Route::InstalledContent)?;
     resize(window, cx, 720.)?;
@@ -1259,14 +1262,26 @@ async fn capture_prefs(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp
     let base = cx.update(|cx| Prefs::global(cx));
     let with = |prefs: Prefs, cx: &mut AsyncApp| cx.update(|cx| prefs.apply(cx));
     for (locale, name) in [(Locale::Turkish, "tr"), (Locale::Ukrainian, "uk")] {
-        with(Prefs { locale, ..base }, cx);
+        with(
+            Prefs {
+                locale,
+                ..base.clone()
+            },
+            cx,
+        );
         show(window, cx, Route::Settings)?;
         capture(window, &shots.join(format!("settings-{name}.png")), cx).await?;
         show(window, cx, Route::Search)?;
         capture(window, &shots.join(format!("search-{name}.png")), cx).await?;
     }
     for ui_scale in [50, 150, 200] {
-        with(Prefs { ui_scale, ..base }, cx);
+        with(
+            Prefs {
+                ui_scale,
+                ..base.clone()
+            },
+            cx,
+        );
         show(window, cx, Route::Settings)?;
         capture(window, &shots.join(format!("settings-{ui_scale}.png")), cx).await?;
         show(window, cx, Route::Search)?;
@@ -1275,12 +1290,53 @@ async fn capture_prefs(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp
     with(
         Prefs {
             clip_icons: false,
-            ..base
+            ..base.clone()
         },
         cx,
     );
     capture(window, &shots.join("search-square-icons.png"), cx).await?;
     with(base, cx);
+    Ok(())
+}
+
+/// Each built-in theme on the Modpacks page under a snackbar, on Settings
+/// and behind a dialog, then Quadrant again.
+async fn capture_themes(window: WindowHandle<Root>, dir: &Path, cx: &mut AsyncApp) -> Result<()> {
+    let shots = dir.join("themes");
+    std::fs::create_dir_all(&shots)?;
+    let base = cx.update(|cx| Prefs::global(cx));
+    for theme in color_theme::built_in() {
+        let slug = theme.id.as_str();
+        let prefs = Prefs {
+            color_theme: theme.id.clone(),
+            ..base.clone()
+        };
+        cx.update(|cx| prefs.apply(cx));
+        show(window, cx, Route::Modpacks)?;
+        cx.update(|cx| snackbar::show(cx, SnackbarKind::Success, t("setModpackSuccess")));
+        capture(
+            window,
+            &shots.join(format!("theme-{slug}-modpacks.png")),
+            cx,
+        )
+        .await?;
+        show(window, cx, Route::Settings)?;
+        capture(
+            window,
+            &shots.join(format!("theme-{slug}-settings.png")),
+            cx,
+        )
+        .await?;
+        with_page(
+            window,
+            cx,
+            Route::Modpacks,
+            |page: &mut ModpacksPage, window, cx| page.open_create_dialog(window, cx),
+        )?;
+        capture(window, &shots.join(format!("theme-{slug}-dialog.png")), cx).await?;
+        close_dialogs(window, cx).await?;
+    }
+    cx.update(|cx| base.apply(cx));
     Ok(())
 }
 

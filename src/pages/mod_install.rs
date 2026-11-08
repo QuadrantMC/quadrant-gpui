@@ -7,7 +7,7 @@ use gpui::{
     App, AppContext as _, Bounds, Context, Entity, EventEmitter, FontWeight,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollHandle,
     SharedString, StatefulInteractiveElement as _, Styled as _, StyledImage as _, Subscription,
-    Task, Window, div, prelude::FluentBuilder as _, px, rems, rgb,
+    Task, Window, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     Disableable as _, Icon, h_flex,
@@ -736,7 +736,7 @@ impl ModInstallView {
                                     .gap_2()
                                     .text_xs()
                                     .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(theme::TEXT_MUTED))
+                                    .text_color(theme::palette().text_muted)
                                     .child(theme::source_pill(
                                         t_with(type_key, &[("source", source)]),
                                         item.source == ModSource::CurseForge,
@@ -763,7 +763,7 @@ impl ModInstallView {
                                 this.child(
                                     div()
                                         .text_sm()
-                                        .text_color(rgb(theme::TEXT_SOFT))
+                                        .text_color(theme::palette().text_soft)
                                         .child(item.description.clone()),
                                 )
                             })
@@ -778,12 +778,12 @@ impl ModInstallView {
                                             .gap_1()
                                             .items_center()
                                             .rounded_full()
-                                            .bg(rgb(theme::CONTROL))
-                                            .hover(|this| this.bg(rgb(theme::CONTROL_HOVER)))
+                                            .bg(theme::palette().control)
+                                            .hover(|this| this.bg(theme::palette().control_hover))
                                             .cursor_pointer()
                                             .text_xs()
                                             .font_weight(FontWeight::BOLD)
-                                            .text_color(rgb(theme::TEXT_BADGE))
+                                            .text_color(theme::palette().text_badge)
                                             .child(Icon::new(MdIcon::Person).size_3p5())
                                             .child(owner)
                                             .on_click(move |_, _, cx| cx.open_url(&url))
@@ -807,7 +807,7 @@ impl ModInstallView {
                                 .aspect_ratio(16. / 9.)
                                 .overflow_hidden()
                                 .rounded_2xl()
-                                .bg(rgb(theme::PAGE))
+                                .bg(theme::palette().page)
                                 .cursor_pointer()
                                 .on_click(move |_, _, cx| cx.open_url(&open))
                                 .child(
@@ -867,7 +867,7 @@ impl ModInstallView {
                         .items_center()
                         .text_size(px(13.))
                         .font_weight(FontWeight::EXTRA_BOLD)
-                        .text_color(rgb(theme::TEXT_MUTED))
+                        .text_color(theme::palette().text_muted)
                         .child(Icon::new(MdIcon::Extension).size_4())
                         .child(
                             t("dependencies")
@@ -918,7 +918,7 @@ impl ModInstallView {
                         .mb_1p5()
                         .text_size(px(13.))
                         .font_weight(FontWeight::EXTRA_BOLD)
-                        .text_color(rgb(theme::TEXT_MUTED))
+                        .text_color(theme::palette().text_muted)
                         .child(t(label)),
                 )
                 .child(control)
@@ -1009,7 +1009,7 @@ fn picker<E: gpui::Styled + IntoElement>(select: E) -> gpui::AnyElement {
     select
         .h_10()
         .rounded_full()
-        .bg(rgb(theme::CONTROL))
+        .bg(theme::palette().control)
         .text_sm()
         .font_weight(FontWeight::BOLD)
         .into_any_element()
@@ -1024,8 +1024,8 @@ fn count_badge(count: usize) -> impl IntoElement {
         .items_center()
         .justify_center()
         .rounded_full()
-        .bg(rgb(theme::SELECTED))
-        .text_color(rgb(theme::TEXT))
+        .bg(theme::palette().primary)
+        .text_color(theme::palette().on_accent)
         .text_size(px(11.))
         .child(count.to_string())
 }
@@ -1045,7 +1045,7 @@ impl Render for ModInstallView {
                 details,
                 origin,
                 frame.remaining,
-                rgb(theme::SURFACE),
+                theme::palette().surface,
                 theme::PANEL_RADIUS,
             )
             .into_any_element(),

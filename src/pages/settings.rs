@@ -1,15 +1,15 @@
 //! The Settings page, after `SettingsPage` in the desktop app.
 //!
 //! The update channel shows while the self-updater runs (feature `updater`).
-//! The language, UI scale, icon shape and window decorations are
-//! [`Prefs`], which apply to the whole window at once.
+//! The language, UI scale, color theme, icon shape and window decorations
+//! are [`Prefs`], which apply to the whole window at once.
 
 use std::path::PathBuf;
 
 use gpui::{
     App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, rems, rgb,
+    Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, rems,
 };
 use gpui_component::{
     IndexPath, h_flex,
@@ -24,6 +24,7 @@ use crate::{
     assets::MdIcon,
     autostart::Autostart,
     backend::Backend,
+    color_theme::{self, ThemeId, Themes},
     config, events,
     i18n::{Locale, describe, t, t_with},
     loadable::Loadable,
@@ -185,6 +186,10 @@ pub struct SettingsPage {
     /// The language picker, made on the first render, which has the window.
     language: Option<Entity<SelectState<Vec<LanguageItem>>>>,
     _language_picked: Option<Subscription>,
+    /// The color theme picker and the themes it lists, made like `language`.
+    color_theme: Option<Entity<SelectState<Vec<ThemeItem>>>>,
+    listed_themes: Vec<ThemeItem>,
+    _color_theme_picked: Option<Subscription>,
 }
 
 #[derive(Clone)]
@@ -202,6 +207,41 @@ impl SelectItem for LanguageItem {
     }
 }
 
+#[derive(Clone, PartialEq)]
+struct ThemeItem {
+    id: ThemeId,
+    name: SharedString,
+}
+
+impl SelectItem for ThemeItem {
+    type Value = ThemeId;
+
+    fn title(&self) -> SharedString {
+        self.name.clone()
+    }
+
+    fn value(&self) -> &ThemeId {
+        &self.id
+    }
+}
+
+fn theme_items(cx: &App) -> Vec<ThemeItem> {
+    Themes::global(cx)
+        .all()
+        .map(|theme| ThemeItem {
+            id: theme.id.clone(),
+            name: theme.name.clone(),
+        })
+        .collect()
+}
+
+/// Puts a fresh scan of the user's themes in place and shows the chosen
+/// theme as it now reads.
+fn rescanned(themes: Themes, cx: &mut App) {
+    cx.set_global(themes);
+    prefs::show_color_theme(&Prefs::global(cx).color_theme, cx);
+}
+
 impl SettingsPage {
     pub fn new(cx: &mut Context<Self>) -> Self {
         // Settings sync can change keys behind the page's back.
@@ -214,6 +254,9 @@ impl SettingsPage {
             autostart: Autostart::global(cx).map(Autostart::is_enabled),
             language: None,
             _language_picked: None,
+            color_theme: None,
+            listed_themes: Vec::new(),
+            _color_theme_picked: None,
         };
         page.reload(cx);
         page
@@ -221,16 +264,44 @@ impl SettingsPage {
 
     fn reload(&mut self, cx: &mut Context<Self>) {
         self.settings.reload();
-        let task = Backend::global(cx).run(cx, |host| async move { Settings::read(&host) });
+        let task = Backend::global(cx).run(cx, |host| async move {
+            let themes = Themes::scan(&color_theme::folder(&host.options().data_dir));
+            Ok((Settings::read(&host), themes))
+        });
         cx.spawn(async move |this, cx| {
-            let result = task.await;
+            let Ok((result, themes)) = task.await else {
+                return;
+            };
             let _ = this.update(cx, |this, cx| {
+                rescanned(themes, cx);
                 this.settings = Loadable::from_result(result);
                 cx.notify();
             });
         })
         .detach();
         cx.notify();
+    }
+
+    /// Makes the themes folder, with an example in it while it has no theme,
+    /// reads it again and opens it in the file manager.
+    fn open_themes_folder(&mut self, cx: &mut Context<Self>) {
+        let task = Backend::global(cx).run(cx, |host| async move {
+            let folder = color_theme::folder(&host.options().data_dir);
+            color_theme::prepare_folder(&folder)?;
+            Ok((Themes::scan(&folder), folder))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |_, cx| match result {
+                Ok((themes, folder)) => {
+                    rescanned(themes, cx);
+                    cx.open_with_system(&folder);
+                    cx.notify();
+                }
+                Err(error) => snackbar::show(cx, SnackbarKind::Error, describe(error)),
+            });
+        })
+        .detach();
     }
 
     fn run(&mut self, op: Op, cx: &mut Context<Self>) {
@@ -362,6 +433,108 @@ impl SettingsPage {
         select
     }
 
+    fn color_theme_select(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<SelectState<Vec<ThemeItem>>> {
+        let items = theme_items(cx);
+        let current = Themes::global(cx)
+            .resolve(&Prefs::global(cx).color_theme)
+            .id
+            .clone();
+        if let Some(select) = self.color_theme.clone() {
+            // A rescan or settings sync changes the list or the choice.
+            let relisted = self.listed_themes != items;
+            if relisted {
+                self.listed_themes = items.clone();
+            }
+            select.update(cx, |select, cx| {
+                if relisted {
+                    select.set_items(items, window, cx);
+                }
+                if select.selected_value() != Some(&current) {
+                    select.set_selected_value(&current, window, cx);
+                }
+            });
+            return select;
+        }
+        let row = items.iter().position(|item| item.id == current);
+        let select = cx.new(|cx| {
+            SelectState::new(
+                items.clone(),
+                row.map(|row| IndexPath::default().row(row)),
+                window,
+                cx,
+            )
+        });
+        self._color_theme_picked = Some(cx.subscribe(
+            &select,
+            |_, _, event: &SelectEvent<Vec<ThemeItem>>, cx| {
+                if let SelectEvent::Confirm(Some(id)) = event {
+                    Prefs::set_color_theme(id.clone(), cx);
+                }
+            },
+        ));
+        self.color_theme = Some(select.clone());
+        self.listed_themes = items;
+        select
+    }
+
+    /// The color theme picker, the language picker's twin, with the button
+    /// to the user's themes beside it and their broken files under it.
+    fn render_color_theme(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let select = self.color_theme_select(window, cx);
+        let broken = Themes::global(cx).broken.clone();
+        v_flex()
+            .my_4()
+            .font_weight(FontWeight::BOLD)
+            .child(t("colorTheme"))
+            .child(
+                h_flex()
+                    .my_4()
+                    .gap_4()
+                    .flex_wrap()
+                    .items_center()
+                    .child(
+                        div().w_full().max_w(rems(20.)).child(
+                            Select::new(&select)
+                                .appearance(false)
+                                .h_10()
+                                .rounded_full()
+                                .bg(theme::palette().control),
+                        ),
+                    )
+                    .child(
+                        theme::pill_button(
+                            "open-themes-folder",
+                            Tone::Control,
+                            t("openThemesFolder"),
+                            Some(MdIcon::Folder),
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.open_themes_folder(cx))),
+                    ),
+            )
+            .when(!broken.is_empty(), |this| {
+                this.child(
+                    v_flex()
+                        .gap_2()
+                        .max_w(rems(40.))
+                        .children(broken.into_iter().map(|broken| {
+                            theme::warning_note(t_with(
+                                "brokenColorTheme",
+                                &[("file", &broken.file), ("error", &broken.error)],
+                            ))
+                        })),
+                )
+            })
+    }
+
     /// The language picker, as the desktop app's: a bold label over a
     /// `max-w-xs` select.
     fn render_language(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -376,7 +549,7 @@ impl SettingsPage {
                         .appearance(false)
                         .h_10()
                         .rounded_full()
-                        .bg(rgb(theme::CONTROL)),
+                        .bg(theme::palette().control),
                 ),
             )
     }
@@ -404,7 +577,7 @@ impl SettingsPage {
                             .w_20()
                             .px_4()
                             .py_2()
-                            .bg(rgb(theme::SURFACE))
+                            .bg(theme::palette().surface)
                             .rounded(theme::radius_card())
                             .text_center()
                             .child(format!("{scale}%")),
@@ -453,6 +626,7 @@ impl SettingsPage {
             )))
             .children(update_channel(window, cx))
             .child(self.render_language(window, cx))
+            .child(self.render_color_theme(window, cx))
             .child(self.render_ui_scale(cx))
             .child(
                 panel(settings.mc_folder.clone()).mt_4().child(
@@ -558,7 +732,7 @@ impl SettingsPage {
             .w_full()
             .p_4()
             .my_4()
-            .bg(rgb(theme::SURFACE))
+            .bg(theme::palette().surface)
             .rounded(theme::radius_card())
             .child(
                 div()
@@ -571,7 +745,7 @@ impl SettingsPage {
                     .min_w_0()
                     .px_4()
                     .py_2()
-                    .bg(rgb(theme::CONTROL))
+                    .bg(theme::palette().control)
                     .rounded(theme::radius_card())
                     .child(
                         settings
@@ -629,13 +803,13 @@ fn panel(text: impl Into<SharedString>) -> gpui::Div {
         .w_full()
         .items_center()
         .p_4()
-        .bg(rgb(theme::SURFACE))
+        .bg(theme::palette().surface)
         .rounded(theme::radius_card())
         .child(
             div()
                 .my_2()
                 .p_4()
-                .bg(rgb(theme::CONTROL))
+                .bg(theme::palette().control)
                 .rounded(theme::radius_card())
                 .font_weight(FontWeight::EXTRA_BOLD)
                 .child(text.into()),
@@ -653,7 +827,7 @@ impl Render for SettingsPage {
             Loadable::Failed(error) => h_flex()
                 .p_8()
                 .justify_center()
-                .text_color(rgb(theme::TEXT_MUTED))
+                .text_color(theme::palette().text_muted)
                 .child(error.clone())
                 .into_any_element(),
             Loadable::Ready(settings) => {
@@ -676,7 +850,7 @@ impl Render for SettingsPage {
                             div()
                                 .p_3()
                                 .rounded(theme::radius_card())
-                                .bg(rgb(theme::SURFACE))
+                                .bg(theme::palette().surface)
                                 .text_2xl()
                                 .font_weight(FontWeight::EXTRA_BOLD)
                                 .child(t("someSettingsRequireReload")),

@@ -11,7 +11,7 @@ use gpui::{
     Animation, AnimationExt as _, App, AppContext as _, Context, Entity, FontWeight, Global,
     InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Window, anchored, deferred, div,
-    prelude::FluentBuilder as _, rems, rgb, rgba,
+    prelude::FluentBuilder as _, rems,
 };
 use gpui_component::{h_flex, v_flex};
 use quadrant_core::{
@@ -551,7 +551,7 @@ impl Notifications {
         div()
             .flex_shrink_0()
             .border_b_2()
-            .border_color(rgb(theme::CONTROL))
+            .border_color(theme::palette().control)
             .when_some(entries.first(), |this, first| {
                 this.child(
                     h_flex()
@@ -670,7 +670,7 @@ impl Notifications {
                     .justify_center()
                     .text_center()
                     .rounded(theme::radius_card())
-                    .bg(rgb(theme::CONTROL))
+                    .bg(theme::palette().control)
                     .child(div().w_full().child(message))
                     .when_some(buttons, |this, buttons| {
                         this.child(h_flex().w_full().my_2().justify_center().child(buttons))
@@ -680,14 +680,15 @@ impl Notifications {
         div()
             .flex_shrink_0()
             .border_b_2()
-            .border_color(rgb(theme::CONTROL))
+            .border_color(theme::palette().control)
             .when_some(self.error.clone(), |this, error| {
                 this.child(
                     div()
                         .my_2()
                         .p_2()
                         .rounded(theme::radius_card())
-                        .bg(rgb(theme::ERROR_FILL))
+                        .bg(theme::palette().destructive_hover)
+                        .text_color(theme::palette().on_accent)
                         .child(error),
                 )
             })
@@ -706,7 +707,7 @@ impl Notifications {
                     .justify_center()
                     .text_center()
                     .rounded(theme::radius_card())
-                    .bg(rgb(theme::PAGE))
+                    .bg(theme::palette().page)
                     .child(
                         div()
                             .w_full()
@@ -724,7 +725,7 @@ impl Notifications {
                             .w_full()
                             .p_2()
                             .rounded(theme::radius_card())
-                            .bg(rgb(theme::SURFACE))
+                            .bg(theme::palette().surface)
                             .child(
                                 theme::panel_button(
                                     SharedString::from(format!("news-read-{}", article.guid)),
@@ -761,7 +762,7 @@ impl Notifications {
             .h(height)
             .p_4()
             .rounded(theme::radius_card())
-            .bg(rgb(theme::SURFACE))
+            .bg(theme::palette().surface)
             .font_weight(FontWeight::BOLD)
             .occlude()
             .child(
@@ -809,7 +810,7 @@ fn history_entry(entry: &HistoryEntry) -> gpui::Div {
                     .py_1()
                     .flex_shrink_0()
                     .rounded_full()
-                    .bg(rgba(theme::SCRIM))
+                    .bg(theme::palette().scrim)
                     .text_sm()
                     .child(format!("{}x", entry.count)),
             )
@@ -850,7 +851,7 @@ impl Render for Notifications {
                                 .id("notifications-backdrop")
                                 .w(viewport.width)
                                 .h(viewport.height)
-                                .bg(rgba(theme::BACKDROP))
+                                .bg(theme::palette().backdrop)
                                 .occlude()
                                 .on_mouse_down(
                                     MouseButton::Left,

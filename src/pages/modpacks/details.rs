@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, Context, FontWeight, IntoElement, ParentElement as _, SharedString, Styled as _,
-    Window, div, prelude::FluentBuilder as _, rgb,
+    Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{h_flex, v_flex};
 use quadrant_core::{mc_mod::Mod, models::InstalledModpack};
@@ -86,7 +86,7 @@ pub fn render(
                 .mb_5()
                 .p_4()
                 .rounded(theme::radius_card())
-                .bg(rgb(theme::CONTROL))
+                .bg(theme::palette().control)
                 .font_weight(FontWeight::BOLD)
                 .child(
                     h_flex()
@@ -118,7 +118,7 @@ pub fn render(
                     .p_4()
                     .gap_4()
                     .rounded(theme::radius_card())
-                    .bg(rgb(theme::SURFACE))
+                    .bg(theme::palette().surface)
                     .children(grid),
             )
         })
@@ -133,7 +133,7 @@ fn loading_status(loaded: usize, total: usize) -> impl IntoElement {
         .items_center()
         .gap_3()
         .text_sm()
-        .text_color(rgb(theme::TEXT_SOFT))
+        .text_color(theme::palette().text_soft)
         .child(theme::spinner("loading-mods"))
         .child(t_with(
             "loadingMods",

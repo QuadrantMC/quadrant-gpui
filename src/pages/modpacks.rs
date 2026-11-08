@@ -13,7 +13,7 @@ use gpui::{
     Animation, AnimationExt as _, AnyElement, App, AppContext as _, ClickEvent, ClipboardItem,
     Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Subscription, Task, Window, div, list, prelude::FluentBuilder as _,
-    px, rgb,
+    px,
 };
 use gpui_component::{
     IndexPath, WindowExt as _,
@@ -1283,7 +1283,7 @@ impl ModpacksPage {
             .mx_5()
             .p_4()
             .rounded(theme::radius_card())
-            .bg(rgb(theme::PAGE))
+            .bg(theme::palette().page)
             .child(
                 h_flex()
                     .gap_3()
@@ -1299,7 +1299,7 @@ impl ModpacksPage {
                         this.child(theme::synced_badge(t("badgeSynced")))
                     }),
             )
-            .child(div().text_color(rgb(theme::TEXT_MUTED)).child(line))
+            .child(div().text_color(theme::palette().text_muted).child(line))
             .children(self.prism.read(cx).applied_line(&modpack.name))
             .child(
                 h_flex()
@@ -1394,7 +1394,7 @@ impl ModpacksPage {
                 .child(
                     div()
                         .mx_6()
-                        .bg(rgb(theme::SURFACE))
+                        .bg(theme::palette().surface)
                         .when(first, |this| this.rounded_t(theme::radius_card()))
                         .when(last, |this| this.rounded_b(theme::radius_card()))
                         .child(content),
@@ -1474,14 +1474,14 @@ fn status_row(content: gpui::AnyElement) -> gpui::AnyElement {
     h_flex()
         .p_8()
         .justify_center()
-        .text_color(rgb(theme::TEXT_MUTED))
+        .text_color(theme::palette().text_muted)
         .child(content)
         .into_any_element()
 }
 
 /// The desktop app's `.input`: an `h-10` slate-700 pill.
 fn pill<E: gpui::Styled>(control: E) -> E {
-    control.h_10().rounded_full().bg(rgb(theme::CONTROL))
+    control.h_10().rounded_full().bg(theme::palette().control)
 }
 
 fn field(label: SharedString, control: impl IntoElement) -> impl IntoElement {
@@ -1530,7 +1530,7 @@ impl Render for ModpacksPage {
                 div()
                     .absolute()
                     .inset_0()
-                    .bg(rgb(theme::PAGE))
+                    .bg(theme::palette().page)
                     .occlude()
                     .child(current)
                     .with_animation(

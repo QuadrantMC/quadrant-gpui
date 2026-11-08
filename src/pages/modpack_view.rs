@@ -11,7 +11,7 @@ use chrono::{Local, TimeZone as _};
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FontWeight, IntoElement, ParentElement as _,
     Pixels, Render, SharedString, Styled as _, Subscription, Task, Window, div, list,
-    prelude::FluentBuilder as _, px, rems, rgb,
+    prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{h_flex, scroll::ScrollableElement as _, v_flex};
 use quadrant_core::{
@@ -586,7 +586,7 @@ impl ModpackView {
             .p_4()
             .items_center()
             .rounded(theme::radius_card())
-            .bg(rgb(theme::CONTROL))
+            .bg(theme::palette().control)
             .font_weight(FontWeight::BOLD)
             .when(self.back, |this| {
                 this.child(
@@ -653,7 +653,7 @@ impl ModpackView {
                                 .my_2()
                                 .p_4()
                                 .rounded(theme::radius_card())
-                                .bg(rgb(theme::SURFACE))
+                                .bg(theme::palette().surface)
                                 .child(
                                     div()
                                         .font_weight(FontWeight::BOLD)
@@ -721,7 +721,7 @@ impl ModpackView {
                             .mr_4()
                             .when(last, |this| this.mb_12())
                             .px_4()
-                            .bg(rgb(theme::SURFACE))
+                            .bg(theme::palette().surface)
                             .map(|this| if last { this.pb_4() } else { this.pb(gap) })
                             .when(first, |this| this.pt_4().rounded_t(theme::radius_card()))
                             .when(last, |this| this.rounded_b(theme::radius_card()))
@@ -750,7 +750,7 @@ fn waiting(content: AnyElement) -> AnyElement {
         .p_4()
         .justify_center()
         .rounded(theme::radius_card())
-        .bg(rgb(theme::SURFACE))
+        .bg(theme::palette().surface)
         .child(content)
         .into_any_element()
 }

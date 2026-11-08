@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use gpui::{
     Anchor, AnyElement, App, Context, ElementId, Entity, EventEmitter, InteractiveElement as _,
     IntoElement, ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Task, Window, div, prelude::FluentBuilder as _, px, rems, rgb,
+    Task, Window, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{Icon, h_flex, popover::Popover};
 use quadrant_core::prism::{PrismInstance, PrismSyncPlan};
@@ -245,7 +245,7 @@ impl PrismMenus {
     /// The "Applied to Prism Launcher" line under a card's metadata.
     pub fn applied_line(&self, modpack: &str) -> Option<impl IntoElement + use<>> {
         applied_to(self.instances(), modpack)
-            .map(|text| div().text_color(rgb(theme::TEXT_MUTED)).child(text))
+            .map(|text| div().text_color(theme::palette().text_muted).child(text))
     }
 
     /// The card's "Prism Launcher" button with its menu, after Apply.
@@ -341,7 +341,9 @@ fn render_items(this: &Entity<PrismMenus>, modpack: &str, cx: &App) -> impl Into
 }
 
 fn muted(text: impl Into<SharedString>) -> impl IntoElement {
-    div().text_color(rgb(theme::TEXT_MUTED)).child(text.into())
+    div()
+        .text_color(theme::palette().text_muted)
+        .child(text.into())
 }
 
 #[cfg(feature = "screenshot")]

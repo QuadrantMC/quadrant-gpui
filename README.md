@@ -58,6 +58,18 @@ Applying a modpack links `mods` to its folder. On Windows that needs Developer M
 
 Screenshot mode starts with the title bar: its pictures, the bell's panel, mouse back and forward, and on Windows a check that the window controls take clicks while the rest of the bar drags (it sends the hidden window `WM_NCHITTEST` and fails the run on a wrong answer). `QUADRANT_NATIVE_SCREENSHOT_ONLY=title-bar` stops there.
 
+## Color themes
+
+Settings' "Color theme" switches the whole window between Quadrant (the default), Dracula, Tokyo Night, Nord, Catppuccin Mocha, Vaporwave, Light, Gruvbox Dark and Ayu Dark. The choice is the `colorTheme` key, which settings sync carries; a theme another machine has and this one doesn't shows as Quadrant without changing the key.
+
+Your own themes are JSON files in the data folder's `themes` folder. "Open themes folder" makes it, puts an `example.json` with every color in it while it has no theme, and opens it. A file looks like this; `mode` (`dark` or `light`) and `extends` (a built-in's id, Quadrant unless it says) are optional, and any color it leaves out comes from the theme it extends:
+
+```json
+{ "name": "Mine", "mode": "dark", "extends": "dracula", "colors": { "page": "#101010", "primary": "#ff79c6", "scrim": "#00000080" } }
+```
+
+Colors are `#rrggbb` or `#rrggbbaa`, under the names `example.json` lists. The folder is read again whenever Settings loads; a file that doesn't load is named under the picker with what is wrong with it. The built-ins are the same format, in `assets/themes`.
+
 ## Tray
 
 As in the desktop app, closing the window keeps Quadrant-Native running in the tray, Quadrant ID's background work included; a left click on the icon brings the window back, and its menu has Show/Hide and Quit. Windows and macOS hide the window. On Linux the icon is a StatusNotifierItem (KDE, and GNOME with the AppIndicator extension); Wayland can't hide a window, so closing closes it and the tray opens a new one, with each page starting afresh. Where no tray is available, closing quits. Screenshot, perf and `QUADRANT_NATIVE_BACKGROUND` runs never add the icon.

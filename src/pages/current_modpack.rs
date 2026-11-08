@@ -136,7 +136,7 @@ fn waiting(content: AnyElement) -> AnyElement {
         .p_4()
         .justify_center()
         .rounded(theme::radius_card())
-        .bg(gpui::rgb(theme::SURFACE))
+        .bg(theme::palette().surface)
         .child(content)
         .into_any_element()
 }

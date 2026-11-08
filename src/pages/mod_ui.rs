@@ -10,7 +10,7 @@ use std::{
 use gpui::{
     AnyElement, Bounds, Context, Div, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, SharedString, Stateful, StatefulInteractiveElement as _,
-    Styled as _, Window, canvas, div, prelude::FluentBuilder as _, px, rems, rgb,
+    Styled as _, Window, canvas, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{Icon, h_flex, select::SelectItem, v_flex};
 use quadrant_core::{
@@ -262,8 +262,8 @@ pub fn mod_card<P: 'static>(
         .gap_2p5()
         .p_4()
         .rounded_2xl()
-        .bg(rgb(theme::PAGE))
-        .hover(|this| this.bg(rgb(theme::CARD_HOVER)))
+        .bg(theme::palette().page)
+        .hover(|this| this.bg(theme::palette().card_hover))
         .on_click(move |event, window, cx| {
             if event.click_count() == 2 {
                 open(event, window, cx);
@@ -306,7 +306,7 @@ pub fn mod_card<P: 'static>(
                                 .items_center()
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(theme::TEXT_MUTED))
+                                .text_color(theme::palette().text_muted)
                                 .child(Icon::new(MdIcon::Download).size(rems(0.8125)))
                                 .child(compact_count(item.download_count))
                                 .when(!source.is_empty(), |this| {
@@ -324,7 +324,7 @@ pub fn mod_card<P: 'static>(
                                 .h_9()
                                 .text_xs()
                                 .line_height(rems(1.125))
-                                .text_color(rgb(theme::TEXT_MUTED))
+                                .text_color(theme::palette().text_muted)
                                 .line_clamp(2)
                                 .text_ellipsis()
                                 .overflow_hidden()
@@ -360,7 +360,7 @@ fn dotted(pill: impl IntoElement) -> impl IntoElement {
     h_flex()
         .gap_1p5()
         .items_center()
-        .child(div().text_color(rgb(theme::TEXT_DISABLED)).child("·"))
+        .child(div().text_color(theme::palette().text_disabled).child("·"))
         .child(pill)
 }
 

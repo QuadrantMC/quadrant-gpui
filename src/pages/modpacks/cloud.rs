@@ -6,7 +6,7 @@ use chrono::{Local, TimeZone as _};
 use gpui::{
     App, AppContext as _, ClickEvent, Context, Entity, FontWeight, InteractiveElement as _,
     IntoElement, ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Window, div, prelude::FluentBuilder as _, px, rgb,
+    Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     WindowExt as _,
@@ -260,7 +260,7 @@ impl ModpacksPage {
             .mx_5()
             .p_4()
             .rounded(theme::radius_card())
-            .bg(rgb(theme::PAGE))
+            .bg(theme::palette().page)
             .child(
                 h_flex()
                     .flex_wrap()
@@ -275,7 +275,7 @@ impl ModpacksPage {
                     .child(theme::cloud_badge(t("badgeCloud")))
                     .child(theme::synced_badge(t("badgeSynced"))),
             )
-            .child(div().text_color(rgb(theme::TEXT_MUTED)).child(line))
+            .child(div().text_color(theme::palette().text_muted).child(line))
             .child(
                 h_flex()
                     .my_2()
@@ -364,7 +364,7 @@ impl ModpacksPage {
                     .p_2()
                     .items_center()
                     .rounded_full()
-                    .bg(rgb(theme::SURFACE))
+                    .bg(theme::palette().surface)
                     .font_weight(FontWeight::BOLD)
                     .child(div().flex_1().px_4().child(label))
                     .children(kick)
@@ -420,7 +420,7 @@ impl ModpacksPage {
         v_flex()
             .w_full()
             .rounded(theme::radius_card())
-            .bg(rgb(theme::CONTROL))
+            .bg(theme::palette().control)
             .child(header)
             .children(body)
     }
@@ -581,7 +581,7 @@ impl ModpacksPage {
             .p_4()
             .items_center()
             .rounded(theme::radius_card())
-            .bg(rgb(theme::SURFACE))
+            .bg(theme::palette().surface)
             .font_weight(FontWeight::BOLD)
             .child(t_with("shareCodeDetected", &[("code", &code)]))
             .child(button)

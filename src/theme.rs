@@ -8,12 +8,15 @@
 
 use std::{
     borrow::Cow,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::{
+        PoisonError, RwLock,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 use gpui::{
     App, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    Rgba, SharedString, Styled, div, prelude::FluentBuilder as _, px, rems, rgb, rgba,
+    Rgba, SharedString, Styled, div, prelude::FluentBuilder as _, px, rems, rgb,
 };
 use gpui_component::{
     Icon, Theme, ThemeMode,
@@ -50,54 +53,192 @@ pub fn set_ui_scale(percent: u32, cx: &mut App) {
     cx.refresh_windows();
 }
 
-/// slate-900: the window background.
-pub const PAGE: u32 = 0x0f172a;
-/// slate-800: containers, neutral buttons, rail buttons.
-pub const SURFACE: u32 = 0x1e293b;
-/// slate-700: inputs, badges, title pill, round buttons, rules.
-pub const CONTROL: u32 = 0x334155;
-/// slate-600: hovered controls.
-pub const CONTROL_HOVER: u32 = 0x475569;
-/// slate-50
-pub const TEXT: u32 = 0xf8fafc;
-/// slate-400
-pub const TEXT_MUTED: u32 = 0x94a3b8;
-/// slate-200: badge labels.
-pub const TEXT_BADGE: u32 = 0xe2e8f0;
-const PRIMARY: u32 = 0x2563eb;
-const PRIMARY_HOVER: u32 = 0x1d4ed8;
-const POSITIVE: u32 = 0x059669;
-const POSITIVE_HOVER: u32 = 0x047857;
-/// emerald-900: an action already in effect, e.g. "Applied".
-const POSITIVE_DONE: u32 = 0x064e3b;
-/// red-700
-const DESTRUCTIVE_HOVER: u32 = 0xb91c1c;
-/// red-800
-const DANGER_HOVER: u32 = 0x991b1b;
-/// slate-950 at 30%, behind dialogs.
-const OVERLAY: u32 = 0x0206174d;
-/// slate-900 at 50%: a button on a colored surface, e.g. the snackbar's
-/// clear, and a repeat count on a remembered snackbar.
-pub const SCRIM: u32 = 0x0f172a80;
-/// slate-900 at 15%: behind the notifications panel.
-pub const BACKDROP: u32 = 0x0f172a26;
-/// red-600: the hovered bell while a notification is unread.
-const ALERT_HOVER: u32 = 0xdc2626;
-/// slate-900 at 70%
-const SCRIM_HOVER: u32 = 0x0f172ab3;
+/// One color per role the views name. [`QUADRANT`] is the desktop app's
+/// Tailwind slate palette; a color theme swaps the whole set at once.
+macro_rules! palette {
+    ($($(#[doc = $doc:literal])* $field:ident: $value:expr,)*) => {
+        #[derive(Clone, Copy, PartialEq, Debug)]
+        pub struct Palette {
+            $($(#[doc = $doc])* pub $field: Rgba,)*
+        }
+
+        impl Palette {
+            /// Every field's name, in declaration order.
+            pub const FIELDS: &[&str] = &[$(stringify!($field)),*];
+
+            pub fn field(&self, name: &str) -> Option<Rgba> {
+                match name {
+                    $(stringify!($field) => Some(self.$field),)*
+                    _ => None,
+                }
+            }
+
+            pub fn field_mut(&mut self, name: &str) -> Option<&mut Rgba> {
+                match name {
+                    $(stringify!($field) => Some(&mut self.$field),)*
+                    _ => None,
+                }
+            }
+        }
+
+        /// The default theme, the desktop app's look.
+        pub const QUADRANT: Palette = Palette {
+            $($field: $value,)*
+        };
+    };
+}
+
+/// `gpui::rgb` as a `const fn`, the same arithmetic.
+const fn hex(value: u32) -> Rgba {
+    hexa(value << 8 | 0xff)
+}
+
+/// `gpui::rgba` as a `const fn`.
+const fn hexa(value: u32) -> Rgba {
+    let [r, g, b, a] = value.to_be_bytes();
+    Rgba {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a: a as f32 / 255.0,
+    }
+}
+
+palette! {
+    /// slate-900: the window background, and `CircularProgress.tsx`'s ring.
+    page: hex(0x0f172a),
+    /// slate-800: containers, neutral buttons, rail buttons.
+    surface: hex(0x1e293b),
+    /// slate-700: inputs, badges, title pill, round buttons, rules, and
+    /// `CircularProgress.tsx`'s turning top.
+    control: hex(0x334155),
+    /// slate-600: hovered controls.
+    control_hover: hex(0x475569),
+    /// slate-50
+    text: hex(0xf8fafc),
+    /// slate-400
+    text_muted: hex(0x94a3b8),
+    /// slate-200: badge labels.
+    text_badge: hex(0xe2e8f0),
+    /// slate-300: unpicked option labels.
+    text_soft: hex(0xcbd5e1),
+    /// slate-500: hints and secondary labels.
+    text_subtle: hex(0x64748b),
+    /// slate-600: disabled labels.
+    text_disabled: hex(0x475569),
+    /// slate-100: a hovered quiet icon button.
+    text_bright: hex(0xf1f5f9),
+    /// red-400: a hovered "Clear all".
+    text_danger: hex(0xf87171),
+    /// slate-50: labels on the colored fills (primary, positive, danger), which
+    /// a light theme keeps light while its `text` turns dark.
+    on_accent: hex(0xf8fafc),
+    /// blue-600: share, update, a picked option, the filter count.
+    primary: hex(0x2563eb),
+    primary_hover: hex(0x1d4ed8),
+    /// emerald-600: apply, create, sync, the "search further" arrow.
+    positive: hex(0x059669),
+    positive_hover: hex(0x047857),
+    /// emerald-900: an action already in effect, e.g. "Applied".
+    positive_done: hex(0x064e3b),
+    /// red-700: a hovered delete, a confirmed deletion, a failed search.
+    destructive_hover: hex(0xb91c1c),
+    /// red-800
+    danger_hover: hex(0x991b1b),
+    /// red-600: the hovered bell while a notification is unread.
+    alert_hover: hex(0xdc2626),
+    /// slate-950 at 30%, behind dialogs.
+    overlay: hexa(0x0206174d),
+    /// slate-900 at 50%: a button on a colored surface, e.g. the snackbar's
+    /// clear, and a repeat count on a remembered snackbar.
+    scrim: hexa(0x0f172a80),
+    /// slate-900 at 70%
+    scrim_hover: hexa(0x0f172ab3),
+    /// slate-900 at 15%: behind the notifications panel.
+    backdrop: hexa(0x0f172a26),
+    /// white at 10%: rules between filter sections.
+    rule: hexa(0xffffff1a),
+    /// white at 5%: a hovered filter option.
+    option_hover: hexa(0xffffff0d),
+    /// red-900 with red-200 text: a hovered filter chip, which removes it.
+    chip_remove: hex(0x7f1d1d),
+    chip_remove_text: hex(0xfecaca),
+    /// slate-950: a hovered mod card.
+    card_hover: hex(0x020617),
+    /// amber-300 on amber-900/25 with an amber-700/20 border: notes that warn.
+    warning_text: hex(0xfcd34d),
+    warning_fill: hexa(0x78350f40),
+    warning_border: hexa(0xb4530933),
+    /// sky-700 and sky-600: the Search button.
+    search: hex(0x0369a1),
+    search_hover: hex(0x0284c7),
+    /// slate-600 and emerald-400: the small spinner's ring and its top.
+    spinner_ring: hex(0x475569),
+    spinner_arc: hex(0x34d399),
+    /// emerald-800: a switched-on track.
+    switch_on: hex(0x065f46),
+    /// emerald-700: a hovered switched-on track.
+    switch_on_hover: hex(0x047857),
+    /// sky-500 at 20% and sky-300: the Cloud badge.
+    cloud_badge_fill: hexa(0x0ea5e933),
+    cloud_badge_text: hex(0x7dd3fc),
+    /// emerald-500 at 15% and emerald-400: the Synced badge.
+    synced_badge_fill: hexa(0x10b98126),
+    synced_badge_text: hex(0x34d399),
+    /// red-950 at 60%, red-400 at 40% and red-100: a failure the page keeps
+    /// showing.
+    warning_box_fill: hexa(0x450a0a99),
+    warning_box_border: hexa(0xf8717166),
+    warning_box_text: hex(0xfee2e2),
+    /// orange-500 at 20% and orange-400: the CurseForge pill on a mod card.
+    curseforge_pill_fill: hexa(0xf9731633),
+    curseforge_pill_text: hex(0xfb923c),
+    /// emerald-500 at 15% and emerald-400: the Modrinth and Installed pills.
+    modrinth_pill_fill: hexa(0x10b98126),
+    modrinth_pill_text: hex(0x34d399),
+    /// The rail's hover accents, one per page; Settings takes `text_muted`.
+    rail_modpacks: hex(0x34d399),
+    rail_current_modpack: hex(0x60a5fa),
+    rail_search: hex(0x38bdf8),
+    rail_installed_content: hex(0xa78bfa),
+    rail_account: hex(0xfb923c),
+}
+
+/// The palette views draw with, as [`set_palette`] last set it.
+static PALETTE: RwLock<Palette> = RwLock::new(QUADRANT);
+
+pub fn palette() -> Palette {
+    *PALETTE.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Switches every window to `palette`, with gpui-component's own widgets
+/// (selects, inputs, dialogs, scrollbars) in `mode`.
+pub fn set_palette(palette: Palette, mode: ThemeMode, cx: &mut App) {
+    *PALETTE.write().unwrap_or_else(PoisonError::into_inner) = palette;
+    Theme::change(mode, None, cx);
+    apply_component_theme(cx);
+    cx.refresh_windows();
+}
 
 /// Tailwind's `rounded-4xl`, the desktop app's card radius.
 pub fn radius_card() -> gpui::Rems {
     rems(2.)
 }
 
-/// Loads Inter and points gpui-component's theme at the palette above.
+/// Loads Inter and points gpui-component's theme at the palette.
 pub fn install(cx: &mut App) {
     let inter = include_bytes!("../assets/fonts/Inter.ttf");
     if let Err(error) = cx.text_system().add_fonts(vec![Cow::Borrowed(inter)]) {
         log::warn!("Falling back to the system font, Inter failed to load: {error:#}");
     }
     Theme::change(ThemeMode::Dark, None, cx);
+    apply_component_theme(cx);
+}
+
+/// gpui-component's fonts, shapes and colors after ours. `Theme::change`
+/// loads its own registered theme, so this follows each change of mode.
+fn apply_component_theme(cx: &mut App) {
+    let p = palette();
     Theme::update(cx, |theme| {
         theme.font_family = FONT_FAMILY.into();
         theme.font_size = rem();
@@ -105,25 +246,25 @@ pub fn install(cx: &mut App) {
         theme.radius_lg = rem() * 2.;
         theme.shadow = false;
         let colors = &mut theme.colors;
-        colors.background = rgb(PAGE).into();
-        colors.foreground = rgb(TEXT).into();
-        colors.muted = rgb(SURFACE).into();
-        colors.muted_foreground = rgb(TEXT_MUTED).into();
-        colors.border = rgb(CONTROL).into();
-        colors.input = rgb(CONTROL).into();
-        colors.ring = rgb(CONTROL_HOVER).into();
-        colors.popover = rgb(SURFACE).into();
-        colors.popover_foreground = rgb(TEXT).into();
-        colors.list = rgb(SURFACE).into();
-        colors.list_hover = rgb(CONTROL).into();
-        colors.list_active = rgb(CONTROL).into();
-        colors.accent = rgb(CONTROL).into();
-        colors.accent_foreground = rgb(TEXT).into();
-        colors.selection = rgb(PRIMARY).into();
-        colors.overlay = rgba(OVERLAY).into();
-        colors.title_bar = rgb(PAGE).into();
-        colors.window_border = rgb(CONTROL).into();
-        colors.scrollbar_thumb = rgb(CONTROL_HOVER).into();
+        colors.background = p.page.into();
+        colors.foreground = p.text.into();
+        colors.muted = p.surface.into();
+        colors.muted_foreground = p.text_muted.into();
+        colors.border = p.control.into();
+        colors.input = p.control.into();
+        colors.ring = p.control_hover.into();
+        colors.popover = p.surface.into();
+        colors.popover_foreground = p.text.into();
+        colors.list = p.surface.into();
+        colors.list_hover = p.control.into();
+        colors.list_active = p.control.into();
+        colors.accent = p.control.into();
+        colors.accent_foreground = p.text.into();
+        colors.selection = p.primary.into();
+        colors.overlay = p.overlay.into();
+        colors.title_bar = p.page.into();
+        colors.window_border = p.control.into();
+        colors.scrollbar_thumb = p.control_hover.into();
     });
 }
 
@@ -151,29 +292,31 @@ pub enum Tone {
 }
 
 impl Tone {
-    fn colors(self) -> (Rgba, Rgba) {
-        let (color, hover) = match self {
-            Self::Primary => (PRIMARY, PRIMARY_HOVER),
-            Self::Positive => (POSITIVE, POSITIVE_HOVER),
-            Self::Done => (POSITIVE_DONE, POSITIVE_DONE),
-            Self::Neutral => (SURFACE, CONTROL),
-            Self::Destructive => (SURFACE, DESTRUCTIVE_HOVER),
-            Self::Danger => (DESTRUCTIVE_HOVER, DANGER_HOVER),
-            Self::Control => (CONTROL, CONTROL_HOVER),
-            Self::Alert => (DESTRUCTIVE_HOVER, ALERT_HOVER),
-            Self::Scrim => return (rgba(SCRIM), rgba(SCRIM_HOVER)),
-        };
-        (rgb(color), rgb(hover))
+    /// The resting fill, the hovered fill and the label's color.
+    fn colors(self) -> (Rgba, Rgba, Rgba) {
+        let p = palette();
+        match self {
+            Self::Primary => (p.primary, p.primary_hover, p.on_accent),
+            Self::Positive => (p.positive, p.positive_hover, p.on_accent),
+            Self::Done => (p.positive_done, p.positive_done, p.on_accent),
+            Self::Neutral => (p.surface, p.control, p.text),
+            Self::Destructive => (p.surface, p.destructive_hover, p.text),
+            Self::Danger => (p.destructive_hover, p.danger_hover, p.on_accent),
+            Self::Control => (p.control, p.control_hover, p.text),
+            Self::Alert => (p.destructive_hover, p.alert_hover, p.on_accent),
+            Self::Scrim => (p.scrim, p.scrim_hover, p.on_accent),
+        }
     }
 }
 
-/// A fully rounded button in `color` that turns `hover` under the pointer.
-fn filled(id: impl Into<ElementId>, color: Rgba, hover: Rgba, cx: &App) -> Button {
+/// A fully rounded button in `color` that turns `hover` under the pointer,
+/// labelled in `label`.
+fn filled(id: impl Into<ElementId>, color: Rgba, hover: Rgba, label: Rgba, cx: &App) -> Button {
     let variant = ButtonCustomVariant::new(cx)
         .color(color.into())
         .hover(hover.into())
         .active(hover.into())
-        .foreground(rgb(TEXT).into());
+        .foreground(label.into());
     Button::new(id)
         .custom(variant)
         .rounded(ButtonRounded::Size(px(999.)))
@@ -191,8 +334,8 @@ pub fn pill_button(
     icon: Option<MdIcon>,
     cx: &App,
 ) -> Button {
-    let (color, hover) = tone.colors();
-    filled(id, color, hover, cx)
+    let (color, hover, label_color) = tone.colors();
+    filled(id, color, hover, label_color, cx)
         .h_10()
         .px_4()
         .font_weight(FontWeight::EXTRA_BOLD)
@@ -207,8 +350,8 @@ pub fn pill_button(
 
 /// A `w-10 h-10` round icon button, as in the modpack toolbar.
 pub fn toolbar_button(id: impl Into<ElementId>, tone: Tone, icon: MdIcon, cx: &App) -> Button {
-    let (color, hover) = tone.colors();
-    filled(id, color, hover, cx)
+    let (color, hover, label_color) = tone.colors();
+    filled(id, color, hover, label_color, cx)
         .size_10()
         .child(Icon::new(icon).size_5())
 }
@@ -216,16 +359,16 @@ pub fn toolbar_button(id: impl Into<ElementId>, tone: Tone, icon: MdIcon, cx: &A
 /// The desktop app's `Button` around a `w-5 h-5` icon: `p-2`, round, as
 /// the settings' UI scale steps are drawn.
 pub fn icon_button(id: impl Into<ElementId>, tone: Tone, icon: MdIcon, cx: &App) -> Button {
-    let (color, hover) = tone.colors();
-    filled(id, color, hover, cx)
+    let (color, hover, label_color) = tone.colors();
+    filled(id, color, hover, label_color, cx)
         .size_9()
         .child(Icon::new(icon).size_5())
 }
 
 /// A `p-2` round icon button, as in the window controls.
 pub fn window_button(id: impl Into<ElementId>, tone: Tone, icon: MdIcon, cx: &App) -> Button {
-    let (color, hover) = tone.colors();
-    filled(id, color, hover, cx)
+    let (color, hover, label_color) = tone.colors();
+    filled(id, color, hover, label_color, cx)
         .size_8()
         .child(Icon::new(icon).size_4())
 }
@@ -233,16 +376,17 @@ pub fn window_button(id: impl Into<ElementId>, tone: Tone, icon: MdIcon, cx: &Ap
 /// A rail button: slate-800, slate-700 when it is the open page, and the
 /// page's accent on hover.
 pub fn rail_button(route: Route, active: bool, cx: &App) -> Button {
+    let p = palette();
     let accent = match route {
-        Route::Modpacks => 0x34d399,
-        Route::CurrentModpack => 0x60a5fa,
-        Route::Search => 0x38bdf8,
-        Route::InstalledContent => 0xa78bfa,
-        Route::Account => 0xfb923c,
-        Route::Settings => TEXT_MUTED,
+        Route::Modpacks => p.rail_modpacks,
+        Route::CurrentModpack => p.rail_current_modpack,
+        Route::Search => p.rail_search,
+        Route::InstalledContent => p.rail_installed_content,
+        Route::Account => p.rail_account,
+        Route::Settings => p.text_muted,
     };
-    let base = if active { CONTROL } else { SURFACE };
-    filled(route.id(), rgb(base), rgb(accent), cx)
+    let base = if active { p.control } else { p.surface };
+    filled(route.id(), base, accent, p.text, cx)
         .size_12()
         .child(Icon::new(route.icon()).size_6())
 }
@@ -255,8 +399,8 @@ pub fn badge(label: impl Into<SharedString>, icon: MdIcon) -> impl IntoElement {
         .px_2()
         .py_0p5()
         .rounded_full()
-        .bg(rgb(CONTROL))
-        .text_color(rgb(TEXT_BADGE))
+        .bg(palette().control)
+        .text_color(palette().text_badge)
         .text_size(px(11.))
         .font_weight(FontWeight::EXTRA_BOLD)
         .child(Icon::new(icon).size_3())
@@ -272,8 +416,8 @@ pub fn panel_button(
     icon: MdIcon,
     cx: &App,
 ) -> Button {
-    let (color, hover) = tone.colors();
-    filled(id, color, hover, cx)
+    let (color, hover, label_color) = tone.colors();
+    filled(id, color, hover, label_color, cx)
         .p_2()
         .font_weight(FontWeight::EXTRA_BOLD)
         .child(
@@ -292,7 +436,7 @@ pub fn title_pill(title: impl Into<SharedString>) -> impl IntoElement {
         .px_4()
         .py_1p5()
         .rounded_full()
-        .bg(rgb(CONTROL))
+        .bg(palette().control)
         .text_lg()
         .font_weight(FontWeight::EXTRA_BOLD)
         .child(title.into())
@@ -300,8 +444,8 @@ pub fn title_pill(title: impl Into<SharedString>) -> impl IntoElement {
 
 /// The desktop app's `CancelButton`: a back arrow before the label.
 pub fn cancel_button(id: impl Into<ElementId>, label: impl Into<SharedString>, cx: &App) -> Button {
-    let (color, hover) = Tone::Neutral.colors();
-    filled(id, color, hover, cx)
+    let (color, hover, label_color) = Tone::Neutral.colors();
+    filled(id, color, hover, label_color, cx)
         .h_10()
         .px_4()
         .font_weight(FontWeight::EXTRA_BOLD)
@@ -324,69 +468,42 @@ pub fn dialog_title(title: impl Into<SharedString>) -> impl IntoElement {
 
 /// The desktop app's dialog panel: `rounded-4xl bg-slate-800 p-8`, no border.
 pub fn dialog_surface(dialog: Dialog) -> Dialog {
-    dialog.bg(rgb(SURFACE)).border_0().p_8()
+    dialog.bg(palette().surface).border_0().p_8()
 }
 
-fn snackbar_color(kind: SnackbarKind) -> u32 {
+/// A snackbar's fill and its text.
+fn snackbar_colors(kind: SnackbarKind, p: &Palette) -> (Rgba, Rgba) {
     match kind {
-        SnackbarKind::Neutral => CONTROL,
-        SnackbarKind::Success | SnackbarKind::Saved | SnackbarKind::Deleted => POSITIVE,
-        SnackbarKind::Error => DESTRUCTIVE_HOVER,
+        SnackbarKind::Neutral => (p.control, p.text),
+        SnackbarKind::Success | SnackbarKind::Saved | SnackbarKind::Deleted => {
+            (p.positive, p.on_accent)
+        }
+        SnackbarKind::Error => (p.destructive_hover, p.on_accent),
     }
 }
 
 /// The desktop app's snackbar: `p-4 rounded-4xl font-bold text-slate-50` on
 /// the kind's color.
 pub fn snackbar_surface(kind: SnackbarKind) -> Div {
+    let (fill, text) = snackbar_colors(kind, &palette());
     div()
         .p_4()
         .rounded(radius_card())
-        .bg(rgb(snackbar_color(kind)))
-        .text_color(rgb(TEXT))
+        .bg(fill)
+        .text_color(text)
         .font_weight(FontWeight::BOLD)
 }
 
 // Search and mod pages
 
-/// slate-300: unpicked option labels.
-pub const TEXT_SOFT: u32 = 0xcbd5e1;
-/// slate-500: hints and secondary labels.
-pub const TEXT_SUBTLE: u32 = 0x64748b;
-/// slate-600: disabled labels.
-pub const TEXT_DISABLED: u32 = 0x475569;
-/// blue-600: a picked option, the filter count.
-pub const SELECTED: u32 = PRIMARY;
-/// white at 10%: rules between filter sections.
-pub const RULE: u32 = 0xffffff1a;
-/// slate-100: a hovered quiet icon button.
-pub const TEXT_BRIGHT: u32 = 0xf1f5f9;
-/// red-400: a hovered "Clear all".
-pub const TEXT_DANGER: u32 = 0xf87171;
-/// white at 5%: a hovered filter option.
-pub const OPTION_HOVER: u32 = 0xffffff0d;
-/// red-900 with red-200 text: a hovered filter chip, which removes it.
-pub const CHIP_REMOVE: u32 = 0x7f1d1d;
-pub const CHIP_REMOVE_TEXT: u32 = 0xfecaca;
-/// red-700: a failed search.
-pub const ERROR_FILL: u32 = DESTRUCTIVE_HOVER;
-/// slate-950: a hovered mod card.
-pub const CARD_HOVER: u32 = 0x020617;
-/// emerald-600: the "search further" arrow.
-pub const POSITIVE_FILL: u32 = POSITIVE;
-/// The providers' brand dots.
+/// The providers' brand dots, the same in every theme.
 pub const CURSEFORGE_DOT: u32 = 0xf16436;
 pub const MODRINTH_DOT: u32 = 0x1bd96a;
-/// amber-300 on amber-900/25 with an amber-700/20 border: notes that warn.
-const WARNING_TEXT: u32 = 0xfcd34d;
-const WARNING_FILL: u32 = 0x78350f40;
-const WARNING_BORDER: u32 = 0xb4530933;
-/// sky-700 and sky-600: the Search button.
-const SEARCH: u32 = 0x0369a1;
-const SEARCH_HOVER: u32 = 0x0284c7;
 
 /// The Search button: sky-700, the search icon before the label.
 pub fn search_button(id: impl Into<ElementId>, label: impl Into<SharedString>, cx: &App) -> Button {
-    filled(id, rgb(SEARCH), rgb(SEARCH_HOVER), cx)
+    let p = palette();
+    filled(id, p.search, p.search_hover, p.on_accent, cx)
         .h_10()
         .px_5()
         .font_weight(FontWeight::EXTRA_BOLD)
@@ -409,12 +526,12 @@ pub fn option_pill(
     cx: &App,
 ) -> Button {
     let tone = if picked { Tone::Primary } else { Tone::Control };
-    let (color, hover) = tone.colors();
-    filled(id, color, hover, cx)
+    let (color, hover, label_color) = tone.colors();
+    filled(id, color, hover, label_color, cx)
         .h_8()
         .px_3()
         .font_weight(FontWeight::BOLD)
-        .when(!picked, |this| this.text_color(rgb(TEXT_BADGE)))
+        .when(!picked, |this| this.text_color(palette().text_badge))
         .child(
             gpui_component::h_flex()
                 .gap_1p5()
@@ -436,16 +553,16 @@ pub fn option_chip(
     disabled: bool,
 ) -> gpui::Stateful<Div> {
     let tone = if picked { Tone::Primary } else { Tone::Control };
-    let (color, hover) = tone.colors();
+    let (color, hover, label_color) = tone.colors();
     let pill = if disabled {
-        resting_light(id, color)
+        resting_light(id, color, label_color)
     } else {
-        filled_light(id, color, hover)
+        filled_light(id, color, hover, label_color)
     };
     pill.h_8()
         .px_3()
         .font_weight(FontWeight::BOLD)
-        .when(!picked, |this| this.text_color(rgb(TEXT_BADGE)))
+        .when(!picked, |this| this.text_color(palette().text_badge))
         .child(
             gpui_component::h_flex()
                 .gap_1p5()
@@ -476,22 +593,23 @@ pub fn source_toggle(
         .rounded_full()
         .text_size(px(13.5))
         .font_weight(FontWeight::EXTRA_BOLD);
+    let p = palette();
     let styled = if disabled {
-        base.bg(rgb(SURFACE))
+        base.bg(p.surface)
             .border_1()
             .border_dashed()
-            .border_color(rgb(CONTROL))
-            .text_color(rgb(TEXT_DISABLED))
+            .border_color(p.control)
+            .text_color(p.text_disabled)
     } else if active {
-        base.bg(rgb(CONTROL))
+        base.bg(p.control)
             .border_2()
-            .border_color(rgb(PRIMARY))
+            .border_color(p.primary)
             .cursor_pointer()
     } else {
-        base.bg(rgb(SURFACE))
+        base.bg(p.surface)
             .border_2()
-            .border_color(rgba(0))
-            .text_color(rgb(TEXT_SUBTLE))
+            .border_color(gpui::transparent_black())
+            .text_color(p.text_subtle)
             .cursor_pointer()
     };
     styled
@@ -505,19 +623,20 @@ pub fn filter_label(label: impl Into<SharedString>) -> impl IntoElement {
         .mb_2p5()
         .text_size(px(13.))
         .font_weight(FontWeight::EXTRA_BOLD)
-        .text_color(rgb(TEXT_MUTED))
+        .text_color(palette().text_muted)
         .child(label.into())
 }
 
 /// A filter checkbox: a `rounded-[7px]` square, filled blue with a check
 /// when picked.
 pub fn check_box(picked: bool, disabled: bool) -> impl IntoElement {
+    let p = palette();
     let border = if disabled {
-        CONTROL
+        p.control
     } else if picked {
-        PRIMARY
+        p.primary
     } else {
-        TEXT_SUBTLE
+        p.text_subtle
     };
     div()
         .flex_none()
@@ -527,10 +646,10 @@ pub fn check_box(picked: bool, disabled: bool) -> impl IntoElement {
         .justify_center()
         .rounded(px(7.))
         .border_1()
-        .border_color(rgb(border))
+        .border_color(border)
         .when(picked && !disabled, |this| {
-            this.bg(rgb(PRIMARY))
-                .child(Icon::new(MdIcon::Check).size_3().text_color(rgb(TEXT)))
+            this.bg(p.primary)
+                .child(Icon::new(MdIcon::Check).size_3().text_color(p.on_accent))
         })
 }
 
@@ -542,7 +661,11 @@ pub fn switch(on: bool) -> impl IntoElement {
         .h_6()
         .p_0p5()
         .rounded_full()
-        .bg(rgb(if on { PRIMARY } else { CONTROL }))
+        .bg(if on {
+            palette().primary
+        } else {
+            palette().control
+        })
         .flex()
         .when(on, |this| this.justify_end())
         .child(div().size_5().rounded_full().bg(rgb(0xffffff)))
@@ -556,9 +679,9 @@ pub fn warning_note(text: impl Into<SharedString>) -> impl IntoElement {
         .py_2()
         .rounded_2xl()
         .border_1()
-        .border_color(rgba(WARNING_BORDER))
-        .bg(rgba(WARNING_FILL))
-        .text_color(rgb(WARNING_TEXT))
+        .border_color(palette().warning_border)
+        .bg(palette().warning_fill)
+        .text_color(palette().warning_text)
         .text_size(px(11.5))
         .child(text.into())
 }
@@ -576,10 +699,11 @@ pub fn installed_pill(label: impl Into<SharedString>) -> gpui::Div {
 }
 
 fn meta_pill(curseforge: bool) -> gpui::Div {
+    let p = palette();
     let (fill, text) = if curseforge {
-        (0xf9731633, 0xfb923c)
+        (p.curseforge_pill_fill, p.curseforge_pill_text)
     } else {
-        (0x10b98126, 0x34d399)
+        (p.modrinth_pill_fill, p.modrinth_pill_text)
     };
     div()
         .flex()
@@ -588,8 +712,8 @@ fn meta_pill(curseforge: bool) -> gpui::Div {
         .px_2()
         .py_0p5()
         .rounded_full()
-        .bg(rgba(fill))
-        .text_color(rgb(text))
+        .bg(fill)
+        .text_color(text)
         .text_size(px(11.))
         .font_weight(FontWeight::EXTRA_BOLD)
 }
@@ -598,11 +722,16 @@ fn meta_pill(curseforge: bool) -> gpui::Div {
 /// the `Button` is, without what a grid of mod cards drawn every frame can
 /// do without: a focus handle, made again each time the card is shown, and
 /// the variant's colors worked out on every frame.
-fn filled_light(id: impl Into<ElementId>, color: Rgba, hover: Rgba) -> gpui::Stateful<Div> {
+fn filled_light(
+    id: impl Into<ElementId>,
+    color: Rgba,
+    hover: Rgba,
+    label: Rgba,
+) -> gpui::Stateful<Div> {
     use gpui::StatefulInteractiveElement as _;
-    resting_light(id, color)
-        .hover(move |this| this.bg(hover).text_color(rgb(TEXT)))
-        .active(move |this| this.bg(hover).text_color(rgb(TEXT)))
+    resting_light(id, color, label)
+        .hover(move |this| this.bg(hover).text_color(label))
+        .active(move |this| this.bg(hover).text_color(label))
         .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
             // As a `Button`: a press neither moves focus nor selects text.
             window.prevent_default();
@@ -611,7 +740,7 @@ fn filled_light(id: impl Into<ElementId>, color: Rgba, hover: Rgba) -> gpui::Sta
 }
 
 /// [`filled_light`] as a disabled `Button` draws it: no hover, no press.
-fn resting_light(id: impl Into<ElementId>, color: Rgba) -> gpui::Stateful<Div> {
+fn resting_light(id: impl Into<ElementId>, color: Rgba, label: Rgba) -> gpui::Stateful<Div> {
     use gpui::StatefulInteractiveElement as _;
     div()
         .id(id)
@@ -625,7 +754,7 @@ fn resting_light(id: impl Into<ElementId>, color: Rgba) -> gpui::Stateful<Div> {
         .line_height(gpui::relative(1.25))
         .rounded(px(999.))
         .bg(color)
-        .text_color(rgb(TEXT))
+        .text_color(label)
 }
 
 /// An `h-8` action on a mod card, the icon after the label.
@@ -635,8 +764,8 @@ pub fn card_button(
     label: impl Into<SharedString>,
     icon: MdIcon,
 ) -> gpui::Stateful<Div> {
-    let (color, hover) = tone.colors();
-    filled_light(id, color, hover)
+    let (color, hover, label_color) = tone.colors();
+    filled_light(id, color, hover, label_color)
         .h_8()
         .px_5()
         .font_weight(FontWeight::EXTRA_BOLD)
@@ -652,12 +781,13 @@ pub fn card_button(
 
 /// The round "open in the web" button on a mod card.
 pub fn card_icon_button(id: impl Into<ElementId>, icon: MdIcon, cx: &App) -> Button {
-    filled(id, rgb(SURFACE), rgb(CONTROL), cx)
+    let p = palette();
+    filled(id, p.surface, p.control, p.text, cx)
         .size(px(38.))
         // A fixed `w-[38px]`; the button's own rem padding would squeeze
         // the icon out of it at a larger UI scale.
         .p_0()
-        .text_color(rgb(TEXT_SOFT))
+        .text_color(p.text_soft)
         .child(Icon::new(icon).size_4())
 }
 
@@ -670,8 +800,8 @@ pub fn wide_button(
     icon: MdIcon,
     cx: &App,
 ) -> Button {
-    let (color, hover) = tone.colors();
-    filled(id, color, hover, cx)
+    let (color, hover, label_color) = tone.colors();
+    filled(id, color, hover, label_color, cx)
         .h_10()
         .px_4()
         .font_weight(FontWeight::EXTRA_BOLD)
@@ -742,12 +872,19 @@ pub fn mod_icon(url: &str, name: &str, size: gpui::Rems, round: bool) -> gpui::A
 /// The desktop app's `LinearProgress`: a blue bar labelled with its percent.
 pub fn progress_bar(percent: i32) -> impl IntoElement {
     let percent = percent.clamp(0, 100);
-    div().w_full().rounded_full().bg(rgb(CONTROL)).child(
+    let p = palette();
+    let (fill, label) = if percent == 0 {
+        (p.surface, p.text)
+    } else {
+        (p.primary, p.on_accent)
+    };
+    div().w_full().rounded_full().bg(p.control).child(
         div()
             .w(gpui::relative(percent as f32 / 100.))
             .p_0p5()
             .rounded_full()
-            .bg(rgb(if percent == 0 { SURFACE } else { PRIMARY }))
+            .bg(fill)
+            .text_color(label)
             .text_xs()
             .line_height(rems(0.75))
             .font_weight(FontWeight::MEDIUM)
@@ -755,12 +892,6 @@ pub fn progress_bar(percent: i32) -> impl IntoElement {
             .child(format!("{percent}%")),
     )
 }
-
-/// A `rounded-[28px]` slate-800 panel, as the filters, results and install
-/// panels are drawn.
-/// slate-900 and slate-700: `CircularProgress.tsx`'s ring and its top.
-const PROGRESS_RING: u32 = PAGE;
-const PROGRESS_ARC: u32 = CONTROL;
 
 /// `CircularProgress.tsx`, the desktop app's only spinner: a `border-8`
 /// slate-900 ring with a slate-700 top, `p-16` inside (150.4px across),
@@ -775,14 +906,14 @@ pub fn circular_progress(id: impl Into<ElementId>) -> impl IntoElement {
         .size(size)
         .rounded_full()
         .border_8()
-        .border_color(rgb(PROGRESS_RING));
+        .border_color(palette().page);
     let arc = svg()
         .path(crate::assets::PROGRESS_ARC)
         .absolute()
         .top_0()
         .left_0()
         .size(size)
-        .text_color(rgb(PROGRESS_ARC))
+        .text_color(palette().control)
         .with_animation(
             (id.clone(), "spin"),
             Animation::new(motion::SPIN).repeat(),
@@ -807,10 +938,6 @@ pub fn circular_progress(id: impl Into<ElementId>) -> impl IntoElement {
         )
 }
 
-/// slate-600 and emerald-400: the small spinner's ring and its top.
-const SPINNER_RING: u32 = 0x475569;
-const SPINNER_ARC: u32 = 0x34d399;
-
 /// `SharedModpackView`'s loading spinner: a `size-6` slate-600 `border-2`
 /// ring whose emerald-400 top turns under Tailwind's `animate-spin`.
 pub fn spinner(id: impl Into<ElementId>) -> impl IntoElement {
@@ -821,7 +948,7 @@ pub fn spinner(id: impl Into<ElementId>) -> impl IntoElement {
         .flex_shrink_0()
         .rounded_full()
         .border_2()
-        .border_color(rgb(SPINNER_RING))
+        .border_color(palette().spinner_ring)
         .child(
             svg()
                 .path(crate::assets::SPINNER_ARC)
@@ -829,7 +956,7 @@ pub fn spinner(id: impl Into<ElementId>) -> impl IntoElement {
                 .top(px(-2.))
                 .left(px(-2.))
                 .size_6()
-                .text_color(rgb(SPINNER_ARC))
+                .text_color(palette().spinner_arc)
                 .with_animation(
                     id,
                     Animation::new(motion::QUICK_SPIN).repeat(),
@@ -845,30 +972,22 @@ pub fn spinner(id: impl Into<ElementId>) -> impl IntoElement {
 /// `rounded-[28px]`: a panel's corners.
 pub const PANEL_RADIUS: gpui::Pixels = px(28.);
 
+/// A `rounded-[28px]` slate-800 panel, as the filters, results and install
+/// panels are drawn.
 pub fn panel() -> gpui::Div {
-    div().rounded(PANEL_RADIUS).bg(rgb(SURFACE))
+    div().rounded(PANEL_RADIUS).bg(palette().surface)
 }
 
 // Content, settings and account pages
 
-/// emerald-800: a switched-on track.
-const SWITCH_ON: u32 = 0x065f46;
-/// emerald-700: a hovered switched-on track.
-const SWITCH_ON_HOVER: u32 = 0x047857;
-/// sky-500 at 20% and sky-300: the Cloud badge.
-const CLOUD_BADGE: (u32, u32) = (0x0ea5e933, 0x7dd3fc);
-/// emerald-500 at 15% and emerald-400: the Synced badge.
-const SYNCED_BADGE: (u32, u32) = (0x10b98126, 0x34d399);
-/// red-950 at 60%, red-400 at 40% and red-100: a failure the page keeps showing.
-const WARNING: (u32, u32, u32) = (0x450a0a99, 0xf8717166, 0xfee2e2);
-
 /// The desktop app's Headless UI switch: an `h-8 w-16` slate-700 track that
 /// turns emerald-800 when on, with a `size-8` slate-300 thumb.
 pub fn setting_switch(id: impl Into<ElementId>, on: bool) -> gpui::Stateful<gpui::Div> {
+    let p = palette();
     let (track, hover) = if on {
-        (SWITCH_ON, SWITCH_ON_HOVER)
+        (p.switch_on, p.switch_on_hover)
     } else {
-        (CONTROL, CONTROL_HOVER)
+        (p.control, p.control_hover)
     };
     div()
         .id(id)
@@ -876,14 +995,14 @@ pub fn setting_switch(id: impl Into<ElementId>, on: bool) -> gpui::Stateful<gpui
         .h_8()
         .w_16()
         .rounded_full()
-        .bg(rgb(track))
-        .hover(|style| style.bg(rgb(hover)))
+        .bg(track)
+        .hover(move |style| style.bg(hover))
         .cursor_pointer()
         .child(
             div()
                 .size_8()
                 .rounded_full()
-                .bg(rgb(TEXT_SOFT))
+                .bg(p.text_soft)
                 .when(on, |thumb| thumb.ml_8()),
         )
 }
@@ -900,29 +1019,39 @@ pub fn checkbox(id: impl Into<ElementId>, checked: bool) -> gpui::Stateful<gpui:
         .rounded(px(3.))
         .cursor_pointer()
         .map(|this| {
+            let p = palette();
             if checked {
-                this.bg(rgb(POSITIVE))
-                    .child(Icon::new(MdIcon::Check).size_4().text_color(rgb(TEXT)))
+                this.bg(p.positive)
+                    .child(Icon::new(MdIcon::Check).size_4().text_color(p.on_accent))
             } else {
-                this.bg(rgb(TEXT)).border_1().border_color(rgb(TEXT_MUTED))
+                // Light in every theme, as the browser's unchecked box.
+                this.bg(p.on_accent).border_1().border_color(p.text_muted)
             }
         })
 }
 
 /// The Cloud badge of a modpack that only exists in Quadrant Sync.
 pub fn cloud_badge(label: impl Into<SharedString>) -> impl IntoElement {
-    tinted_badge(label, MdIcon::Cloud, CLOUD_BADGE)
+    let p = palette();
+    tinted_badge(label, MdIcon::Cloud, p.cloud_badge_fill, p.cloud_badge_text)
 }
 
 /// The Synced badge of a modpack with a Quadrant Sync record.
 pub fn synced_badge(label: impl Into<SharedString>) -> impl IntoElement {
-    tinted_badge(label, MdIcon::CloudDone, SYNCED_BADGE)
+    let p = palette();
+    tinted_badge(
+        label,
+        MdIcon::CloudDone,
+        p.synced_badge_fill,
+        p.synced_badge_text,
+    )
 }
 
 fn tinted_badge(
     label: impl Into<SharedString>,
     icon: MdIcon,
-    (background, foreground): (u32, u32),
+    background: Rgba,
+    foreground: Rgba,
 ) -> impl IntoElement {
     gpui_component::h_flex()
         .gap_1()
@@ -930,8 +1059,8 @@ fn tinted_badge(
         .px_2()
         .py_0p5()
         .rounded_full()
-        .bg(rgba(background))
-        .text_color(rgb(foreground))
+        .bg(background)
+        .text_color(foreground)
         .text_size(px(11.))
         .font_weight(FontWeight::EXTRA_BOLD)
         .child(Icon::new(icon).size_3())
@@ -940,15 +1069,15 @@ fn tinted_badge(
 
 /// A failure the page keeps on screen, like the Account page's sign-in error.
 pub fn warning_box(text: impl Into<SharedString>) -> impl IntoElement {
-    let (background, border, foreground) = WARNING;
+    let p = palette();
     div()
         .w_full()
         .p_4()
         .rounded(radius_card())
         .border_1()
-        .border_color(rgba(border))
-        .bg(rgba(background))
-        .text_color(rgb(foreground))
+        .border_color(p.warning_box_border)
+        .bg(p.warning_box_fill)
+        .text_color(p.warning_box_text)
         .font_weight(FontWeight::BOLD)
         .child(text.into())
 }
@@ -961,8 +1090,8 @@ pub fn small_pill_button(
     icon: Option<MdIcon>,
     cx: &App,
 ) -> Button {
-    let (color, hover) = tone.colors();
-    filled(id, color, hover, cx)
+    let (color, hover, label_color) = tone.colors();
+    filled(id, color, hover, label_color, cx)
         .h_10()
         .px_4()
         .font_weight(FontWeight::EXTRA_BOLD)
@@ -978,7 +1107,8 @@ pub fn small_pill_button(
 
 /// slate-700 that turns red-700 on hover: kicking a Quadrant Sync member.
 pub fn kick_button(id: impl Into<ElementId>, label: impl Into<SharedString>, cx: &App) -> Button {
-    filled(id, rgb(CONTROL), rgb(DESTRUCTIVE_HOVER), cx)
+    let p = palette();
+    filled(id, p.control, p.destructive_hover, p.text, cx)
         .h_10()
         .px_4()
         .font_weight(FontWeight::EXTRA_BOLD)
@@ -993,7 +1123,7 @@ pub fn block_button(
     label: impl Into<SharedString>,
     icon: Option<MdIcon>,
 ) -> gpui::Stateful<Div> {
-    let (color, hover) = tone.colors();
+    let (color, hover, label_color) = tone.colors();
     gpui_component::h_flex()
         .id(id)
         .w_full()
@@ -1003,6 +1133,7 @@ pub fn block_button(
         .rounded(radius_card())
         .bg(color)
         .hover(move |style| style.bg(hover))
+        .text_color(label_color)
         .cursor_pointer()
         .font_weight(FontWeight::EXTRA_BOLD)
         .child(div().flex_1().min_w_0().text_center().child(label.into()))
@@ -1018,7 +1149,7 @@ pub fn menu_panel<E: Styled>(panel: E) -> E {
         .p_2()
         .max_w(gpui::rems(20.))
         .rounded(radius_card())
-        .bg(rgb(SURFACE))
+        .bg(palette().surface)
         .font_weight(FontWeight::BOLD)
 }
 
@@ -1035,7 +1166,8 @@ pub fn menu_item(id: impl Into<ElementId>, disabled: bool) -> gpui::Stateful<Div
             if disabled {
                 this.opacity(0.5)
             } else {
-                this.cursor_pointer().hover(|style| style.bg(rgb(CONTROL)))
+                this.cursor_pointer()
+                    .hover(|style| style.bg(palette().control))
             }
         })
 }
@@ -1043,12 +1175,24 @@ pub fn menu_item(id: impl Into<ElementId>, disabled: bool) -> gpui::Stateful<Div
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::rgba;
 
     #[test]
     fn snackbar_kinds_use_the_desktop_apps_colors() {
+        let fill = |kind| snackbar_colors(kind, &QUADRANT).0;
         // bg-slate-700, bg-emerald-600, bg-red-700
-        assert_eq!(snackbar_color(SnackbarKind::Neutral), 0x334155);
-        assert_eq!(snackbar_color(SnackbarKind::Success), 0x059669);
-        assert_eq!(snackbar_color(SnackbarKind::Error), 0xb91c1c);
+        assert_eq!(fill(SnackbarKind::Neutral), rgb(0x334155));
+        assert_eq!(fill(SnackbarKind::Success), rgb(0x059669));
+        assert_eq!(fill(SnackbarKind::Error), rgb(0xb91c1c));
+    }
+
+    #[test]
+    fn const_hex_matches_gpuis_conversion() {
+        for value in [0x0f172a, 0xf8fafc, 0x000000, 0xffffff, 0x2563eb] {
+            assert_eq!(hex(value), rgb(value));
+        }
+        for value in [0x0206174d, 0xffffff0d, 0x00000000, 0xf8717166] {
+            assert_eq!(hexa(value), rgba(value));
+        }
     }
 }

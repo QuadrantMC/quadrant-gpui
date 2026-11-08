@@ -8,7 +8,7 @@ use chrono::{Local, TimeZone as _};
 use gpui::{
     ClickEvent, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Task,
-    Window, div, prelude::FluentBuilder as _, rgb,
+    Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
     Disableable as _, Icon,
@@ -644,7 +644,7 @@ impl InstalledContentPage {
             .px_4()
             .py_3()
             .rounded(theme::radius_card())
-            .bg(rgb(theme::PAGE))
+            .bg(theme::palette().page)
             .child(
                 div()
                     .mr_auto()
@@ -712,7 +712,7 @@ impl InstalledContentPage {
             .px_4()
             .py_2()
             .rounded(theme::radius_card())
-            .bg(rgb(theme::PAGE))
+            .bg(theme::palette().page)
             .child(
                 theme::checkbox(control.id("tick"), selected)
                     .when(busy, |this| this.opacity(0.5))
@@ -734,7 +734,7 @@ impl InstalledContentPage {
                     )
                     .child(
                         div()
-                            .text_color(rgb(theme::TEXT_MUTED))
+                            .text_color(theme::palette().text_muted)
                             .child(describe_file(file)),
                     ),
             )
@@ -801,7 +801,7 @@ impl InstalledContentPage {
                     )
                     .child(
                         div()
-                            .text_color(rgb(theme::TEXT_MUTED))
+                            .text_color(theme::palette().text_muted)
                             .child(files.len().to_string()),
                     )
                     .child(expand_icon(open).size_5()),
@@ -846,7 +846,7 @@ impl InstalledContentPage {
             Some(
                 div()
                     .mt_3()
-                    .text_color(rgb(theme::TEXT_MUTED))
+                    .text_color(theme::palette().text_muted)
                     .child(t("installedContentEmpty"))
                     .into_any_element(),
             )
@@ -903,7 +903,7 @@ impl InstalledContentPage {
             .my_3()
             .p_4()
             .rounded(theme::radius_card())
-            .bg(rgb(theme::SURFACE))
+            .bg(theme::palette().surface)
             .child(header)
             .children(body)
     }
@@ -942,17 +942,17 @@ impl InstalledContentPage {
                                 .px_3()
                                 .py_1()
                                 .rounded_full()
-                                .bg(rgb(theme::CONTROL))
+                                .bg(theme::palette().control)
                                 .text_xs()
                                 .font_weight(FontWeight::EXTRA_BOLD)
-                                .text_color(rgb(theme::TEXT_SOFT))
+                                .text_color(theme::palette().text_soft)
                                 .child(t("prismLauncher")),
                         )
                     }),
             )
             .child(
                 div()
-                    .text_color(rgb(theme::TEXT_MUTED))
+                    .text_color(theme::palette().text_muted)
                     .child(location.path.clone()),
             );
         let header = if collapsible {
@@ -980,7 +980,7 @@ impl InstalledContentPage {
             .my_5()
             .p_4()
             .rounded(theme::radius_card())
-            .bg(rgb(theme::PAGE))
+            .bg(theme::palette().page)
             .child(header)
             .when(open, |this| {
                 this.children(
@@ -1051,7 +1051,7 @@ impl Render for InstalledContentPage {
             Loadable::Failed(error) => h_flex()
                 .p_8()
                 .justify_center()
-                .text_color(rgb(theme::TEXT_MUTED))
+                .text_color(theme::palette().text_muted)
                 .child(error.clone())
                 .into_any_element(),
             Loadable::Ready(locations) if locations.is_empty() => div().into_any_element(),
@@ -1064,7 +1064,7 @@ impl Render for InstalledContentPage {
                         .mx_6()
                         .my_4()
                         .rounded(theme::radius_card())
-                        .bg(rgb(theme::SURFACE))
+                        .bg(theme::palette().surface)
                         .children(
                             (0..locations.len())
                                 .map(|index| {

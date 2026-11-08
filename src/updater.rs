@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FontWeight, Global, IntoElement as _,
-    ParentElement as _, SharedString, Styled as _, Subscription, Task, Window, div, rems, rgb,
+    ParentElement as _, SharedString, Styled as _, Subscription, Task, Window, div, rems,
 };
 use gpui_component::{
     IndexPath,
@@ -383,7 +383,7 @@ pub fn channel_setting(window: &mut Window, cx: &mut App) -> Option<AnyElement> 
                     .appearance(false)
                     .h_10()
                     .rounded_full()
-                    .bg(rgb(theme::CONTROL)),
+                    .bg(theme::palette().control),
             ),
         );
     Some(field.into_any_element())

@@ -5,6 +5,7 @@ mod app;
 mod assets;
 mod autostart;
 mod backend;
+mod color_theme;
 mod config;
 mod console;
 mod deep_link;
@@ -289,6 +290,7 @@ fn follows_channel(args: &Args, installed: bool) -> bool {
 struct Running {
     backend: Backend,
     prefs: Prefs,
+    themes: color_theme::Themes,
     args: Args,
     /// Where later launches reach this one; `None` in screenshot and perf
     /// runs, or when the socket failed.
@@ -328,7 +330,7 @@ fn launch(raw_args: Vec<OsString>, launched: Launch) -> Result<Option<Running>> 
         Some(Err(error)) => Err(error),
         None => Ok(None),
     };
-    let (backend, prefs) = start(&args)?;
+    let (backend, prefs, themes) = start(&args)?;
     // The host has set up logging by now.
     let primary = primary.unwrap_or_else(|error| {
         log::warn!("Later launches will start instances of their own: {error:#}");
@@ -349,13 +351,14 @@ fn launch(raw_args: Vec<OsString>, launched: Launch) -> Result<Option<Running>> 
     Ok(Some(Running {
         backend,
         prefs,
+        themes,
         args,
         primary,
         autostart,
     }))
 }
 
-fn start(args: &Args) -> Result<(Backend, Prefs)> {
+fn start(args: &Args) -> Result<(Backend, Prefs, color_theme::Themes)> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -370,7 +373,8 @@ fn start(args: &Args) -> Result<(Backend, Prefs)> {
         env!("CARGO_PKG_VERSION")
     );
     let prefs = Prefs::read(&host);
-    Ok((Backend::new(host, runtime), prefs))
+    let themes = color_theme::Themes::scan(&color_theme::folder(&host.options().data_dir));
+    Ok((Backend::new(host, runtime), prefs, themes))
 }
 
 /// Debug builds only: `QUADRANT_NATIVE_BACKGROUND` opens the window without
@@ -402,7 +406,7 @@ fn open_main_window(mode: &Mode, autostart: bool, cx: &mut App) -> Result<Window
             appears_transparent: !native,
             traffic_light_position: (!native).then(|| point(px(12.), px(12.))),
         }),
-        window_decorations: Some(prefs::window_decorations(Prefs::global(cx))),
+        window_decorations: Some(prefs::window_decorations(&Prefs::global(cx))),
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(800.), px(500.))),
         show: !hidden,
@@ -441,14 +445,15 @@ fn main() -> ExitCode {
     let raw_args: Vec<OsString> = std::env::args_os().skip(1).collect();
     // Before parsing, so a bad argument is reported in the console too.
     let console = console::Console::setup(raw_args.iter().any(|arg| is_debug_flag(arg)));
-    let (backend, prefs, args, primary, autostart) = match launch(raw_args, launched) {
+    let (backend, prefs, themes, args, primary, autostart) = match launch(raw_args, launched) {
         Ok(Some(Running {
             backend,
             prefs,
+            themes,
             args,
             primary,
             autostart,
-        })) => (backend, prefs, args, primary, autostart),
+        })) => (backend, prefs, themes, args, primary, autostart),
         Ok(None) => return ExitCode::SUCCESS,
         Err(error) => {
             console.fatal(&format!("{error:#}"));
@@ -477,6 +482,7 @@ fn main() -> ExitCode {
         if let Some(autostart) = autostart {
             cx.set_global(autostart);
         }
+        cx.set_global(themes);
         prefs.install(cx);
         app::bind_zoom_keys(cx);
         snackbar::install(cx);

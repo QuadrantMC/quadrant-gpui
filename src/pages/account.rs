@@ -4,7 +4,7 @@
 use gpui::{
     Context, Entity, FontWeight, IntoElement, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
-    prelude::FluentBuilder as _, relative, rems, rgb,
+    prelude::FluentBuilder as _, relative, rems,
 };
 use gpui_component::{Disableable as _, h_flex, v_flex};
 use quadrant_core::account::id::AccountInfo;
@@ -149,7 +149,7 @@ impl AccountPage {
             .px_6()
             .py_10()
             .rounded(theme::radius_card())
-            .bg(rgb(theme::SURFACE))
+            .bg(theme::palette().surface)
             .child(theme::circular_progress("progress"))
             .child(
                 div()
@@ -162,7 +162,7 @@ impl AccountPage {
                 div()
                     .mt_4()
                     .text_lg()
-                    .text_color(rgb(theme::TEXT_MUTED))
+                    .text_color(theme::palette().text_muted)
                     .child(t("loadingAccountDetails")),
             )
     }
@@ -174,7 +174,7 @@ impl AccountPage {
                 .my_4()
                 .p_2()
                 .rounded(theme::radius_card())
-                .bg(rgb(theme::SURFACE))
+                .bg(theme::palette().surface)
                 .flex()
                 .justify_center()
                 .font_weight(FontWeight::BOLD)
@@ -230,7 +230,7 @@ impl AccountPage {
                     .px_4()
                     .py_2()
                     .rounded(theme::radius_card())
-                    .bg(rgb(theme::SURFACE))
+                    .bg(theme::palette().surface)
                     .text_2xl()
                     .font_weight(FontWeight::EXTRA_BOLD)
                     .child(t("signIn")),
