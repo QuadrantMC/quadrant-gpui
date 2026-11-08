@@ -466,6 +466,9 @@ pub struct ModpacksPage {
     session: Entity<Session>,
     /// The signed-in account's Quadrant Sync packs; `Idle` while signed out.
     synced: Loadable<Vec<SyncedModpack>>,
+    /// The modpacks, the Sync packs, the account or the search changed since
+    /// `rows` was made: merging the lists is too slow for every frame.
+    rows_stale: bool,
     synced_listing: Reload,
     /// Cards whose Quadrant Sync panel is unfolded, by cloud modpack id.
     open_panels: Vec<String>,
@@ -512,8 +515,9 @@ impl ModpacksPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder(t("searchModpacksPlaceholder")));
-        let search_changed = cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
+        let search_changed = cx.subscribe(&search, |this, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
+                this.rows_stale = true;
                 cx.notify();
             }
         });
@@ -558,6 +562,7 @@ impl ModpacksPage {
             folders: None,
             session,
             synced: Loadable::Idle,
+            rows_stale: true,
             synced_listing: Reload::default(),
             open_panels: Vec::new(),
             install_progress: None,
@@ -588,6 +593,9 @@ impl ModpacksPage {
 
     /// Reads the account's Quadrant Sync packs, or forgets them once signed out.
     fn load_synced(&mut self, cx: &mut Context<Self>) {
+        // Called for every change to the session, which decides which
+        // Sync packs show.
+        self.rows_stale = true;
         if self.sync_account(cx).is_none() {
             self.synced = Loadable::Idle;
             self.synced_listing = Reload::default();
@@ -603,6 +611,7 @@ impl ModpacksPage {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.synced = Loadable::from_result(result);
+                this.rows_stale = true;
                 if this.synced_listing.landed() {
                     this.load_synced(cx);
                 }
@@ -642,6 +651,7 @@ impl ModpacksPage {
                 if !unchanged {
                     this.listed = digest;
                     this.modpacks = Loadable::from_result(result.map(|(modpacks, _)| modpacks));
+                    this.rows_stale = true;
                     this.refresh_details(cx);
                     cx.notify();
                 }
@@ -1017,6 +1027,7 @@ impl ModpacksPage {
             .into_iter()
             .collect();
         self.synced = Loadable::Ready(synced);
+        self.rows_stale = true;
         self.search.update(cx, |input, cx| {
             input.set_value(search.to_string(), window, cx)
         });
@@ -1354,7 +1365,14 @@ impl ModpacksPage {
     /// Points the list at this frame's items, keeping the scroll position,
     /// and hints them again when gpui dropped their heights.
     fn sync_list(&mut self, cx: &App) {
-        let rows = self.list_rows(cx);
+        if !self.rows_stale && !self.list.stale() {
+            return;
+        }
+        let rows = if std::mem::take(&mut self.rows_stale) {
+            self.list_rows(cx)
+        } else {
+            self.rows.clone()
+        };
         if rows == self.rows && !self.list.stale() {
             return;
         }
