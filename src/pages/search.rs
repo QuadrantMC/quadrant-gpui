@@ -519,8 +519,10 @@ impl SearchPage {
                         .unwrap_or_default()
                 }
             };
-            let curseforge: Vec<SearchCategory> = fetch(curseforge, Provider::CurseForge).await;
-            let modrinth = fetch(modrinth, Provider::Modrinth).await;
+            let (curseforge, modrinth): (Vec<SearchCategory>, _) = futures::join!(
+                fetch(curseforge, Provider::CurseForge),
+                fetch(modrinth, Provider::Modrinth)
+            );
             Ok(merge_categories(&curseforge, &modrinth))
         });
         self.loading_categories = cx.spawn(async move |this, cx| {
@@ -1669,16 +1671,22 @@ fn result_columns(panel_width: Pixels) -> usize {
     )
 }
 
-/// Runs each request in turn. A failed provider contributes an empty list
-/// so a further page still lines up; only all failing is an error.
+/// Runs the requests side by side, answering in request order. A failed
+/// provider contributes an empty list so a further page still lines up;
+/// only all failing is an error.
 async fn search_all(
     host: QuadrantHost,
     requests: Vec<(Provider, quadrant_core::mc_mod::GlobalSearchModsArgs)>,
 ) -> anyhow::Result<Vec<Vec<Mod>>> {
-    let mut lists = Vec::with_capacity(requests.len());
+    let answers = futures::future::join_all(requests.into_iter().map(|(provider, args)| {
+        let host = host.clone();
+        async move { (provider, host.search_mods(args).await) }
+    }))
+    .await;
+    let mut lists = Vec::with_capacity(answers.len());
     let mut first_error = None;
-    for (provider, args) in requests {
-        match host.search_mods(args).await {
+    for (provider, answer) in answers {
+        match answer {
             Ok(list) => lists.push(list),
             Err(error) => {
                 log::warn!("{} search failed: {error:#}", provider.label());

@@ -8,6 +8,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use chrono::{Local, TimeZone as _};
+use futures::{StreamExt as _, stream};
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FontWeight, IntoElement, ParentElement as _,
     Pixels, Render, SharedString, Styled as _, Subscription, Task, Window, div, list,
@@ -26,7 +27,7 @@ use crate::{
     events::{ModStage, watch_mod_progress},
     i18n::{describe, t, t_with},
     loadable::Loadable,
-    mod_catalog::{ModCatalog, ModKey},
+    mod_catalog::{CONCURRENCY, ModCatalog, ModKey},
     motion::{self, CardEntrance},
     pages::{
         mod_grid::{self, CardSlot, GridList, Item, RowHeights, Rows, Shape},
@@ -233,22 +234,27 @@ pub fn summary(modpack: &LocalModpack, count: usize) -> String {
     line
 }
 
+/// Asks about [`CONCURRENCY`] mods at a time, in the cards' order.
 async fn check_updates(
     host: QuadrantHost,
     modpack: LocalModpack,
     cards: Vec<Mod>,
 ) -> anyhow::Result<Vec<Mod>> {
-    let mut updates = Vec::new();
-    for card in cards {
-        match host
-            .check_mod_updates(
+    let checks: Vec<_> = stream::iter(cards)
+        .map(|card| {
+            host.check_mod_updates(
                 card,
                 modpack.version.clone(),
                 modpack.mod_loader,
                 modpack.name.clone(),
             )
-            .await
-        {
+        })
+        .buffered(CONCURRENCY)
+        .collect()
+        .await;
+    let mut updates = Vec::new();
+    for check in checks {
+        match check {
             Ok(Some(update)) => updates.push(update),
             Ok(None) => {}
             Err(error) => log::warn!("update check failed: {error:#}"),
@@ -258,37 +264,51 @@ async fn check_updates(
     Ok(updates)
 }
 
+/// Looks each found file up, [`CONCURRENCY`] at a time, and groups the
+/// proposals by file in the order they were found.
 async fn identify(host: QuadrantHost, modpack: LocalModpack) -> anyhow::Result<Vec<Unknown>> {
+    let found = host.identify_modpack(modpack.name.clone()).await?;
+    let lookups: Vec<_> = stream::iter(found)
+        .map(|found| {
+            let host = host.clone();
+            let modpack = &modpack;
+            async move {
+                let installed = &found.installed_mod;
+                let args = GetModArgs {
+                    id: installed.id.clone(),
+                    downloadable: false,
+                    show_previous_version: false,
+                    deletable: false,
+                    version_target: String::new(),
+                    mod_loader: modpack.mod_loader,
+                    modpack: modpack.name.clone(),
+                    selectable: true,
+                    select_url: Some(installed.download_url.clone()),
+                };
+                let proposal = match installed.source {
+                    ModSource::Modrinth => host.get_mod_modrinth(args).await.ok(),
+                    #[cfg(feature = "curseforge")]
+                    ModSource::CurseForge => host.get_mod_curseforge(args).await.ok(),
+                    _ => None,
+                };
+                (found.file_name, proposal)
+            }
+        })
+        .buffered(CONCURRENCY)
+        .collect()
+        .await;
     let mut unknowns: Vec<Unknown> = Vec::new();
-    for found in host.identify_modpack(modpack.name.clone()).await? {
-        let installed = found.installed_mod;
-        let args = GetModArgs {
-            id: installed.id.clone(),
-            downloadable: false,
-            show_previous_version: false,
-            deletable: false,
-            version_target: String::new(),
-            mod_loader: modpack.mod_loader,
-            modpack: modpack.name.clone(),
-            selectable: true,
-            select_url: Some(installed.download_url.clone()),
-        };
-        let proposal = match installed.source {
-            ModSource::Modrinth => host.get_mod_modrinth(args).await,
-            #[cfg(feature = "curseforge")]
-            ModSource::CurseForge => host.get_mod_curseforge(args).await,
-            _ => continue,
-        };
-        let Ok(proposal) = proposal else {
+    for (file_name, proposal) in lookups {
+        let Some(proposal) = proposal else {
             continue;
         };
         match unknowns
             .iter_mut()
-            .find(|unknown| unknown.file_name == found.file_name)
+            .find(|unknown| unknown.file_name == file_name)
         {
             Some(unknown) => unknown.proposals.push(proposal),
             None => unknowns.push(Unknown {
-                file_name: found.file_name,
+                file_name,
                 proposals: vec![proposal],
             }),
         }

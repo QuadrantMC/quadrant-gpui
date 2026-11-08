@@ -19,7 +19,7 @@ use crate::backend::Backend;
 /// Mods asked about per backend call; the page redraws once per batch.
 const BATCH: usize = 24;
 /// Requests in flight at once, well under the providers' rate limits.
-const CONCURRENCY: usize = 6;
+pub const CONCURRENCY: usize = 6;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ModKey {
