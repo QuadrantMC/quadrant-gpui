@@ -11,12 +11,27 @@
 # `bun install` there). Refuses to run if Quadrant-Native is installed.
 param(
     [int]$Port = 8765,
-    [int]$TimeoutSeconds = 180
+    [int]$TimeoutSeconds = 180,
+    [switch]$InChild
 )
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot
 $work = Join-Path $env:TEMP "quadrant-native-update-e2e"
+if (-not $InChild) {
+    # The test sets the throwaway update key, the signing keys, the cargo
+    # target and the sandbox folders as environment variables. Run in the
+    # caller's shell they would outlive the script, and the next release
+    # build from that shell would trust only the throwaway key. A child
+    # process takes them with it. Its private key goes with it too.
+    try {
+        & (Get-Process -Id $PID).Path -NoProfile -File $PSCommandPath -Port $Port -TimeoutSeconds $TimeoutSeconds -InChild
+        $code = $LASTEXITCODE
+    } finally {
+        Remove-Item -Recurse -Force "$work\keys" -ErrorAction SilentlyContinue
+    }
+    exit $code
+}
 $installDir = Join-Path $env:LOCALAPPDATA "Quadrant-Native"
 $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Quadrant-Native"
 $startMenu = Join-Path ([Environment]::GetFolderPath("Programs")) "Quadrant-Native"
