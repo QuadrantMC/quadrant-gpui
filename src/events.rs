@@ -1,8 +1,9 @@
-use std::time::Duration;
+use std::{pin::pin, time::Duration};
 
-use gpui::{App, Context, SharedString, Task};
+use futures::future::{Either, select};
+use gpui::{App, BackgroundExecutor, Context, SharedString, Task};
 use quadrant_host::HostEventEnvelope;
-use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::{self, error::RecvError};
 
 use crate::{
     backend::Backend,
@@ -112,6 +113,61 @@ pub fn listen<T: 'static>(
     .detach();
 }
 
+/// How long a burst of events goes quiet before [`next_burst`] ends it.
+const SETTLE: Duration = Duration::from_millis(50);
+
+/// Waits for an event named in `names`. `false` once the host is gone.
+async fn next_named(events: &mut broadcast::Receiver<HostEventEnvelope>, names: &[&str]) -> bool {
+    loop {
+        match events.recv().await {
+            Ok(event) if names.contains(&event.event.as_str()) => return true,
+            Ok(_) | Err(RecvError::Lagged(_)) => {}
+            Err(RecvError::Closed) => return false,
+        }
+    }
+}
+
+/// Waits for events named in `names` until [`SETTLE`] passes without one:
+/// a settings sync pull publishes `configChanged` once per key it changes,
+/// and the listeners only need to read the config once. `false` once the
+/// host is gone.
+pub async fn next_burst(
+    events: &mut broadcast::Receiver<HostEventEnvelope>,
+    names: &[&str],
+    executor: &BackgroundExecutor,
+) -> bool {
+    if !next_named(events, names).await {
+        return false;
+    }
+    loop {
+        // `recv` is cancel safe, so losing the race drops no event.
+        match select(pin!(next_named(events, names)), executor.timer(SETTLE)).await {
+            Either::Left((true, _)) => {}
+            Either::Left((false, _)) => return false,
+            Either::Right(_) => return true,
+        }
+    }
+}
+
+/// [`listen`] once per [`next_burst`], for views that only re-read what the
+/// events say changed.
+pub fn listen_bursts<T: 'static>(
+    names: &'static [&'static str],
+    cx: &mut Context<T>,
+    f: impl Fn(&mut T, &mut Context<T>) + 'static,
+) {
+    let mut events = Backend::global(cx).subscribe_events();
+    let executor = cx.background_executor().clone();
+    cx.spawn(async move |this, cx| {
+        while next_burst(&mut events, names, &executor).await {
+            if this.update(cx, |this, cx| f(this, cx)).is_err() {
+                break;
+            }
+        }
+    })
+    .detach();
+}
+
 /// Which half of a mod install a progress event reports.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ModStage {
@@ -180,6 +236,42 @@ mod tests {
             event: name.to_string(),
             payload: Value::Null,
         }
+    }
+
+    #[gpui::test]
+    fn a_burst_of_config_changes_ends_once_it_goes_quiet(cx: &mut gpui::TestAppContext) {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering::SeqCst},
+        };
+        let (sender, mut events) = broadcast::channel(16);
+        let executor = cx.executor();
+        let bursts = Arc::new(AtomicUsize::new(0));
+        let (counted, waits) = (bursts.clone(), executor.clone());
+        executor
+            .spawn(async move {
+                while next_burst(&mut events, &["configChanged"], &waits).await {
+                    counted.fetch_add(1, SeqCst);
+                }
+            })
+            .detach();
+        let pass = |time: Duration| {
+            executor.advance_clock(time);
+            while executor.tick() {}
+        };
+        sender.send(event("configChanged")).unwrap();
+        pass(SETTLE / 2);
+        // Only the events listened for keep the burst going.
+        sender.send(event("configChanged")).unwrap();
+        sender.send(event("modDownloadProgress")).unwrap();
+        pass(SETTLE / 2);
+        assert_eq!(bursts.load(SeqCst), 0);
+        pass(SETTLE / 2);
+        assert_eq!(bursts.load(SeqCst), 1);
+        sender.send(event("configChanged")).unwrap();
+        pass(Duration::ZERO);
+        pass(SETTLE);
+        assert_eq!(bursts.load(SeqCst), 2);
     }
 
     #[test]

@@ -61,6 +61,8 @@ pub fn shown(page: &AnyView, window: &mut Window, cx: &mut App) {
         page.update(cx, |page, cx| page.revalidate(cx));
     } else if let Ok(page) = page.clone().downcast::<SearchPage>() {
         page.update(cx, |page, cx| page.revalidate(window, cx));
+    } else if let Ok(page) = page.clone().downcast::<SettingsPage>() {
+        page.update(cx, |page, cx| page.revalidate(cx));
     }
 }
 

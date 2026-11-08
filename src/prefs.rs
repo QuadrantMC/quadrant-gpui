@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::{
     backend::Backend,
     color_theme::{ThemeId, Themes},
-    config,
+    config, events,
     i18n::{self, Locale},
     theme,
 };
@@ -103,16 +103,10 @@ impl Prefs {
     pub fn install(self, cx: &mut App) {
         self.apply(cx);
         let mut events = Backend::global(cx).subscribe_events();
+        let executor = cx.background_executor().clone();
         cx.spawn(async move |cx| {
-            use tokio::sync::broadcast::error::RecvError;
-            loop {
-                match events.recv().await {
-                    Ok(event) if event.event == "configChanged" => {
-                        cx.update(Self::reload);
-                    }
-                    Ok(_) | Err(RecvError::Lagged(_)) => {}
-                    Err(RecvError::Closed) => break,
-                }
+            while events::next_burst(&mut events, &["configChanged"], &executor).await {
+                cx.update(Self::reload);
             }
         })
         .detach();

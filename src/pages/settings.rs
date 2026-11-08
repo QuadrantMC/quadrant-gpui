@@ -246,7 +246,7 @@ fn rescanned(themes: Themes, cx: &mut App) {
 impl SettingsPage {
     pub fn new(cx: &mut Context<Self>) -> Self {
         // Settings sync can change keys behind the page's back.
-        events::listen(&["configChanged"], cx, |this, _, cx| this.reload(cx));
+        events::listen_bursts(&["configChanged"], cx, |this, cx| this.reload(false, cx));
         // The UI scale changes from the zoom shortcuts too.
         cx.observe_global::<Prefs>(|_, cx| cx.notify()).detach();
         let mut page = Self {
@@ -259,14 +259,23 @@ impl SettingsPage {
             listed_themes: Vec::new(),
             _color_theme_picked: None,
         };
-        page.reload(cx);
+        page.reload(true, cx);
         page
     }
 
-    fn reload(&mut self, cx: &mut Context<Self>) {
+    /// Reads the settings again, now that the page is shown again, and the
+    /// user's themes, which may have changed in their folder meanwhile.
+    pub fn revalidate(&mut self, cx: &mut Context<Self>) {
+        self.reload(true, cx);
+    }
+
+    /// Reads the settings, and with `rescan` the themes folder. Config
+    /// changes don't rescan: no theme file is in the config.
+    fn reload(&mut self, rescan: bool, cx: &mut Context<Self>) {
         self.settings.reload();
-        let task = Backend::global(cx).run(cx, |host| async move {
-            let themes = Themes::scan(&color_theme::folder(&host.options().data_dir));
+        let task = Backend::global(cx).run(cx, move |host| async move {
+            let themes =
+                rescan.then(|| Themes::scan(&color_theme::folder(&host.options().data_dir)));
             Ok((Settings::read(&host), themes))
         });
         cx.spawn(async move |this, cx| {
@@ -274,7 +283,9 @@ impl SettingsPage {
                 return;
             };
             let _ = this.update(cx, |this, cx| {
-                rescanned(themes, cx);
+                if let Some(themes) = themes {
+                    rescanned(themes, cx);
+                }
                 this.settings = Loadable::from_result(result);
                 cx.notify();
             });
@@ -326,7 +337,7 @@ impl SettingsPage {
                 }
                 // The icon shape and window decorations apply app-wide.
                 Prefs::reload(cx);
-                this.reload(cx);
+                this.reload(false, cx);
             });
         })
         .detach();

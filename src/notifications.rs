@@ -429,7 +429,7 @@ impl Notifications {
             this.sift(cx);
             cx.notify();
         });
-        events::listen(&["configChanged"], cx, |this, _, cx| this.read_config(cx));
+        events::listen_bursts(&["configChanged"], cx, |this, cx| this.read_config(cx));
         let mut this = Self {
             history: History::default(),
             account: Vec::new(),
