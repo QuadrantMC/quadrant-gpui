@@ -37,6 +37,8 @@ env:
   # publishing there is up to you), as `<base>/<tag>/<file>`.
   ASSET_BASE_URL: ${{ vars.ASSET_BASE_URL || format('https://github.com/{0}/releases/download', vars.RELEASES_REPO || github.repository) }}
   TAURI_CLI: "@tauri-apps/cli@2.11.5"
+  # Bump on purpose, in validate.yml too.
+  RUST_TOOLCHAIN: "1.99.0"
 
 jobs:
   prepare:
@@ -125,10 +127,6 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       TAG: ${{ github.ref_name }}
-      QUADRANT_API_KEY: ${{ secrets.QUADRANT_API_KEY }}
-      QUADRANT_OAUTH2_CLIENT_ID: ${{ secrets.QUADRANT_OAUTH2_CLIENT_ID }}
-      QUADRANT_OAUTH2_CLIENT_SECRET: ${{ secrets.QUADRANT_OAUTH2_CLIENT_SECRET }}
-      ETERNAL_API_TOKEN: ${{ secrets.ETERNAL_API_TOKEN }}
       HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
       # linuxdeploy runs as an AppImage; runners have no FUSE.
       APPIMAGE_EXTRACT_AND_RUN: "1"
@@ -138,7 +136,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10-16
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -150,7 +150,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev pkg-config file
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       # From crates.io rather than a GitHub release download, which 504s now
       # and then; rust-cache keeps ~/.cargo/bin, so later runs skip the build.
@@ -161,7 +161,14 @@ jobs:
             bash scripts/retry.sh cargo install --locked cargo-generate-rpm@0.21.1
           fi
 
+      # The only step that needs the credentials: they are compiled into the
+      # binary, so no other step (or action) is handed them.
       - name: Build
+        env:
+          QUADRANT_API_KEY: ${{ secrets.QUADRANT_API_KEY }}
+          QUADRANT_OAUTH2_CLIENT_ID: ${{ secrets.QUADRANT_OAUTH2_CLIENT_ID }}
+          QUADRANT_OAUTH2_CLIENT_SECRET: ${{ secrets.QUADRANT_OAUTH2_CLIENT_SECRET }}
+          ETERNAL_API_TOKEN: ${{ secrets.ETERNAL_API_TOKEN }}
         run: |
           features=updater
           # CurseForge needs the API token at compile time, as in Quadrant's release.
