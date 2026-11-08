@@ -79,7 +79,8 @@ pub fn open_links(
     cx.spawn(async move |cx: &mut AsyncApp| {
         while let Some(urls) = inbox.next().await {
             cx.update(|cx| {
-                log::info!("Opening {urls:?}");
+                let links: Vec<_> = urls.iter().map(|url| deep_link::redacted(url)).collect();
+                log::info!("Opening {links:?}");
                 let Some(window) = tray::reveal(window, cx) else {
                     return;
                 };
@@ -230,7 +231,7 @@ impl QuadrantApp {
     /// Quadrant ID sign-in.
     fn follow(&mut self, actions: Vec<Action>, window: &mut Window, cx: &mut Context<Self>) {
         for action in actions {
-            log::info!("Following {action:?}");
+            log::info!("Following a link to {}", action.name());
             match action {
                 Action::Ignore => {}
                 Action::Unsupported => {

@@ -156,6 +156,28 @@ pub fn plan(urls: &[String]) -> Vec<Action> {
     actions
 }
 
+/// A link as the log may show it: scheme and host only. A sign-in link
+/// carries its code and state, and a share link its share code.
+pub fn redacted(raw: &str) -> String {
+    match Url::parse(raw) {
+        Ok(url) => format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default()),
+        Err(_) => "an unreadable link".to_string(),
+    }
+}
+
+impl Action {
+    /// What the action does, for the log; its contents stay out of it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::InstallMod(_) => "install a mod",
+            Self::OauthLogin { .. } => "finish a sign-in",
+            Self::ImportModpack(_) => "import a shared modpack",
+            Self::Unsupported => "report an unsupported link",
+            Self::Ignore => "ignore the link",
+        }
+    }
+}
+
 /// The URL's host, or `None` where `URL.host` would be empty.
 fn host(url: &Url) -> Option<String> {
     url.host_str()
@@ -228,6 +250,21 @@ mod tests {
 
     fn resolved(raw: &str) -> Action {
         resolve(raw).unwrap()
+    }
+
+    #[test]
+    fn the_log_sees_a_links_scheme_and_host_only() {
+        let login = "quadrantnext://login?code=secret&state=abc";
+        assert_eq!(redacted(login), "quadrantnext://login");
+        assert_eq!(
+            redacted("https://usequadrant.dev/modpack/AbC123"),
+            "https://usequadrant.dev"
+        );
+        assert_eq!(redacted("not a url"), "an unreadable link");
+        let Action::OauthLogin { .. } = resolved(login) else {
+            panic!("a sign-in link");
+        };
+        assert!(!resolved(login).name().contains("secret"));
     }
 
     #[test]

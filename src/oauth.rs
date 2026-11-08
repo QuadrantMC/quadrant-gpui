@@ -53,15 +53,26 @@ pub async fn sign_in(
     }
     let state = new_state()?;
     config::set(&host, OAUTH_STATE, Value::String(state.clone()))?;
+    let outcome = wait_and_exchange(&host, &state, browser, cancel).await;
+    forget_state(&host, &state);
+    outcome
+}
+
+async fn wait_and_exchange(
+    host: &QuadrantHost,
+    state: &str,
+    browser: oneshot::Sender<Url>,
+    cancel: oneshot::Receiver<()>,
+) -> Result<Outcome> {
     let (listener, port) = bind().await?;
     let redirect_uri = format!("http://127.0.0.1:{port}");
     let _ = browser.send(authorize_url(
         &host.oauth2_client_id(),
         &redirect_uri,
-        &state,
+        state,
     ));
     let code = tokio::select! {
-        code = tokio::time::timeout(LOGIN_TIMEOUT, wait_for_callback(listener, &state)) => {
+        code = tokio::time::timeout(LOGIN_TIMEOUT, wait_for_callback(listener, state)) => {
             code.map_err(|_| anyhow!("The sign-in timed out. Try again."))??
         }
         _ = cancel => return Ok(Outcome::Cancelled),
@@ -89,7 +100,21 @@ pub async fn finish_redirect(
         log::warn!("Ignored a sign-in redirect this app didn't start");
         return Ok(());
     }
-    host.oauth2_login(code, redirect_uri).await
+    let result = host.oauth2_login(code, redirect_uri).await;
+    forget_state(&host, &state);
+    result
+}
+
+/// Removes the pending sign-in's state once it has ended either way, so a
+/// later redirect carrying it is ignored. A sign-in started since keeps its
+/// own state.
+fn forget_state(host: &QuadrantHost, state: &str) {
+    let pending = host.get_config_value(OAUTH_STATE).ok().flatten();
+    if pending.as_ref().and_then(Value::as_str) == Some(state)
+        && let Err(error) = config::unset(host, OAUTH_STATE)
+    {
+        log::warn!("Couldn't forget the sign-in state: {error:#}");
+    }
 }
 
 fn new_state() -> Result<String> {
@@ -321,6 +346,22 @@ mod tests {
             assert!(page.contains("Login successful"), "{page}");
             assert_eq!(waiting.await.unwrap().unwrap(), "the-code");
         });
+    }
+
+    #[test]
+    fn a_finished_sign_in_forgets_its_state_and_leaves_a_newer_ones() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut options = QuadrantHostOptions::new(temp.path().to_path_buf(), "", "", "");
+        options.keyring_service_name = "quadrant-gpui-tests".into();
+        let host = QuadrantHost::new(options).unwrap();
+        config::set(&host, OAUTH_STATE, Value::String("newer".into())).unwrap();
+        forget_state(&host, "older");
+        assert_eq!(
+            host.get_config_value(OAUTH_STATE).unwrap(),
+            Some(Value::String("newer".into()))
+        );
+        forget_state(&host, "newer");
+        assert_eq!(host.get_config_value(OAUTH_STATE).unwrap(), None);
     }
 
     /// Default builds have no OAuth client, so signing in fails before it
