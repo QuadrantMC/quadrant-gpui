@@ -190,12 +190,11 @@ impl AccountPage {
                     .child(t_with("hello", &[("name", &info.name)])),
             )
             .child(
-                v_flex()
-                    .w(relative(0.5))
-                    .child(line("email", info.email.clone()))
-                    .child(line("username", info.login.clone()))
-                    .child(line("syncLimit", info.quadrant_sync_limit.to_string()))
-                    .child(line("shareLimit", info.quadrant_share_limit.to_string())),
+                v_flex().w(relative(0.5)).children(
+                    account_lines(info)
+                        .into_iter()
+                        .map(|(label, value)| line(label, value)),
+                ),
             )
             .child(
                 h_flex()
@@ -305,5 +304,54 @@ impl Render for AccountPage {
             .items_center()
             .justify_center()
             .child(body)
+    }
+}
+
+/// The account page's lines, by locale key. The API sends an empty email to
+/// a token without the email scope, which the desktop sign-in doesn't ask
+/// for, so that line is left out rather than shown blank.
+fn account_lines(info: &AccountInfo) -> Vec<(&'static str, String)> {
+    let mut lines = Vec::with_capacity(4);
+    if !info.email.is_empty() {
+        lines.push(("email", info.email.clone()));
+    }
+    lines.extend([
+        ("username", info.login.clone()),
+        ("syncLimit", info.quadrant_sync_limit.to_string()),
+        ("shareLimit", info.quadrant_share_limit.to_string()),
+    ]);
+    lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(email: &str) -> AccountInfo {
+        AccountInfo {
+            id: String::new(),
+            name: "Alex".into(),
+            email: email.into(),
+            quadrant_sync_limit: 2,
+            quadrant_share_limit: 3,
+            login: "alex".into(),
+            notifications: Vec::new(),
+        }
+    }
+
+    fn labels(info: &AccountInfo) -> Vec<&'static str> {
+        account_lines(info)
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect()
+    }
+
+    #[test]
+    fn an_empty_email_has_no_line() {
+        assert_eq!(labels(&info("")), ["username", "syncLimit", "shareLimit"]);
+        assert_eq!(
+            labels(&info("alex@example.com")),
+            ["email", "username", "syncLimit", "shareLimit"]
+        );
     }
 }
