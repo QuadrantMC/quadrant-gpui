@@ -205,6 +205,36 @@ impl HintedList {
         self.hinted = Some(self.state.viewport_bounds().size.width);
     }
 
+    /// Points the list at `rows` in place of `shown`, keeping the scroll
+    /// position past the rows that changed, and hints them again when gpui
+    /// dropped their heights.
+    pub fn show<T: PartialEq>(&mut self, shown: &mut Vec<T>, rows: Vec<T>) {
+        if rows == *shown && !self.stale() {
+            return;
+        }
+        if rows != *shown {
+            let same_start = rows
+                .iter()
+                .zip(shown.iter())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let same_end = rows[same_start..]
+                .iter()
+                .rev()
+                .zip(shown[same_start..].iter().rev())
+                .take_while(|(a, b)| a == b)
+                .count();
+            // Moves the scroll position past the changed rows.
+            self.state.splice(
+                same_start..shown.len() - same_end,
+                rows.len() - same_start - same_end,
+            );
+        }
+        let top = self.state.logical_scroll_top();
+        self.reset(rows.len(), top);
+        *shown = rows;
+    }
+
     /// An invisible element to lay after the list. In the frame where the
     /// list's width changed, and so its hints went, it asks for one more
     /// frame of `view`, whose render resets the list before anything can

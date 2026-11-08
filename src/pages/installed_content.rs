@@ -6,9 +6,9 @@ use std::{collections::HashSet, time::Duration};
 
 use chrono::{Local, TimeZone as _};
 use gpui::{
-    ClickEvent, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Task,
-    Window, div, prelude::FluentBuilder as _,
+    AnyElement, ClickEvent, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Task, Window, div, list, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     Disableable as _, Icon,
@@ -29,12 +29,116 @@ use crate::{
     backend::Backend,
     i18n::{describe, t, t_count, t_with},
     loadable::{Loadable, Reload},
+    pages::mod_grid::HintedList,
     snackbar::{self, SnackbarKind},
     theme::{self, Tone},
 };
 
 /// How long an armed delete waits for its confirming click.
 const ARM_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// About one file row, for the scrollbar until rows are measured.
+const ROW_HINT: Pixels = px(64.);
+
+/// One item of the page's list. An open section can hold hundreds of files,
+/// so each is an item of its own and only the ones on screen are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Row {
+    Header,
+    SelectionBar,
+    /// The spinner or the error in place of the locations.
+    Status,
+    /// A slice of location `location`'s card, and of the panel around it.
+    Location {
+        location: usize,
+        part: Part,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Part {
+    Title,
+    /// A section's header, and what comes before its files.
+    Section(usize),
+    File {
+        section: usize,
+        file: usize,
+    },
+}
+
+impl Part {
+    fn section(self) -> Option<usize> {
+        match self {
+            Part::Title => None,
+            Part::Section(section) | Part::File { section, .. } => Some(section),
+        }
+    }
+}
+
+/// A location's index, and the index of one of its sections.
+type Place = (usize, Option<usize>);
+
+/// Which location's card, and which of its sections, `row` is a slice of.
+fn place(row: Option<Row>) -> Option<Place> {
+    match row? {
+        Row::Location { location, part } => Some((location, part.section())),
+        Row::Header | Row::SelectionBar | Row::Status => None,
+    }
+}
+
+/// Whether the location at `index` shows its sections. The first always
+/// does; the others start open when they hold anything, until toggled.
+fn location_open(locations: &[ContentLocation], index: usize, toggled: &HashSet<String>) -> bool {
+    let location = &locations[index];
+    let has_content = location
+        .sections
+        .iter()
+        .any(|section| !section.files.is_empty());
+    index == 0 || has_content != toggled.contains(&location.id)
+}
+
+/// The page's items: the header, the selection bar while anything is
+/// ticked, then every location's title, sections and open sections' files.
+fn rows(
+    locations: &Loadable<Vec<ContentLocation>>,
+    selecting: bool,
+    toggled: &HashSet<String>,
+    open_sections: &[SectionRef],
+) -> Vec<Row> {
+    let mut rows = vec![Row::Header];
+    let Loadable::Ready(locations) = locations else {
+        rows.push(Row::Status);
+        return rows;
+    };
+    if selecting && !locations.is_empty() {
+        rows.push(Row::SelectionBar);
+    }
+    for (index, location) in locations.iter().enumerate() {
+        let row = |part| Row::Location {
+            location: index,
+            part,
+        };
+        rows.push(row(Part::Title));
+        if !location_open(locations, index, toggled) {
+            continue;
+        }
+        for (section_index, section) in location.sections.iter().enumerate() {
+            rows.push(row(Part::Section(section_index)));
+            let open = open_sections
+                .iter()
+                .any(|open| open.location == location.id && open.mod_type == section.mod_type);
+            if open {
+                rows.extend((0..section.files.len()).map(|file| {
+                    row(Part::File {
+                        section: section_index,
+                        file,
+                    })
+                }));
+            }
+        }
+    }
+    rows
+}
 
 /// One section of one location: everything an action needs to address it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -351,6 +455,8 @@ pub struct InstalledContentPage {
     toggled_locations: HashSet<String>,
     /// The newest listing request; replacing it drops a stale one's answer.
     listing: Reload,
+    list: HintedList,
+    rows: Vec<Row>,
 }
 
 impl InstalledContentPage {
@@ -364,6 +470,8 @@ impl InstalledContentPage {
             open_sections: Vec::new(),
             toggled_locations: HashSet::new(),
             listing: Reload::default(),
+            list: HintedList::new(ROW_HINT),
+            rows: Vec::new(),
         };
         page.reload(cx);
         page
@@ -766,7 +874,9 @@ impl InstalledContentPage {
             ))
     }
 
-    fn render_section(
+    /// A section's header and, while it is open, its select-all button or
+    /// the note that it is empty. Its files are rows of their own.
+    fn render_section_head(
         &self,
         locations: &[ContentLocation],
         location: &ContentLocation,
@@ -852,75 +962,54 @@ impl InstalledContentPage {
             )
         } else {
             Some(
-                v_flex()
+                h_flex()
+                    .mt_3()
                     .child(
-                        h_flex().mt_3().child(
-                            theme::small_pill_button(
-                                Control::CopyAll(section.clone()).id("select-all"),
-                                Tone::Control,
-                                t("installedContentSelectAll"),
-                                None,
-                                cx,
-                            )
-                            .accessibility_label(t_with(
-                                "installedContentSelectAllLabel",
-                                &[
-                                    ("section", &section_title(section.mod_type)),
-                                    ("name", &location_title(location)),
-                                ],
-                            ))
-                            .disabled(self.running.is_some())
-                            .on_click(cx.listener({
-                                let section = section.clone();
-                                move |this, _, _, cx| {
-                                    let Loadable::Ready(locations) = &this.locations else {
-                                        return;
-                                    };
-                                    let names: Vec<String> = files_in(locations, &section)
-                                        .map(|file| file.file_name.clone())
-                                        .collect();
-                                    select_all_in(&mut this.selection, &section, &names);
-                                    cx.notify();
-                                }
-                            })),
-                        ),
-                    )
-                    .child(
-                        v_flex().mt_3().children(
-                            files
-                                .iter()
-                                .map(|file| {
-                                    self.render_file(locations, &section, file, cx)
-                                        .into_any_element()
-                                })
-                                .collect::<Vec<_>>(),
-                        ),
+                        theme::small_pill_button(
+                            Control::CopyAll(section.clone()).id("select-all"),
+                            Tone::Control,
+                            t("installedContentSelectAll"),
+                            None,
+                            cx,
+                        )
+                        .accessibility_label(t_with(
+                            "installedContentSelectAllLabel",
+                            &[
+                                ("section", &section_title(section.mod_type)),
+                                ("name", &location_title(location)),
+                            ],
+                        ))
+                        .disabled(self.running.is_some())
+                        .on_click(cx.listener({
+                            let section = section.clone();
+                            move |this, _, _, cx| {
+                                let Loadable::Ready(locations) = &this.locations else {
+                                    return;
+                                };
+                                let names: Vec<String> = files_in(locations, &section)
+                                    .map(|file| file.file_name.clone())
+                                    .collect();
+                                select_all_in(&mut this.selection, &section, &names);
+                                cx.notify();
+                            }
+                        })),
                     )
                     .into_any_element(),
             )
         };
-        v_flex()
-            .my_3()
-            .p_4()
-            .rounded(theme::radius_card())
-            .bg(theme::palette().surface)
-            .child(header)
-            .children(body)
+        v_flex().child(header).children(body)
     }
 
-    fn render_location(
+    /// A location card's title, which folds the card after the first.
+    fn render_location_title(
         &self,
         locations: &[ContentLocation],
         index: usize,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let location = &locations[index];
-        let has_content = location
-            .sections
-            .iter()
-            .any(|section| !section.files.is_empty());
         let collapsible = index > 0;
-        let open = !collapsible || has_content != self.toggled_locations.contains(&location.id);
+        let open = location_open(locations, index, &self.toggled_locations);
         let header = v_flex()
             .min_w_0()
             .flex_1()
@@ -955,7 +1044,7 @@ impl InstalledContentPage {
                     .text_color(theme::palette().text_muted)
                     .child(location.path.clone()),
             );
-        let header = if collapsible {
+        if collapsible {
             let id = location.id.clone();
             h_flex()
                 .id(ElementId::Name(format!("location:{id}").into()))
@@ -974,49 +1063,128 @@ impl InstalledContentPage {
                 .into_any_element()
         } else {
             header.into_any_element()
-        };
-        v_flex()
-            .mx_5()
-            .my_5()
-            .p_4()
-            .rounded(theme::radius_card())
-            .bg(theme::palette().page)
-            .child(header)
-            .when(open, |this| {
-                this.children(
-                    location
-                        .sections
-                        .iter()
-                        .map(|section| {
-                            let section_ref = SectionRef {
-                                location: location.id.clone(),
-                                mod_type: section.mod_type,
-                            };
-                            self.render_section(
-                                locations,
-                                location,
-                                &section.files,
-                                section_ref,
-                                cx,
-                            )
-                            .into_any_element()
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            })
+        }
     }
-}
 
-/// The desktop app's `MdExpandMore`, turned over while its panel is open.
-fn expand_icon(open: bool) -> Icon {
-    Icon::new(MdIcon::ExpandMore).when(open, |icon| {
-        icon.rotate(gpui::radians(std::f32::consts::PI))
-    })
-}
+    /// Item `ix` of the list. A location's items are slices of the panel
+    /// the cards sit on, of its card and of its sections, each with the top
+    /// of what it starts and the bottom of what it ends.
+    fn render_row(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let row = |ix: Option<usize>| ix.and_then(|ix| self.rows.get(ix)).copied();
+        let (Some(current), before, after) =
+            (row(Some(ix)), row(ix.checked_sub(1)), row(Some(ix + 1)))
+        else {
+            return div().into_any_element();
+        };
+        match (current, &self.locations) {
+            (Row::Header, _) => div().child(self.render_header(cx)).into_any_element(),
+            (Row::SelectionBar, Loadable::Ready(locations)) => div()
+                .child(self.render_selection_bar(locations, cx))
+                .into_any_element(),
+            // A failed load leaves the page usable; refresh is the retry.
+            (Row::Status, Loadable::Failed(error)) => h_flex()
+                .p_8()
+                .justify_center()
+                .text_color(theme::palette().text_muted)
+                .child(error.clone())
+                .into_any_element(),
+            (Row::Status, _) => h_flex()
+                .p_8()
+                .justify_center()
+                .child(theme::circular_progress("progress"))
+                .into_any_element(),
+            (Row::Location { location, part }, Loadable::Ready(locations)) => {
+                self.render_slice(locations, location, part, (place(before), place(after)), cx)
+            }
+            (Row::SelectionBar | Row::Location { .. }, _) => div().into_any_element(),
+        }
+    }
 
-impl Render for InstalledContentPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let header = h_flex()
+    fn render_slice(
+        &self,
+        locations: &[ContentLocation],
+        index: usize,
+        part: Part,
+        (before, after): (Option<Place>, Option<Place>),
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let location = &locations[index];
+        let first_in_panel = before.is_none();
+        let last_in_panel = after.is_none();
+        let first_in_card = part == Part::Title;
+        let last_in_card = after.is_none_or(|(next, _)| next != index);
+        let content = match part {
+            Part::Title => self.render_location_title(locations, index, cx),
+            Part::Section(section_index)
+            | Part::File {
+                section: section_index,
+                ..
+            } => {
+                let section = &location.sections[section_index];
+                let section_ref = SectionRef {
+                    location: location.id.clone(),
+                    mod_type: section.mod_type,
+                };
+                let first_in_section = matches!(part, Part::Section(_));
+                let last_in_section = after != Some((index, Some(section_index)));
+                let inner = match part {
+                    Part::File { file, .. } => div()
+                        .when(file == 0, |this| this.pt_3())
+                        .child(self.render_file(locations, &section_ref, &section.files[file], cx))
+                        .into_any_element(),
+                    Part::Title | Part::Section(_) => self
+                        .render_section_head(locations, location, &section.files, section_ref, cx)
+                        .into_any_element(),
+                };
+                div()
+                    .when(first_in_section, |this| this.pt_3())
+                    .when(last_in_section, |this| this.pb_3())
+                    .child(
+                        div()
+                            .px_4()
+                            .bg(theme::palette().surface)
+                            .when(first_in_section, |this| {
+                                this.pt_4().rounded_t(theme::radius_card())
+                            })
+                            .when(last_in_section, |this| {
+                                this.pb_4().rounded_b(theme::radius_card())
+                            })
+                            .child(inner),
+                    )
+                    .into_any_element()
+            }
+        };
+        // The panel's `my_4` and the `h_1` after it, the cards' `my_5`.
+        div()
+            .when(first_in_panel, |this| this.pt_4())
+            .when(last_in_panel, |this| this.pb_5())
+            .child(
+                div()
+                    .mx_6()
+                    .bg(theme::palette().surface)
+                    .when(first_in_panel, |this| this.rounded_t(theme::radius_card()))
+                    .when(last_in_panel, |this| this.rounded_b(theme::radius_card()))
+                    .when(first_in_card, |this| this.pt_5())
+                    .when(last_in_card, |this| this.pb_5())
+                    .child(
+                        div()
+                            .mx_5()
+                            .px_4()
+                            .bg(theme::palette().page)
+                            .when(first_in_card, |this| {
+                                this.pt_4().rounded_t(theme::radius_card())
+                            })
+                            .when(last_in_card, |this| {
+                                this.pb_4().rounded_b(theme::radius_card())
+                            })
+                            .child(content),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
             .items_center()
             .gap_2()
             .mx_8()
@@ -1039,50 +1207,38 @@ impl Render for InstalledContentPage {
                         this.selection.clear();
                         this.reload(cx)
                     })),
-            );
-        let body = match &self.locations {
-            Loadable::Idle | Loadable::Loading => h_flex()
-                .flex_1()
-                .p_8()
-                .justify_center()
-                .child(theme::circular_progress("progress"))
-                .into_any_element(),
-            // A failed load leaves the page usable; refresh is the retry.
-            Loadable::Failed(error) => h_flex()
-                .p_8()
-                .justify_center()
-                .text_color(theme::palette().text_muted)
-                .child(error.clone())
-                .into_any_element(),
-            Loadable::Ready(locations) if locations.is_empty() => div().into_any_element(),
-            Loadable::Ready(locations) => v_flex()
-                .when(!self.selection.is_empty(), |this| {
-                    this.child(self.render_selection_bar(locations, cx))
-                })
-                .child(
-                    v_flex()
-                        .mx_6()
-                        .my_4()
-                        .rounded(theme::radius_card())
-                        .bg(theme::palette().surface)
-                        .children(
-                            (0..locations.len())
-                                .map(|index| {
-                                    self.render_location(locations, index, cx)
-                                        .into_any_element()
-                                })
-                                .collect::<Vec<_>>(),
-                        ),
-                )
-                .into_any_element(),
-        };
-        v_flex()
-            .id("installed-content")
+            )
+    }
+}
+
+/// The desktop app's `MdExpandMore`, turned over while its panel is open.
+fn expand_icon(open: bool) -> Icon {
+    Icon::new(MdIcon::ExpandMore).when(open, |icon| {
+        icon.rotate(gpui::radians(std::f32::consts::PI))
+    })
+}
+
+impl Render for InstalledContentPage {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows = rows(
+            &self.locations,
+            !self.selection.is_empty(),
+            &self.toggled_locations,
+            &self.open_sections,
+        );
+        self.list.show(&mut self.rows, rows);
+        div()
             .size_full()
-            .overflow_y_scrollbar()
-            .child(header)
-            .child(body)
-            .child(div().h_1())
+            .relative()
+            .child(
+                list(
+                    self.list.state.clone(),
+                    cx.processor(|this, ix, window, cx| this.render_row(ix, window, cx)),
+                )
+                .size_full(),
+            )
+            .child(self.list.probe(cx.entity_id()))
+            .vertical_scrollbar(&self.list.state)
     }
 }
 
@@ -1122,6 +1278,58 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn rows_list_open_sections_file_by_file() {
+        let locations = Loadable::Ready(vec![
+            location("minecraft", &["a.zip", "b.zip"], &[]),
+            location("prism-empty", &[], &[]),
+            location("prism-full", &[], &["s.zip"]),
+        ]);
+        let open = [SectionRef {
+            location: "minecraft".into(),
+            mod_type: ModType::ResourcePack,
+        }];
+        let slice = |location, part| Row::Location { location, part };
+        let mut toggled = HashSet::new();
+        assert_eq!(
+            rows(&locations, true, &toggled, &open),
+            [
+                Row::Header,
+                Row::SelectionBar,
+                slice(0, Part::Title),
+                slice(0, Part::Section(0)),
+                slice(
+                    0,
+                    Part::File {
+                        section: 0,
+                        file: 0
+                    }
+                ),
+                slice(
+                    0,
+                    Part::File {
+                        section: 0,
+                        file: 1
+                    }
+                ),
+                slice(0, Part::Section(1)),
+                // An empty location after the first starts folded.
+                slice(1, Part::Title),
+                slice(2, Part::Title),
+                slice(2, Part::Section(0)),
+                slice(2, Part::Section(1)),
+            ]
+        );
+        toggled.insert("prism-full".to_string());
+        let folded = rows(&locations, false, &toggled, &[]);
+        assert_eq!(folded.last(), Some(&slice(2, Part::Title)));
+        assert!(!folded.contains(&Row::SelectionBar));
+        assert_eq!(
+            rows(&Loadable::Loading, true, &toggled, &open),
+            [Row::Header, Row::Status]
+        );
     }
 
     fn pick(location: &str, mod_type: ModType, name: &str) -> SelectedFile {

@@ -1366,30 +1366,7 @@ impl ModpacksPage {
         } else {
             self.rows.clone()
         };
-        if rows == self.rows && !self.list.stale() {
-            return;
-        }
-        if rows != self.rows {
-            let same_start = rows
-                .iter()
-                .zip(&self.rows)
-                .take_while(|(a, b)| a == b)
-                .count();
-            let same_end = rows[same_start..]
-                .iter()
-                .rev()
-                .zip(self.rows[same_start..].iter().rev())
-                .take_while(|(a, b)| a == b)
-                .count();
-            // Moves the scroll position past the changed rows.
-            self.list.state.splice(
-                same_start..self.rows.len() - same_end,
-                rows.len() - same_start - same_end,
-            );
-        }
-        let top = self.list.state.logical_scroll_top();
-        self.list.reset(rows.len(), top);
-        self.rows = rows;
+        self.list.show(&mut self.rows, rows);
     }
 
     fn render_row(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
