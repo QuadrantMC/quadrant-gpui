@@ -27,7 +27,7 @@ use quadrant_host::QuadrantHost;
 use serde_json::{Value, json};
 
 use self::logic::{
-    Chip, ContentType, Filters, MergedCategory, PAGE_SIZE, Provider, Sort, installed_in,
+    Chip, ContentType, Filters, MergedCategory, PAGE_SIZE, Provider, Section, Sort, installed_in,
     loader_options, merge_categories, order_results, page_count, sections,
 };
 use crate::{
@@ -99,6 +99,8 @@ pub struct SearchPage {
     /// Facet sections the user folded away, by header.
     folded: Vec<String>,
     categories: Loadable<Vec<MergedCategory>>,
+    /// `categories` grouped for the sidebar, made as they load.
+    facets: Vec<Section>,
     modpacks: Loadable<Vec<LocalModpack>>,
     results: Loadable<Results>,
     page: usize,
@@ -215,6 +217,7 @@ impl SearchPage {
             filters_open: true,
             folded: Vec::new(),
             categories: Loadable::Idle,
+            facets: Vec::new(),
             modpacks: Loadable::Loading,
             results: Loadable::Loading,
             page: 0,
@@ -501,6 +504,7 @@ impl SearchPage {
         let modrinth = self.filters.modrinth;
         let mod_type = self.filters.content.mod_type().to_string();
         self.categories = Loadable::Loading;
+        self.facets.clear();
         let task = Backend::global(cx).run(cx, move |host| async move {
             let fetch = |enabled: bool, provider: Provider| {
                 let host = host.clone();
@@ -523,6 +527,7 @@ impl SearchPage {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.categories = Loadable::from_result(result);
+                this.facets = sections(this.categories());
                 // Picked categories gain or lose provider ids with the
                 // taxonomy, which changes the requests.
                 if !this.filters.selected.is_empty() {
@@ -1099,15 +1104,20 @@ impl SearchPage {
 
     fn render_facets(&self, cx: &mut Context<Self>) -> Vec<impl IntoElement> {
         let categories = self.categories();
-        sections(categories)
-            .into_iter()
-            .map(|section| {
+        let lock = self.filters.lock(categories);
+        self.facets
+            .iter()
+            .enumerate()
+            .map(|(index, section)| {
                 let folded = self.folded.contains(&section.header);
                 let header = section.header.clone();
                 let options: Vec<AnyElement> = section
                     .options
                     .iter()
-                    .map(|category| self.render_category(category, section.pills, cx))
+                    .filter_map(|&option| Some((option, categories.get(option)?)))
+                    .map(|(option, category)| {
+                        self.render_category(option, category, section.pills, lock, cx)
+                    })
                     .collect();
                 v_flex()
                     .border_t_1()
@@ -1116,7 +1126,7 @@ impl SearchPage {
                     .mb_3p5()
                     .child(
                         h_flex()
-                            .id(SharedString::from(format!("section-{header}")))
+                            .id(("section", index))
                             .w_full()
                             .pb_3()
                             .justify_between()
@@ -1126,7 +1136,7 @@ impl SearchPage {
                                 div()
                                     .text_size(px(15.))
                                     .font_weight(FontWeight::EXTRA_BOLD)
-                                    .child(section.title.clone()),
+                                    .child(section.title()),
                             )
                             .child(
                                 Icon::new(MdIcon::ExpandMore)
@@ -1187,19 +1197,22 @@ impl SearchPage {
             )
     }
 
+    /// Category `index` of the loaded ones; `lock` is the filters' lock.
     fn render_category(
         &self,
+        index: usize,
         category: &MergedCategory,
         pill: bool,
+        lock: Option<Provider>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let picked = self.filters.selected.contains(&category.key);
-        let disabled = self.filters.category_disabled(category, self.categories());
+        let disabled = self.filters.category_disabled(category, lock);
         let key = category.key.clone();
         let toggle = cx.listener(move |this, _, window, cx| {
             this.change(window, cx, |filters| filters.toggle_category(&key))
         });
-        let id = SharedString::from(format!("category-{}", category.key));
+        let id = ("category", index);
         if pill {
             return theme::option_chip(
                 id,

@@ -3,6 +3,7 @@
 //! and how their answers merge into one list.
 
 use chrono::DateTime;
+use gpui::SharedString;
 use quadrant_core::{
     mc_mod::{GlobalSearchModsArgs, Mod, ModType, SearchCategory},
     models::{LocalModpack, ModLoader, ModSource},
@@ -277,28 +278,34 @@ const HEADER_ORDER: [&str; 4] = [
 #[derive(Clone, PartialEq, Debug)]
 pub struct Section {
     pub header: String,
-    pub title: String,
     /// Drawn as wrapping pills rather than a checkbox list.
     pub pills: bool,
-    pub options: Vec<MergedCategory>,
+    /// Indexes into the categories the section was made from.
+    pub options: Vec<usize>,
+}
+
+impl Section {
+    /// The header as the sidebar shows it, in the current language.
+    pub fn title(&self) -> SharedString {
+        header_title(&self.header)
+    }
 }
 
 pub fn sections(categories: &[MergedCategory]) -> Vec<Section> {
     let mut sections: Vec<Section> = Vec::new();
-    for category in categories {
+    for (index, category) in categories.iter().enumerate() {
         match sections
             .iter_mut()
             .find(|section| section.header == category.header)
         {
-            Some(section) => section.options.push(category.clone()),
+            Some(section) => section.options.push(index),
             None => sections.push(Section {
                 header: category.header.clone(),
-                title: header_title(&category.header),
                 pills: matches!(
                     category.header.as_str(),
                     "resolutions" | "performance impact"
                 ),
-                options: vec![category.clone()],
+                options: vec![index],
             }),
         }
     }
@@ -312,12 +319,12 @@ pub fn sections(categories: &[MergedCategory]) -> Vec<Section> {
     sections
 }
 
-fn header_title(header: &str) -> String {
+fn header_title(header: &str) -> SharedString {
     match header {
-        "categories" => t("categories").to_string(),
-        "resolutions" => t("resolution").to_string(),
-        "features" => t("features").to_string(),
-        "performance impact" => t("performanceImpact").to_string(),
+        "categories" => t("categories"),
+        "resolutions" => t("resolution"),
+        "features" => t("features"),
+        "performance impact" => t("performanceImpact"),
         other => other
             .split(' ')
             .map(|word| {
@@ -328,7 +335,8 @@ fn header_title(header: &str) -> String {
                     .unwrap_or_default()
             })
             .collect::<Vec<_>>()
-            .join(" "),
+            .join(" ")
+            .into(),
     }
 }
 
@@ -445,16 +453,14 @@ impl Filters {
     }
 
     /// A single-provider facet is unusable when its provider is off, locked
-    /// out, or excluded by "open source only".
-    pub fn category_disabled(&self, category: &MergedCategory, all: &[MergedCategory]) -> bool {
+    /// out (`lock`, from [`Self::lock`]), or excluded by "open source only".
+    pub fn category_disabled(&self, category: &MergedCategory, lock: Option<Provider>) -> bool {
         match category.only_on() {
             None => false,
             Some(Provider::CurseForge) => {
-                !self.curseforge || self.lock(all) == Some(Provider::Modrinth) || self.open_source
+                !self.curseforge || lock == Some(Provider::Modrinth) || self.open_source
             }
-            Some(Provider::Modrinth) => {
-                !self.modrinth || self.lock(all) == Some(Provider::CurseForge)
-            }
+            Some(Provider::Modrinth) => !self.modrinth || lock == Some(Provider::CurseForge),
         }
     }
 
@@ -757,11 +763,11 @@ pub mod tests {
     #[test]
     fn sections_follow_the_header_order() {
         let sections = sections(&merged());
-        let headers: Vec<_> = sections
-            .iter()
-            .map(|s| (s.title.as_str(), s.pills))
-            .collect();
-        assert_eq!(headers, [("Categories", false), ("Resolution", true)]);
+        let headers: Vec<_> = sections.iter().map(|s| (s.title(), s.pills)).collect();
+        assert_eq!(
+            headers,
+            [("Categories".into(), false), ("Resolution".into(), true)]
+        );
         assert_eq!(sections[0].options.len(), 3);
     }
 
@@ -777,7 +783,7 @@ pub mod tests {
         assert!(!filters.searches(Provider::CurseForge, &categories));
         assert!(filters.source_disabled(Provider::CurseForge, &categories));
         let mapping = &categories[3];
-        assert!(filters.category_disabled(mapping, &categories));
+        assert!(filters.category_disabled(mapping, filters.lock(&categories)));
         filters.toggle_category("categories:optimization");
         assert_eq!(filters.lock(&categories), None);
     }
