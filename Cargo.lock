@@ -6086,13 +6086,12 @@ dependencies = [
 [[package]]
 name = "quadrant-core"
 version = "26.11.1-stable"
+source = "git+https://github.com/QuadrantMC/quadrant?rev=1d38517ce45b28d81c6fe907c5232e0494c8d716#1d38517ce45b28d81c6fe907c5232e0494c8d716"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "chrono",
  "dirs 7.0.0",
  "futures",
- "getrandom 0.4.3",
  "hex",
  "http-cache-reqwest",
  "log",
@@ -6104,7 +6103,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
- "sha2 0.11.1",
  "tokio",
  "urlencoding",
  "uuid",
@@ -6114,6 +6112,7 @@ dependencies = [
 [[package]]
 name = "quadrant-host"
 version = "26.11.1-stable"
+source = "git+https://github.com/QuadrantMC/quadrant?rev=1d38517ce45b28d81c6fe907c5232e0494c8d716#1d38517ce45b28d81c6fe907c5232e0494c8d716"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
