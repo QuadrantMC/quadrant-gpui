@@ -266,22 +266,28 @@ fn start_background_jobs(args: &Args, cx: &mut App) {
             Ok(())
         })
         .detach();
-    // The mod cache sits in the user's cache folder whatever `--data-dir`
-    // says, so a sandboxed run leaves it to the apps on the real data folder.
-    let prune_cache = args.data_dir.is_none();
     backend
-        .run(cx, move |host| async move {
+        .run(cx, |host| async move {
             match host.backfill_mod_hashes().await {
                 Ok(0) => {}
                 Ok(hashed) => log::info!("Recorded the file hash of {hashed} mod(s)"),
                 Err(error) => log::warn!("Couldn't record the mods' file hashes: {error:#}"),
             }
-            if prune_cache && let Err(error) = host.prune_mod_cache().await {
-                log::warn!("Couldn't prune the mod cache: {error:#}");
-            }
             Ok(())
         })
         .detach();
+    // The mod cache sits in the user's cache folder whatever `--data-dir`
+    // says, so a sandboxed run leaves it to the apps on the real data folder.
+    if args.data_dir.is_none() {
+        backend
+            .run(cx, |host| async move {
+                if let Err(error) = host.prune_mod_cache().await {
+                    log::warn!("Couldn't prune the mod cache: {error:#}");
+                }
+                Ok(())
+            })
+            .detach();
+    }
 }
 
 /// The data folder in use: `--data-dir`, else the desktop app's.
