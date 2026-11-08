@@ -6139,7 +6139,7 @@ dependencies = [
 
 [[package]]
 name = "quadrant-native"
-version = "26.11.1-gpui-preview.1"
+version = "26.11.2-gpui-experimental"
 dependencies = [
  "anyhow",
  "auto-launch",
