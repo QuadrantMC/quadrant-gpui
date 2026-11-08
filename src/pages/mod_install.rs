@@ -825,12 +825,11 @@ impl ModInstallView {
                                 .bg(theme::palette().page)
                                 .cursor_pointer()
                                 .on_click(move |_, _, cx| crate::web::open_external(&open, cx))
-                                .child(
-                                    remote_images::img(url.clone(), cx)
-                                        .size_full()
+                                .children(remote_images::img(url, cx).map(|shot| {
+                                    shot.size_full()
                                         .rounded_2xl()
-                                        .object_fit(gpui::ObjectFit::Cover),
-                                )
+                                        .object_fit(gpui::ObjectFit::Cover)
+                                }))
                         })),
                 )
             })

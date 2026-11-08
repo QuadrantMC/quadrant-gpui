@@ -16,6 +16,7 @@ use gpui::{
     App, AppContext as _, Entity, Global, ImageCache, ImageCacheError, ImageCacheItem, RenderImage,
     Resource, Window,
 };
+use url::Url;
 
 /// How many bytes of decoded images to keep.
 const BUDGET: usize = 192 << 20;
@@ -63,13 +64,34 @@ pub fn cache(cx: &App) -> Option<Entity<RemoteImages>> {
         .map(|global| global.0.clone())
 }
 
-/// `img(url)` through the app's cache.
-pub fn img(url: impl Into<gpui::SharedString>, cx: &App) -> gpui::Img {
-    let img = gpui::img(url.into());
-    match cache(cx) {
+/// The hosts images load from: the providers' CDNs, as the desktop app's
+/// `imageHosts.ts` and CSP allow. Icon and screenshot addresses come from
+/// provider data and shared packs, which their authors control, and any other
+/// host would learn the viewer's address.
+const HOSTS: [&str; 4] = [
+    "cdn.modrinth.com",
+    "media.forgecdn.net",
+    "edge.forgecdn.net",
+    "mediafilez.forgecdn.net",
+];
+
+/// Whether `url` is an https address on a provider CDN.
+pub fn is_trusted(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.host_str().is_some_and(|host| HOSTS.contains(&host))
+}
+
+/// `img(url)` through the app's cache, or `None` for an address that isn't
+/// on a provider CDN, which gets a placeholder instead.
+pub fn img(url: &str, cx: &App) -> Option<gpui::Img> {
+    let url = Url::parse(url.trim()).ok().filter(is_trusted)?;
+    let img = gpui::img(url.to_string());
+    Some(match cache(cx) {
         Some(cache) => img.image_cache(&cache),
         None => img,
-    }
+    })
 }
 
 /// The bytes `image` takes decoded, every frame of it.
@@ -175,6 +197,30 @@ impl ImageCache for RemoteImages {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_provider_cdns_over_https_are_trusted() {
+        let trusted = |url: &str| Url::parse(url).is_ok_and(|url| is_trusted(&url));
+        for url in [
+            "https://cdn.modrinth.com/data/AANobbMI/icon.png",
+            "https://media.forgecdn.net/avatars/1/2/3.png",
+            "https://mediafilez.forgecdn.net/files/1/2/shot.png",
+        ] {
+            assert!(trusted(url), "{url}");
+        }
+        for url in [
+            "http://cdn.modrinth.com/icon.png",
+            "https://tracker.example/pixel.gif",
+            "https://cdn.modrinth.com.evil.example/icon.png",
+            "https://evil.example/cdn.modrinth.com/icon.png",
+            "https://user@evil.example@cdn.modrinth.com/",
+            "https://user:pass@cdn.modrinth.com/icon.png",
+            "https://127.0.0.1/icon.png",
+            "file:///C:/icon.png",
+        ] {
+            assert!(!trusted(url), "{url}");
+        }
+    }
 
     #[test]
     fn the_least_recently_drawn_go_first_until_the_rest_fit() {

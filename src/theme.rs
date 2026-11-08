@@ -864,12 +864,12 @@ pub fn mod_icon(
             .child(letter)
             .into_any_element()
     };
-    if url.trim().is_empty() {
+    let Some(icon) = crate::remote_images::img(url, cx) else {
         return tile();
-    }
+    };
     let loading = tile;
     use gpui::StyledImage as _;
-    corners(crate::remote_images::img(url.to_string(), cx), round)
+    corners(icon, round)
         .size(size)
         .flex_none()
         .object_fit(gpui::ObjectFit::Cover)
