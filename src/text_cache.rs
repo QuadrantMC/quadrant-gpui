@@ -430,7 +430,7 @@ impl Platform for CachingPlatform {
         self.inner.show_system_notification(notification)
     }
 
-    fn dismiss_system_notification(&self, tag: &str) {
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         self.inner.dismiss_system_notification(tag)
     }
 

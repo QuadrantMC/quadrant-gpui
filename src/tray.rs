@@ -241,14 +241,14 @@ mod platform {
         let menu = Menu::with_items(&[&show, &quit])?;
         let (rgba, width, height) = super::icon_rgba()?;
         let menu_commands = commands.clone();
-        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+        MenuEvent::set_event_handler(Some(std::sync::Arc::new(move |event: MenuEvent| {
             let command = match event.id().0.as_str() {
                 "show" => Command::Toggle,
                 "quit" => Command::Quit,
                 _ => return,
             };
             let _ = menu_commands.unbounded_send(command);
-        }));
+        })));
         TrayIconEvent::set_event_handler(Some(move |event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,

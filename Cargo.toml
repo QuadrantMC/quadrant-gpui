@@ -2,7 +2,7 @@
 name = "quadrant-native"
 # YY.MM.REVISION with the release channel as the pre-release, like Quadrant.
 # The release tag is `v` plus this version.
-version = "26.11.2-gpui-preview.1"
+version = "26.12.0-gpui-preview.1"
 edition = "2024"
 description = "Manage your mods and modpacks with ease."
 authors = ["MrQuantumOFF (Demir Yerli) <me@mrquantumoff.dev>"]
@@ -28,22 +28,22 @@ perf-profile = ["perf", "gpui/profiler"]
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-dirs = "6"
+dirs = "7"
 # Already in the tree through gpui; runs the mod catalog's requests side by side.
 futures = "0.3"
 getrandom = "0.4"
 # Already in the tree through gpui; decodes the tray icon.
 image = { version = "0.25", default-features = false, features = ["png"] }
-gpui = { package = "gpui-pre", version = "=0.3.11" }
-gpui-component = "0.9.0"
-gpui-kit-assets = "0.9.0"
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", features = ["font-kit", "wayland"] }
+gpui = { package = "gpui-pre", version = "=0.3.14" }
+gpui-component = "0.11.0"
+gpui-kit-assets = "0.11.0"
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.14", features = ["font-kit", "wayland"] }
 log = "0.4"
 # Watches the Minecraft folder while the Apply page is shown.
 notify = "8"
-quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "57de84715930216c8fd47bfbbfb55f8e8f4c7aed" }
+quadrant-core = { git = "https://github.com/QuadrantMC/quadrant", rev = "c56010226cfc77b20cf5f8d16bc339e52dcada4a" }
 # `single-instance`: one running app per data folder, shared with Quadrant.
-quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "57de84715930216c8fd47bfbbfb55f8e8f4c7aed", features = ["single-instance"] }
+quadrant-host = { git = "https://github.com/QuadrantMC/quadrant", rev = "c56010226cfc77b20cf5f8d16bc339e52dcada4a", features = ["single-instance"] }
 # Already in the tree through quadrant-core; fetches remote images for `img(url)`.
 reqwest = { version = "0.13", default-features = false }
 serde_json = "1"
@@ -64,7 +64,7 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dw
 # The tray icon the window hides into: Windows' notification area and the
 # macOS menu bar.
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-tray-icon = { version = "0.26", default-features = false }
+tray-icon = { version = "0.27", default-features = false }
 
 # A StatusNotifierItem over D-Bus for Linux trays, Wayland included; no GTK.
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -74,7 +74,7 @@ zbus = { version = "5", default-features = false, features = ["async-io"] }
 
 [dev-dependencies]
 # gpui's test window, for tests that draw, resize and scroll real lists.
-gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
+gpui = { package = "gpui-pre", version = "=0.3.14", features = ["test-support"] }
 tempfile = "3"
 
 [build-dependencies]

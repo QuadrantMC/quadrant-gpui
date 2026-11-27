@@ -212,14 +212,6 @@ pub fn reveal_window(
     }
 }
 
-impl IntoElement for Reveal {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
-    }
-}
-
 impl Element for Reveal {
     type RequestLayoutState = ();
     /// The window, in window coordinates.

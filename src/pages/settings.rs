@@ -35,7 +35,7 @@ use crate::{
 
 const PUBLIC_USAGE_URL: &str = "https://usequadrant.dev/usage";
 /// The runtime the version line names, as the desktop app names Tauri's.
-const RUNTIME: (&str, &str) = ("GPUI", "0.3.11");
+const RUNTIME: (&str, &str) = ("GPUI", "0.3.14");
 
 /// An on/off setting, in the order the page lists them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
