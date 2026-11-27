@@ -859,8 +859,13 @@ pub mod tests {
 
     #[test]
     fn no_active_provider_means_no_requests() {
+        // CurseForge starts on in `curseforge` builds, so turn off whatever
+        // the defaults enable rather than Modrinth alone.
         let mut filters = Filters::default();
         filters.toggle_source(Provider::Modrinth);
+        if filters.curseforge {
+            filters.toggle_source(Provider::CurseForge);
+        }
         assert!(filters.requests("", &[], None, &[]).is_empty());
     }
 
